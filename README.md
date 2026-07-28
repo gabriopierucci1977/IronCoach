@@ -1,2 +1,1 @@
-# IronCoach
-AI Endurance Coach
+# Tests
