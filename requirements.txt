@@ -1,0 +1,4 @@
+pyairtable
+python-dotenv
+openai
+requests
