@@ -1,70 +1,19 @@
 """
 IronCoach Report Builder
 
-Costruisce un report leggibile a partire
-dal Context Builder e dal Coach Engine.
+Costruisce un report leggibile orientato al coaching
+a partire dal Context Builder e dal Coach Engine.
 """
+
+import ast
+import json
 
 
 class ReportBuilder:
     """
-    Converte il contesto IronCoach e la decisione finale
-    in un report testuale leggibile.
+    Genera un report professionale eliminando il rumore
+    tecnico proveniente da Airtable.
     """
-
-    WORKOUT_FIELD_LABELS = {
-        "strategy": "Strategia",
-        "original_workout": "Seduta originale",
-        "sport": "Sport",
-        "sport_category": "Categoria sport",
-        "original_type": "Tipo originale",
-        "original_zone": "Zona originale",
-        "original_duration_minutes": "Durata originale",
-        "duration_minutes": "Nuova durata",
-        "intensity": "Intensità",
-        "warmup": "Riscaldamento",
-        "main_set": "Parte centrale",
-        "cooldown": "Defaticamento",
-        "technical_focus": "Focus tecnico",
-        "removed_elements": "Elementi rimossi",
-        "alternative": "Alternativa",
-        "notes": "Note",
-    }
-
-    DECISION_FIELD_LABELS = {
-        "decision": "Decisione",
-        "Decisione IronCoach": "Decisione IronCoach",
-        "reason": "Motivazione",
-        "Motivazione": "Motivazione",
-        "priority": "Priorità",
-        "Priorità": "Priorità",
-        "confidence": "Confidenza",
-        "Confidenza": "Confidenza",
-        "strategy": "Strategia",
-        "Strategia": "Strategia",
-        "recommended_action": "Azione consigliata",
-        "Azione consigliata": "Azione consigliata",
-        "Data": "Data",
-    }
-
-    MODIFIED_WORKOUT_KEYS = (
-        "modified_workout",
-        "Allenamento modificato",
-    )
-
-    LAST_DECISION_FIELDS = (
-        "Data",
-        "Decisione IronCoach",
-        "decision",
-        "Strategia",
-        "strategy",
-        "Priorità",
-        "priority",
-        "Confidenza",
-        "confidence",
-        "Motivazione",
-        "reason",
-    )
 
     def build(self, context, decision):
         """
@@ -93,28 +42,42 @@ class ReportBuilder:
         report.append("IRONCOACH REPORT")
         report.append("=" * 60)
 
-        self._append_section(
+        self._add_athlete(
             report,
-            "ATLETA",
             athlete,
         )
 
-        self._append_section(
+        self._add_section(
             report,
             "RECOVERY",
             recovery,
+            [
+                "Stato Recovery",
+                "Recovery Score",
+                "Sleep Score",
+                "Stress",
+                "Dolore generale",
+                "Pain Score",
+                "Coach Comment",
+                "Coach Confidence",
+            ],
         )
 
-        self._append_section(
+        self._add_training(
             report,
-            "TRAINING",
             training,
         )
 
-        self._append_section(
+        self._add_section(
             report,
             "NUTRITION",
             nutrition,
+            [
+                "Stato recupero nutrizionale",
+                "Stato carboidrati",
+                "Stato idratazione",
+                "Commento Coach nutrizione",
+            ],
         )
 
         report.append("")
@@ -122,7 +85,7 @@ class ReportBuilder:
         report.append("-" * 60)
 
         if last_decision:
-            self._append_last_decision_summary(
+            self._append_decision(
                 report,
                 last_decision,
             )
@@ -139,7 +102,6 @@ class ReportBuilder:
         self._append_decision(
             report,
             decision,
-            include_modified_workout=True,
         )
 
         report.append("")
@@ -147,202 +109,174 @@ class ReportBuilder:
 
         return "\n".join(report)
 
-    def _append_section(
+    # -------------------------------------------------
+    # SEZIONI
+    # -------------------------------------------------
+
+    def _add_athlete(
+        self,
+        report,
+        athlete,
+    ):
+        """
+        Aggiunge al report i dati essenziali dell'atleta.
+        """
+
+        report.append("")
+        report.append("ATLETA")
+        report.append("-" * 60)
+
+        fields = [
+            ("Nome Atleta", "Nome"),
+            ("Livello Atleta", "Livello"),
+            ("Sport Principale", "Sport principale"),
+            ("Peso attuale kg", "Peso"),
+            ("FTP", "FTP"),
+            ("VO₂max corsa", "VO2max corsa"),
+            ("VO₂max bici", "VO2max bici"),
+            ("CSS", "CSS"),
+            ("Limitazioni fisiche", "Limitazioni"),
+        ]
+
+        printed_fields = 0
+
+        for source, label in fields:
+            value = self._find_value(
+                athlete,
+                source,
+            )
+
+            if not self._has_value(value):
+                continue
+
+            report.append(
+                f"{label}: {self._format_value(value)}"
+            )
+            printed_fields += 1
+
+        if printed_fields == 0:
+            report.append(
+                "Nessun dato atleta disponibile."
+            )
+
+    def _add_training(
+        self,
+        report,
+        training,
+    ):
+        """
+        Aggiunge al report i dati essenziali
+        dell'ultima seduta.
+        """
+
+        report.append("")
+        report.append("TRAINING")
+        report.append("-" * 60)
+
+        fields = [
+            ("Nome seduta", "Seduta"),
+            ("Sport", "Sport"),
+            ("Tipo seduta", "Tipo"),
+            ("Zona prevista", "Zona"),
+            ("Durata minuti", "Durata"),
+            ("Distanza km", "Distanza"),
+            ("RPE percepito", "RPE"),
+            ("Sensazioni", "Sensazioni"),
+            ("Dolori/problematiche", "Problematiche"),
+        ]
+
+        printed_fields = 0
+
+        for source, label in fields:
+            value = self._find_value(
+                training,
+                source,
+            )
+
+            if not self._has_value(value):
+                continue
+
+            formatted_value = self._format_value(
+                value
+            )
+
+            if source == "Durata minuti":
+                formatted_value = (
+                    self._append_unit(
+                        formatted_value,
+                        "min",
+                    )
+                )
+
+            if source == "Distanza km":
+                formatted_value = (
+                    self._append_unit(
+                        formatted_value,
+                        "km",
+                    )
+                )
+
+            report.append(
+                f"{label}: {formatted_value}"
+            )
+            printed_fields += 1
+
+        if printed_fields == 0:
+            report.append(
+                "Nessun dato allenamento disponibile."
+            )
+
+    def _add_section(
         self,
         report,
         title,
         data,
+        fields,
     ):
         """
-        Aggiunge una sezione standard al report.
+        Aggiunge una sezione composta soltanto
+        dai campi selezionati.
         """
 
         report.append("")
         report.append(title)
         report.append("-" * 60)
 
-        if data:
-            self._append_fields(
-                report,
+        printed_fields = 0
+
+        for field in fields:
+            value = self._find_value(
                 data,
+                field,
             )
-        else:
+
+            if not self._has_value(value):
+                continue
+
+            report.append(
+                f"{field}: {self._format_value(value)}"
+            )
+            printed_fields += 1
+
+        if printed_fields == 0:
             report.append(
                 "Nessun dato disponibile."
             )
 
-    def _append_last_decision_summary(
-        self,
-        report,
-        decision,
-    ):
-        """
-        Mostra un riepilogo compatto dell'ultima decisione
-        salvata su Airtable.
-
-        L'allenamento modificato precedente non viene
-        ristampato integralmente per evitare duplicazioni.
-        """
-
-        if not isinstance(decision, dict):
-            report.append(
-                self._format_value(decision)
-            )
-            return
-
-        summary_fields = self._select_last_decision_fields(
-            decision
-        )
-
-        if summary_fields:
-            self._append_fields(
-                report,
-                summary_fields,
-                labels=self.DECISION_FIELD_LABELS,
-            )
-        else:
-            report.append(
-                "Nessun dettaglio disponibile."
-            )
-
-        modified_workout = self._extract_modified_workout(
-            decision
-        )
-
-        if modified_workout:
-            self._append_workout_summary(
-                report,
-                modified_workout,
-            )
-
-    def _select_last_decision_fields(
-        self,
-        decision,
-    ):
-        """
-        Seleziona soltanto i campi principali
-        dell'ultima decisione.
-        """
-
-        selected_fields = {}
-        selected_concepts = set()
-
-        concept_aliases = {
-            "Data": "date",
-            "Decisione IronCoach": "decision",
-            "decision": "decision",
-            "Strategia": "strategy",
-            "strategy": "strategy",
-            "Priorità": "priority",
-            "priority": "priority",
-            "Confidenza": "confidence",
-            "confidence": "confidence",
-            "Motivazione": "reason",
-            "reason": "reason",
-        }
-
-        for key in self.LAST_DECISION_FIELDS:
-            if key not in decision:
-                continue
-
-            concept = concept_aliases.get(
-                key,
-                key,
-            )
-
-            if concept in selected_concepts:
-                continue
-
-            value = decision.get(key)
-
-            if value in (
-                None,
-                "",
-            ):
-                continue
-
-            selected_fields[key] = value
-            selected_concepts.add(concept)
-
-        return selected_fields
-
-    def _append_workout_summary(
-        self,
-        report,
-        modified_workout,
-    ):
-        """
-        Mostra un riepilogo sintetico dell'allenamento
-        modificato collegato all'ultima decisione.
-        """
-
-        report.append("")
-        report.append(
-            "Riepilogo allenamento precedente:"
-        )
-
-        if not isinstance(modified_workout, dict):
-            report.append(
-                self._format_value(modified_workout)
-            )
-            return
-
-        summary_keys = (
-            "sport",
-            "original_workout",
-            "duration_minutes",
-            "intensity",
-        )
-
-        summary_parts = []
-
-        for key in summary_keys:
-            value = modified_workout.get(key)
-
-            if value in (
-                None,
-                "",
-            ):
-                continue
-
-            label = self.WORKOUT_FIELD_LABELS.get(
-                key,
-                self._humanize_key(key),
-            )
-
-            formatted_value = self._format_value(
-                value
-            )
-
-            formatted_value = (
-                self._format_workout_field_value(
-                    key,
-                    formatted_value,
-                )
-            )
-
-            summary_parts.append(
-                f"{label}: {formatted_value}"
-            )
-
-        if summary_parts:
-            report.append(
-                " | ".join(summary_parts)
-            )
-        else:
-            report.append(
-                "Allenamento modificato disponibile."
-            )
+    # -------------------------------------------------
+    # DECISIONI
+    # -------------------------------------------------
 
     def _append_decision(
         self,
         report,
         decision,
-        include_modified_workout=True,
     ):
         """
-        Aggiunge una decisione al report separando
-        l'eventuale allenamento modificato dagli altri campi.
+        Aggiunge una decisione al report.
+
+        Gestisce sia le chiavi interne Python sia
+        i nomi dei campi salvati su Airtable.
         """
 
         if not isinstance(decision, dict):
@@ -351,118 +285,55 @@ class ReportBuilder:
             )
             return
 
-        modified_workout = self._extract_modified_workout(
-            decision
-        )
+        mapping = [
+            ("Decisione IronCoach", "Decisione"),
+            ("decision", "Decisione"),
+            ("Motivazione", "Motivazione"),
+            ("reason", "Motivazione"),
+            ("Priorità", "Priorità"),
+            ("priority", "Priorità"),
+            ("Confidenza", "Confidenza"),
+            ("confidence", "Confidenza"),
+            ("Strategia", "Strategia"),
+            ("strategy", "Strategia"),
+            ("Azione consigliata", "Azione"),
+            ("recommended_action", "Azione"),
+        ]
 
-        decision_fields = {
-            key: value
-            for key, value in decision.items()
-            if key not in self.MODIFIED_WORKOUT_KEYS
-        }
+        printed_labels = set()
 
-        if decision_fields:
-            self._append_fields(
-                report,
-                decision_fields,
-                labels=self.DECISION_FIELD_LABELS,
+        for source, label in mapping:
+            if label in printed_labels:
+                continue
+
+            value = decision.get(source)
+
+            if not self._has_value(value):
+                continue
+
+            report.append(
+                f"{label}: {self._format_value(value)}"
             )
-        else:
+
+            printed_labels.add(label)
+
+        if not printed_labels:
             report.append(
                 "Nessun dettaglio disponibile."
             )
 
-        if (
-            include_modified_workout
-            and modified_workout
-        ):
-            self._append_modified_workout(
-                report,
-                modified_workout,
-            )
-
-    def _append_modified_workout(
-        self,
-        report,
-        modified_workout,
-    ):
-        """
-        Mostra l'allenamento modificato come sezione
-        multilinea leggibile.
-        """
-
-        report.append("")
-        report.append("ALLENAMENTO MODIFICATO")
-        report.append("-" * 60)
-
-        if isinstance(modified_workout, dict):
-            self._append_fields(
-                report,
-                modified_workout,
-                labels=self.WORKOUT_FIELD_LABELS,
-                format_workout_units=True,
-            )
-            return
-
-        formatted_value = self._format_value(
-            modified_workout
+        workout = self._extract_modified_workout(
+            decision
         )
 
-        if formatted_value == "N/D":
-            report.append(
-                "Nessun allenamento modificato."
-            )
-        else:
-            report.append(
-                formatted_value
-            )
+        if workout:
+            report.append("")
+            report.append("ALLENAMENTO MODIFICATO")
+            report.append("-" * 60)
 
-    def _append_fields(
-        self,
-        report,
-        data,
-        labels=None,
-        format_workout_units=False,
-    ):
-        """
-        Aggiunge al report tutti i campi di un dizionario.
-
-        Args:
-            report (list): Righe del report.
-            data (dict): Campi da aggiungere.
-            labels (dict | None): Etichette leggibili opzionali.
-            format_workout_units (bool): Aggiunge unità di misura
-                ai campi dell'allenamento modificato.
-        """
-
-        if not isinstance(data, dict):
-            report.append(
-                self._format_value(data)
-            )
-            return
-
-        labels = labels or {}
-
-        for key, value in data.items():
-            label = labels.get(
-                key,
-                self._humanize_key(key),
-            )
-
-            formatted_value = self._format_value(
-                value
-            )
-
-            if format_workout_units:
-                formatted_value = (
-                    self._format_workout_field_value(
-                        key,
-                        formatted_value,
-                    )
-                )
-
-            report.append(
-                f"{label}: {formatted_value}"
+            self._append_workout(
+                report,
+                workout,
             )
 
     def _extract_modified_workout(
@@ -472,11 +343,19 @@ class ReportBuilder:
         """
         Estrae l'allenamento modificato dalla decisione.
 
-        Gestisce sia il nome interno Python sia il nome
-        salvato su Airtable.
+        Il Coach Engine utilizza la chiave:
+            modified_workout
+
+        Airtable utilizza la chiave:
+            Allenamento modificato
         """
 
-        for key in self.MODIFIED_WORKOUT_KEYS:
+        workout_keys = (
+            "modified_workout",
+            "Allenamento modificato",
+        )
+
+        for key in workout_keys:
             if key not in decision:
                 continue
 
@@ -489,71 +368,69 @@ class ReportBuilder:
                 value = value.get("value")
 
             parsed_value = (
-                self._parse_dictionary_string(
+                self._parse_serialized_workout(
                     value
                 )
             )
 
-            if parsed_value not in (
-                None,
-                "",
-                {},
-            ):
+            if self._has_value(parsed_value):
                 return parsed_value
 
         return None
 
-    def _parse_dictionary_string(
+    def _parse_serialized_workout(
         self,
-        value,
+        workout,
     ):
         """
-        Converte in dizionario una rappresentazione testuale
-        Python o JSON, quando possibile.
+        Converte in dizionario un allenamento che Airtable
+        restituisce sotto forma di stringa.
 
-        Airtable può restituire il campo Allenamento modificato
-        come stringa anziché come dizionario.
+        Sono supportati:
+
+        JSON:
+            {"strategy": "ADAPT"}
+
+        Rappresentazione Python:
+            {'strategy': 'ADAPT'}
         """
 
-        if not isinstance(value, str):
-            return value
+        if not isinstance(workout, str):
+            return workout
 
-        cleaned_value = value.strip()
+        cleaned_workout = workout.strip()
 
-        if not cleaned_value:
+        if not cleaned_workout:
             return None
 
         if not (
-            cleaned_value.startswith("{")
-            and cleaned_value.endswith("}")
+            cleaned_workout.startswith("{")
+            and cleaned_workout.endswith("}")
         ):
-            return cleaned_value
+            return cleaned_workout
 
         try:
-            import json
-
-            parsed_value = json.loads(
-                cleaned_value
+            parsed_workout = json.loads(
+                cleaned_workout
             )
 
-            if isinstance(parsed_value, dict):
-                return parsed_value
+            if isinstance(parsed_workout, dict):
+                return parsed_workout
 
         except (
             TypeError,
             ValueError,
+            json.JSONDecodeError,
         ):
             pass
 
         try:
-            import ast
-
-            parsed_value = ast.literal_eval(
-                cleaned_value
+            parsed_workout = ast.literal_eval(
+                cleaned_workout
             )
 
-            if isinstance(parsed_value, dict):
-                return parsed_value
+            if isinstance(parsed_workout, dict):
+                return parsed_workout
 
         except (
             SyntaxError,
@@ -561,68 +438,166 @@ class ReportBuilder:
         ):
             pass
 
-        return cleaned_value
+        return cleaned_workout
 
-    def _format_workout_field_value(
+    # -------------------------------------------------
+    # ALLENAMENTO MODIFICATO
+    # -------------------------------------------------
+
+    def _append_workout(
         self,
-        key,
-        formatted_value,
+        report,
+        workout,
     ):
         """
-        Aggiunge unità di misura ai campi temporali
-        dell'allenamento modificato.
+        Mostra l'allenamento modificato in formato
+        multilinea leggibile.
         """
 
-        duration_keys = {
-            "original_duration_minutes",
-            "duration_minutes",
-        }
+        if not isinstance(workout, dict):
+            report.append(
+                self._format_value(workout)
+            )
+            return
 
-        if (
-            key in duration_keys
-            and formatted_value != "N/D"
+        fields = [
+            ("strategy", "Strategia"),
+            ("original_workout", "Seduta originale"),
+            ("sport", "Sport"),
+            ("sport_category", "Categoria sport"),
+            ("original_type", "Tipo originale"),
+            ("original_zone", "Zona originale"),
+            (
+                "original_duration_minutes",
+                "Durata originale",
+            ),
+            ("duration_minutes", "Nuova durata"),
+            ("intensity", "Intensità"),
+            ("warmup", "Riscaldamento"),
+            ("main_set", "Parte centrale"),
+            ("cooldown", "Defaticamento"),
+            ("technical_focus", "Focus tecnico"),
+            ("removed_elements", "Elementi rimossi"),
+            ("alternative", "Alternativa"),
+            ("notes", "Note"),
+        ]
+
+        printed_fields = 0
+
+        for key, label in fields:
+            value = workout.get(key)
+
+            if not self._has_value(value):
+                continue
+
+            formatted_value = self._format_value(
+                value
+            )
+
+            if key in {
+                "original_duration_minutes",
+                "duration_minutes",
+            }:
+                formatted_value = (
+                    self._append_unit(
+                        formatted_value,
+                        "min",
+                    )
+                )
+
+            report.append(
+                f"{label}: {formatted_value}"
+            )
+            printed_fields += 1
+
+        if printed_fields == 0:
+            report.append(
+                "Allenamento modificato disponibile, "
+                "ma privo di dettagli leggibili."
+            )
+
+    # -------------------------------------------------
+    # UTILITÀ
+    # -------------------------------------------------
+
+    def _find_value(
+        self,
+        data,
+        key,
+    ):
+        """
+        Recupera un valore da un dizionario.
+        """
+
+        if not isinstance(data, dict):
+            return None
+
+        return data.get(key)
+
+    def _has_value(
+        self,
+        value,
+    ):
+        """
+        Verifica se un valore contiene dati utili.
+
+        Il valore numerico zero è considerato valido.
+        """
+
+        if value is None:
+            return False
+
+        if isinstance(value, str):
+            return bool(value.strip())
+
+        if isinstance(
+            value,
+            (
+                list,
+                tuple,
+                set,
+                dict,
+            ),
         ):
-            return f"{formatted_value} min"
+            return bool(value)
 
-        return formatted_value
+        return True
 
-    def _humanize_key(
+    def _append_unit(
         self,
-        key,
+        value,
+        unit,
     ):
         """
-        Converte una chiave tecnica in un'etichetta leggibile.
-
-        Esempio:
-            original_workout -> Original workout
+        Aggiunge un'unità di misura evitando duplicazioni.
         """
 
-        text = str(key).replace(
-            "_",
-            " ",
-        ).strip()
+        if value == "N/D":
+            return value
 
-        if not text:
-            return "Campo"
+        value_text = str(value).strip()
 
-        return (
-            text[:1].upper()
-            + text[1:]
-        )
+        if value_text.lower().endswith(
+            unit.lower()
+        ):
+            return value_text
+
+        return f"{value_text} {unit}"
 
     def _format_value(
         self,
         value,
     ):
         """
-        Converte i valori Airtable in un formato leggibile.
+        Converte i valori Python e Airtable
+        in testo leggibile.
 
-        Gestisce in particolare:
-        - campi AI Airtable con chiavi state/value/isStale;
-        - liste di record collegati;
+        Gestisce:
         - valori None;
-        - stringhe multilinea;
-        - dizionari annidati.
+        - campi AI Airtable con chiave value;
+        - liste;
+        - dizionari;
+        - stringhe vuote.
         """
 
         if value is None:
@@ -634,9 +609,8 @@ class ReportBuilder:
                     "value"
                 )
 
-                if generated_value in (
-                    None,
-                    "",
+                if not self._has_value(
+                    generated_value
                 ):
                     return "N/D"
 
@@ -651,7 +625,7 @@ class ReportBuilder:
 
             for key, nested_value in value.items():
                 formatted_items.append(
-                    f"{key}="
+                    f"{key}: "
                     f"{self._format_value(nested_value)}"
                 )
 
