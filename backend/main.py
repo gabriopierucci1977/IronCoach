@@ -23,6 +23,9 @@ def main():
     client = AirtableClient()
 
     # 2. Costruzione del contesto
+    #
+    # Il contesto contiene anche l'ultima decisione
+    # già presente in Airtable prima della nuova valutazione.
     builder = ContextBuilder(client)
     context = builder.build()
 
@@ -38,16 +41,23 @@ def main():
         decision=decision,
     )
 
-    # 5. Salvataggio Decisione
-    writer = DecisionWriter(client)
-    writer.save(decision)
-
-    # 6. Costruzione Report
+    # 5. Costruzione del report
+    #
+    # Il report viene creato prima del salvataggio della nuova
+    # decisione. In questo modo:
+    #
+    # - ULTIMA DECISIONE mostra la decisione precedente;
+    # - DECISIONE DEL COACH mostra la nuova decisione.
     report = ReportBuilder().build(
         context,
         decision,
     )
 
+    # 6. Salvataggio della nuova decisione
+    writer = DecisionWriter(client)
+    writer.save(decision)
+
+    # 7. Visualizzazione del report
     print("\n")
     print(report)
 
