@@ -62,6 +62,10 @@ class AirtableClient:
         Restituisce i campi del primo record disponibile
         nella tabella indicata.
 
+        Questo metodo viene utilizzato solo per tabelle
+        che contengono un singolo record principale,
+        come Athlete Profile.
+
         Args:
             table_name (str): Nome della tabella Airtable.
 
@@ -70,51 +74,97 @@ class AirtableClient:
         """
 
         table = self.base.table(table_name)
+        record = table.first()
+
+        if not record:
+            return {}
+
+        return record.get("fields", {})
+
+    def _get_latest_record(self, table_name, date_field=None):
+        """
+        Restituisce il record più recente di una tabella.
+
+        Se viene indicato un campo data, Airtable ordina
+        i record in ordine decrescente usando quel campo.
+
+        Se non viene indicato un campo data, i record
+        vengono ordinati localmente in base a createdTime.
+
+        Args:
+            table_name (str): Nome della tabella Airtable.
+            date_field (str | None): Campo data da usare
+                per determinare il record più recente.
+
+        Returns:
+            dict: Campi del record più recente oppure
+                dizionario vuoto.
+        """
+
+        table = self.base.table(table_name)
+
+        if date_field:
+            record = table.first(sort=[f"-{date_field}"])
+
+            if not record:
+                return {}
+
+            return record.get("fields", {})
+
         records = table.all()
 
         if not records:
             return {}
 
-        return records[0].get("fields", {})
+        latest_record = max(
+            records,
+            key=lambda record: record.get("createdTime", ""),
+        )
+
+        return latest_record.get("fields", {})
 
     def get_athlete_profile(self):
         """
-        Restituisce il profilo dell'atleta.
+        Restituisce il profilo principale dell'atleta.
         """
 
         return self._get_first_record("Athlete Profile")
 
     def get_latest_recovery(self):
         """
-        Restituisce l'ultimo record disponibile
-        della tabella Recovery Log.
+        Restituisce l'ultimo record creato
+        nella tabella Recovery Log.
         """
 
-        return self._get_first_record("Recovery Log")
+        return self._get_latest_record("Recovery Log")
 
     def get_latest_training(self):
         """
-        Restituisce l'ultimo record disponibile
-        della tabella Training Log.
+        Restituisce l'allenamento con la data più recente.
         """
 
-        return self._get_first_record("Training Log")
+        return self._get_latest_record(
+            "Training Log",
+            date_field="Data allenamento",
+        )
 
     def get_latest_nutrition(self):
         """
-        Restituisce l'ultimo record disponibile
-        della tabella Nutrition Log.
+        Restituisce l'ultimo record creato
+        nella tabella Nutrition Log.
         """
 
-        return self._get_first_record("Nutrition Log")
+        return self._get_latest_record("Nutrition Log")
 
     def get_latest_decision(self):
         """
-        Restituisce l'ultimo record disponibile
-        della tabella Decision Log.
+        Restituisce la decisione con la data più recente.
         """
 
-        return self._get_first_record("Decision Log")
+        return self._get_latest_record(
+            "Decision Log",
+            date_field="Data",
+        )
 
     # -------------------------------------------------
     # SCRITTURA DATI
