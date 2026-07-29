@@ -85,16 +85,19 @@ class AirtableClient:
         """
         Restituisce il record più recente di una tabella.
 
-        Se viene indicato un campo data, Airtable ordina
-        i record in ordine decrescente usando quel campo.
+        Se viene indicato un campo data, il record viene
+        selezionato usando due criteri:
 
-        Se non viene indicato un campo data, i record
-        vengono ordinati localmente in base a createdTime.
+        1. valore più recente del campo data;
+        2. createdTime più recente in caso di parità.
+
+        Se non viene indicato un campo data, viene usato
+        direttamente createdTime.
 
         Args:
             table_name (str): Nome della tabella Airtable.
             date_field (str | None): Campo data da usare
-                per determinare il record più recente.
+                come criterio principale.
 
         Returns:
             dict: Campi del record più recente oppure
@@ -102,24 +105,25 @@ class AirtableClient:
         """
 
         table = self.base.table(table_name)
-
-        if date_field:
-            record = table.first(sort=[f"-{date_field}"])
-
-            if not record:
-                return {}
-
-            return record.get("fields", {})
-
         records = table.all()
 
         if not records:
             return {}
 
-        latest_record = max(
-            records,
-            key=lambda record: record.get("createdTime", ""),
-        )
+        if date_field:
+            latest_record = max(
+                records,
+                key=lambda record: (
+                    record.get("fields", {}).get(date_field, ""),
+                    record.get("createdTime", ""),
+                ),
+            )
+
+        else:
+            latest_record = max(
+                records,
+                key=lambda record: record.get("createdTime", ""),
+            )
 
         return latest_record.get("fields", {})
 
@@ -141,6 +145,9 @@ class AirtableClient:
     def get_latest_training(self):
         """
         Restituisce l'allenamento con la data più recente.
+
+        In caso di più allenamenti nella stessa data,
+        restituisce quello creato più recentemente.
         """
 
         return self._get_latest_record(
@@ -159,6 +166,9 @@ class AirtableClient:
     def get_latest_decision(self):
         """
         Restituisce la decisione con la data più recente.
+
+        In caso di più decisioni nella stessa data,
+        restituisce quella creata più recentemente.
         """
 
         return self._get_latest_record(
