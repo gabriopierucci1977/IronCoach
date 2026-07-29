@@ -1,19 +1,34 @@
 """
 IronCoach Decision Writer
 
-TEST 5
-Aggiunge il campo "Strategia".
+Converte una decisione del Coach Engine
+nei campi previsti dalla tabella Airtable Decision Log.
 """
 
 from datetime import datetime
 
 
 class DecisionWriter:
+    """
+    Gestisce la preparazione e il salvataggio
+    delle decisioni generate da IronCoach.
+    """
 
     def __init__(self, airtable_client):
         self.client = airtable_client
 
     def save(self, decision):
+        """
+        Prepara i campi Airtable e salva la decisione.
+
+        Args:
+            decision (dict): Decisione restituita dal Coach Engine.
+
+        Returns:
+            dict: Record creato nella tabella Decision Log.
+        """
+
+        modified_workout = decision.get("modified_workout")
 
         fields = {
             "Data": datetime.now().strftime("%Y-%m-%d"),
@@ -22,21 +37,12 @@ class DecisionWriter:
             "Confidenza": decision.get("confidence"),
             "Azione consigliata": decision.get("recommended_action"),
             "Allenamento modificato": (
-                str(decision.get("modified_workout"))
-                if decision.get("modified_workout")
+                str(modified_workout)
+                if modified_workout
                 else ""
             ),
             "Priorità": decision.get("priority"),
             "Strategia": decision.get("strategy"),
         }
-
-        print("\n" + "=" * 60)
-        print("TEST AIRTABLE - STRATEGIA")
-        print("=" * 60)
-
-        for key, value in fields.items():
-            print(f"{key}: {repr(value)}")
-
-        print("=" * 60)
 
         return self.client.save_decision(fields)
