@@ -7,6 +7,7 @@ Programma principale.
 from backend.airtable_client import AirtableClient
 from backend.context_builder import ContextBuilder
 from backend.coach_engine import CoachEngine
+from backend.workout_adapter import WorkoutAdapter
 from backend.decision_writer import DecisionWriter
 from backend.report_builder import ReportBuilder
 
@@ -25,16 +26,27 @@ def main():
     builder = ContextBuilder(client)
     context = builder.build()
 
-    # 3. Coach Engine
+    # 3. Valutazione Coach Engine
     coach = CoachEngine()
     decision = coach.evaluate(context)
 
-    # 4. Salvataggio Decisione
+    # 4. Generazione dell'allenamento modificato
+    adapter = WorkoutAdapter()
+
+    decision["modified_workout"] = adapter.adapt(
+        context=context,
+        decision=decision,
+    )
+
+    # 5. Salvataggio Decisione
     writer = DecisionWriter(client)
     writer.save(decision)
 
-    # 5. Costruzione Report
-    report = ReportBuilder().build(context, decision)
+    # 6. Costruzione Report
+    report = ReportBuilder().build(
+        context,
+        decision,
+    )
 
     print("\n")
     print(report)
