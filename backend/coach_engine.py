@@ -1,5 +1,5 @@
 """
-IronCoach Coach Engine v6.3
+IronCoach Coach Engine v6.4
 
 Motore centrale di orchestrazione.
 
@@ -19,9 +19,7 @@ La logica decisionale rimane nel DecisionEngine.
 from backend.engines.decision_engine import DecisionEngine
 
 from backend.analyzers.recovery_analyzer import RecoveryAnalyzer
-from backend.analyzers.recovery_trend_analyzer import (
-    RecoveryTrendAnalyzer,
-)
+from backend.analyzers.recovery_trend_analyzer import RecoveryTrendAnalyzer
 from backend.analyzers.training_analyzer import TrainingAnalyzer
 from backend.analyzers.injury_analyzer import InjuryAnalyzer
 from backend.analyzers.nutrition_analyzer import NutritionAnalyzer
@@ -61,13 +59,39 @@ class CoachEngine:
     # ATHLETE INTELLIGENCE NORMALIZER
     # ==================================================
 
+    def _first_value(
+        self,
+        data,
+        keys,
+        default="N/D",
+    ):
+        """
+        Recupera il primo valore disponibile
+        tra più possibili nomi campo.
+        """
+
+        for key in keys:
+
+            value = data.get(key)
+
+            if value not in (
+                None,
+                "",
+                [],
+            ):
+                return value
+
+        return default
+
+
+
     def _build_athlete_intelligence(
         self,
         athlete_profile,
     ):
         """
         Normalizza il profilo atleta Airtable
-        per la sezione Intelligence del report.
+        per la sezione Intelligence.
         """
 
         athlete_profile = athlete_profile or {}
@@ -76,62 +100,110 @@ class CoachEngine:
         return {
 
             "athlete_type":
-                athlete_profile.get(
-                    "Tipo atleta",
-                    athlete_profile.get(
+                self._first_value(
+                    athlete_profile,
+                    [
+                        "Tipo atleta",
+                        "Livello atleta",
                         "athlete_type",
-                        "N/D",
-                    ),
+                    ],
                 ),
 
 
             "strengths":
-                athlete_profile.get(
-                    "Punti di forza",
-                    athlete_profile.get(
+                self._first_value(
+                    athlete_profile,
+                    [
+                        "Punti di forza",
+                        "Obiettivi principali",
                         "strengths",
-                        "N/D",
-                    ),
+                    ],
                 ),
 
 
             "limitations":
-                athlete_profile.get(
-                    "Limitazioni note",
-                    athlete_profile.get(
+                self._first_value(
+                    athlete_profile,
+                    [
+                        "Limitazioni note",
+                        "Limitazioni fisiche",
                         "limitations",
-                        "N/D",
-                    ),
+                    ],
                 ),
 
 
             "training_preferences":
-                athlete_profile.get(
-                    "Preferenze allenamento",
-                    athlete_profile.get(
+                self._first_value(
+                    athlete_profile,
+                    [
+                        "Preferenze allenamento",
+                        "Preferenza",
                         "training_preferences",
-                        "N/D",
-                    ),
+                    ],
                 ),
 
 
             "load_tolerance":
-                athlete_profile.get(
-                    "Tolleranza al carico",
-                    athlete_profile.get(
+                self._first_value(
+                    athlete_profile,
+                    [
+                        "Tolleranza al carico",
+                        "Note coach",
                         "load_tolerance",
-                        "N/D",
-                    ),
+                    ],
                 ),
 
 
             "injury_patterns":
-                athlete_profile.get(
-                    "Pattern infortuni",
-                    athlete_profile.get(
+                self._first_value(
+                    athlete_profile,
+                    [
+                        "Pattern infortuni",
+                        "Storico infortuni",
                         "injury_patterns",
-                        "N/D",
-                    ),
+                    ],
+                ),
+
+
+            "sport_profile":
+                self._first_value(
+                    athlete_profile,
+                    [
+                        "Sport principale",
+                        "sport_profile",
+                    ],
+                ),
+
+
+            "experience_years":
+                self._first_value(
+                    athlete_profile,
+                    [
+                        "Anni di attività sportiva",
+                        "experience_years",
+                    ],
+                ),
+
+
+            "vo2max_run":
+                self._first_value(
+                    athlete_profile,
+                    [
+                        "Vo₂max corsa",
+                        "VO2max corsa",
+                        "vo2max_run",
+                    ],
+                ),
+
+
+            "vo2max_bike":
+                self._first_value(
+                    athlete_profile,
+                    [
+                        "Vo₂max bici",
+                        "VO2max bici",
+                        "vo2max_bike",
+                    ],
                 ),
         }
 
@@ -141,10 +213,6 @@ class CoachEngine:
         self,
         context,
     ):
-        """
-        Valuta il contesto completo dell'atleta.
-        """
-
 
         context = context or {}
 
@@ -169,14 +237,8 @@ class CoachEngine:
 
 
         athlete_profile = (
-            context.get(
-                "athlete_profile",
-                {},
-            )
-            or context.get(
-                "athlete",
-                {},
-            )
+            context.get("athlete_profile")
+            or context.get("athlete")
             or {}
         )
 
@@ -208,7 +270,6 @@ class CoachEngine:
         )
 
 
-
         recovery_trend_analysis = (
             self.recovery_trend_analyzer.analyze(
                 {
@@ -219,13 +280,11 @@ class CoachEngine:
         )
 
 
-
         training_assessment = (
             self.training_analyzer.analyze(
                 training
             )
         )
-
 
 
         injury_assessment = (
@@ -235,13 +294,11 @@ class CoachEngine:
         )
 
 
-
         nutrition_assessment = (
             self.nutrition_analyzer.analyze(
                 nutrition
             )
         )
-
 
 
         load_analysis = (
@@ -252,7 +309,6 @@ class CoachEngine:
                 }
             )
         )
-
 
 
         adaptation_analysis = (
@@ -266,7 +322,6 @@ class CoachEngine:
                 }
             )
         )
-
 
 
         performance_analysis = (
