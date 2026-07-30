@@ -1,15 +1,19 @@
 """
-IronCoach - Context Builder v0.2
+IronCoach - Context Builder v0.3
 
 Costruisce il contesto completo dell'atleta
 leggendo i dati da Airtable.
 
-Integra il primo livello intelligence:
+Integra:
 
 - AthleteProfileEngine
+- Performance History placeholder
 
-Il profilo atleta viene aggiunto al contesto,
-senza modificare ancora la logica decisionale.
+Il livello storico è predisposto per future integrazioni:
+- Garmin Connect
+- Strava
+
+La logica decisionale non viene modificata.
 """
 
 
@@ -65,6 +69,19 @@ class ContextBuilder:
                 self.client.get_latest_decision()
             ),
 
+
+            # Placeholder storico performance.
+            # In futuro alimentato da:
+            # Garmin Connect / Strava
+
+            "performance_history": [],
+
+
+            # Placeholder storico allenamenti.
+            # In futuro alimentato da:
+            # Garmin Connect / Strava
+
+            "training_history": [],
 
         }
 
