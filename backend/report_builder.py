@@ -1,11 +1,8 @@
 """
-IronCoach Report Builder v0.2
+IronCoach Report Builder
 
 Costruisce un report leggibile a partire
 dal Context Builder e dal Coach Engine.
-
-Include una sezione dedicata alla nuova
-intelligence dell'atleta.
 """
 
 
@@ -15,44 +12,16 @@ class ReportBuilder:
     in un report testuale leggibile.
     """
 
-    def build(
-        self,
-        context,
-        decision,
-    ):
+    def build(self, context, decision):
 
         context = context or {}
         decision = decision or {}
 
-        athlete = context.get(
-            "athlete",
-            {},
-        ) or {}
-
-        recovery = context.get(
-            "recovery",
-            {},
-        ) or {}
-
-        training = context.get(
-            "training",
-            {},
-        ) or {}
-
-        nutrition = context.get(
-            "nutrition",
-            {},
-        ) or {}
-
-        last_decision = context.get(
-            "decision",
-            {},
-        ) or {}
-
-        intelligence = decision.get(
-            "intelligence",
-            {},
-        ) or {}
+        athlete = context.get("athlete", {}) or {}
+        recovery = context.get("recovery", {}) or {}
+        training = context.get("training", {}) or {}
+        nutrition = context.get("nutrition", {}) or {}
+        last_decision = context.get("decision", {}) or {}
 
         report = []
 
@@ -63,36 +32,36 @@ class ReportBuilder:
         self._append_section(
             report,
             "ATLETA",
-            athlete,
+            athlete
         )
 
         self._append_section(
             report,
             "RECOVERY",
-            recovery,
+            recovery
         )
 
         self._append_section(
             report,
             "TRAINING",
-            training,
+            training
         )
 
         self._append_section(
             report,
             "NUTRITION",
-            nutrition,
+            nutrition
         )
 
         self._append_coach_summary(
             report,
             context,
-            decision,
+            decision
         )
 
         self._append_intelligence(
             report,
-            intelligence,
+            decision
         )
 
         report.append("")
@@ -100,14 +69,11 @@ class ReportBuilder:
         report.append("-" * 60)
 
         if last_decision:
-
             self._append_fields(
                 report,
-                last_decision,
+                last_decision
             )
-
         else:
-
             report.append(
                 "Nessuna decisione precedente."
             )
@@ -119,13 +85,14 @@ class ReportBuilder:
 
         self._append_fields(
             report,
-            decision,
+            decision
         )
 
         report.append("")
         report.append("=" * 60)
 
         return "\n".join(report)
+
 
     # -------------------------------------------------
     # SEZIONI STANDARD
@@ -135,7 +102,7 @@ class ReportBuilder:
         self,
         report,
         title,
-        data,
+        data
     ):
 
         report.append("")
@@ -146,7 +113,7 @@ class ReportBuilder:
 
             self._append_fields(
                 report,
-                data,
+                data
             )
 
         else:
@@ -155,6 +122,7 @@ class ReportBuilder:
                 "Nessun dato disponibile."
             )
 
+
     # -------------------------------------------------
     # CAMPI
     # -------------------------------------------------
@@ -162,18 +130,20 @@ class ReportBuilder:
     def _append_fields(
         self,
         report,
-        data,
+        data
     ):
 
-        if not isinstance(
-            data,
-            dict,
-        ):
+        if not isinstance(data, dict):
             return
 
         modified_workout = None
 
         for key, value in data.items():
+
+            # Intelligence viene mostrata
+            # nella sezione dedicata
+            if key == "intelligence":
+                continue
 
             normalized = (
                 str(key)
@@ -184,13 +154,10 @@ class ReportBuilder:
 
             if normalized in (
                 "allenamento modificato",
-                "modified workout",
+                "modified workout"
             ):
 
                 modified_workout = value
-                continue
-
-            if normalized == "intelligence":
                 continue
 
             report.append(
@@ -198,340 +165,55 @@ class ReportBuilder:
                 f"{self._format_value(value)}"
             )
 
+
         if modified_workout:
 
             self._append_modified_workout(
                 report,
-                modified_workout,
+                modified_workout
             )
 
+
     # -------------------------------------------------
-    # INTELLIGENCE ATLETA
+    # INTELLIGENCE
     # -------------------------------------------------
 
     def _append_intelligence(
         self,
         report,
-        intelligence,
+        decision
     ):
 
-        if not isinstance(
-            intelligence,
-            dict,
-        ):
-
-            return
+        intelligence = decision.get(
+            "intelligence"
+        )
 
         if not intelligence:
             return
 
-        athlete_profile = intelligence.get(
-            "athlete_profile",
-            {},
-        ) or {}
-
-        load_analysis = intelligence.get(
-            "load",
-            {},
-        ) or {}
-
-        adaptation_analysis = intelligence.get(
-            "adaptation",
-            {},
-        ) or {}
-
-        performance_analysis = intelligence.get(
-            "performance",
-            {},
-        ) or {}
-
         report.append("")
-        report.append("INTELLIGENCE ATLETA")
-        report.append("-" * 60)
-
-        self._append_athlete_profile(
-            report,
-            athlete_profile,
+        report.append(
+            "INTELLIGENCE ATLETA"
+        )
+        report.append(
+            "-" * 60
         )
 
-        self._append_load_analysis(
-            report,
-            load_analysis,
-        )
+        if isinstance(intelligence, dict):
 
-        self._append_adaptation_analysis(
-            report,
-            adaptation_analysis,
-        )
+            for key, value in intelligence.items():
 
-        self._append_performance_analysis(
-            report,
-            performance_analysis,
-        )
+                report.append(
+                    f"{self._label(key)}: "
+                    f"{self._format_value(value)}"
+                )
 
-    def _append_athlete_profile(
-        self,
-        report,
-        profile,
-    ):
-
-        report.append("")
-        report.append("PROFILO ATLETA")
-
-        if not profile:
+        else:
 
             report.append(
-                "• Profilo non disponibile"
+                self._format_value(intelligence)
             )
-            return
 
-        athlete_type = profile.get(
-            "athlete_type",
-            "N/D",
-        )
-
-        strengths = profile.get(
-            "strengths",
-            [],
-        )
-
-        limitations = profile.get(
-            "limitations",
-            [],
-        )
-
-        preferences = profile.get(
-            "training_preferences",
-            [],
-        )
-
-        load_tolerance = profile.get(
-            "load_tolerance",
-            {},
-        )
-
-        injury_patterns = profile.get(
-            "injury_patterns",
-            [],
-        )
-
-        report.append(
-            "• Tipo atleta: "
-            f"{self._format_value(athlete_type)}"
-        )
-
-        report.append(
-            "• Punti di forza: "
-            f"{self._format_value(strengths)}"
-        )
-
-        report.append(
-            "• Limitazioni note: "
-            f"{self._format_value(limitations)}"
-        )
-
-        report.append(
-            "• Preferenze allenamento: "
-            f"{self._format_value(preferences)}"
-        )
-
-        report.append(
-            "• Tolleranza al carico: "
-            f"{self._format_value(load_tolerance)}"
-        )
-
-        report.append(
-            "• Pattern infortuni: "
-            f"{self._format_value(injury_patterns)}"
-        )
-
-    def _append_load_analysis(
-        self,
-        report,
-        load_analysis,
-    ):
-
-        report.append("")
-        report.append("CARICO STORICO")
-
-        if not load_analysis:
-
-            report.append(
-                "• Analisi non disponibile"
-            )
-            return
-
-        level = load_analysis.get(
-            "level",
-            "UNKNOWN",
-        )
-
-        total_load = load_analysis.get(
-            "total_load",
-            0,
-        )
-
-        sessions = load_analysis.get(
-            "sessions",
-            0,
-        )
-
-        distribution = load_analysis.get(
-            "sport_distribution",
-            {},
-        )
-
-        reasons = load_analysis.get(
-            "reasons",
-            [],
-        )
-
-        report.append(
-            "• Stato carico: "
-            f"{self._format_value(level)}"
-        )
-
-        report.append(
-            "• Carico totale analizzato: "
-            f"{self._format_value(total_load)}"
-        )
-
-        report.append(
-            "• Sedute analizzate: "
-            f"{self._format_value(sessions)}"
-        )
-
-        report.append(
-            "• Distribuzione per sport: "
-            f"{self._format_sport_distribution(distribution)}"
-        )
-
-        report.append(
-            "• Valutazione: "
-            f"{self._format_value(reasons)}"
-        )
-
-    def _append_adaptation_analysis(
-        self,
-        report,
-        adaptation_analysis,
-    ):
-
-        report.append("")
-        report.append("ADATTAMENTO AL CARICO")
-
-        if not adaptation_analysis:
-
-            report.append(
-                "• Analisi non disponibile"
-            )
-            return
-
-        level = adaptation_analysis.get(
-            "adaptation_level",
-            "UNKNOWN",
-        )
-
-        risk_factors = adaptation_analysis.get(
-            "risk_factors",
-            [],
-        )
-
-        positive_factors = adaptation_analysis.get(
-            "positive_factors",
-            [],
-        )
-
-        reasons = adaptation_analysis.get(
-            "reasons",
-            [],
-        )
-
-        report.append(
-            "• Capacità di adattamento: "
-            f"{self._format_value(level)}"
-        )
-
-        report.append(
-            "• Fattori positivi: "
-            f"{self._format_value(positive_factors)}"
-        )
-
-        report.append(
-            "• Fattori di rischio: "
-            f"{self._format_value(risk_factors)}"
-        )
-
-        report.append(
-            "• Valutazione: "
-            f"{self._format_value(reasons)}"
-        )
-
-    def _append_performance_analysis(
-        self,
-        report,
-        performance_analysis,
-    ):
-
-        report.append("")
-        report.append("TREND PERFORMANCE")
-
-        if not performance_analysis:
-
-            report.append(
-                "• Analisi non disponibile"
-            )
-            return
-
-        trend = performance_analysis.get(
-            "trend",
-            "UNKNOWN",
-        )
-
-        metrics = performance_analysis.get(
-            "metrics",
-            {},
-        )
-
-        strengths = performance_analysis.get(
-            "strengths",
-            [],
-        )
-
-        concerns = performance_analysis.get(
-            "concerns",
-            [],
-        )
-
-        reasons = performance_analysis.get(
-            "reasons",
-            [],
-        )
-
-        report.append(
-            "• Trend complessivo: "
-            f"{self._format_value(trend)}"
-        )
-
-        report.append(
-            "• Variazioni metriche: "
-            f"{self._format_performance_metrics(metrics)}"
-        )
-
-        report.append(
-            "• Segnali positivi: "
-            f"{self._format_value(strengths)}"
-        )
-
-        report.append(
-            "• Aspetti da monitorare: "
-            f"{self._format_value(concerns)}"
-        )
-
-        report.append(
-            "• Valutazione: "
-            f"{self._format_value(reasons)}"
-        )
 
     # -------------------------------------------------
     # ALLENAMENTO MODIFICATO
@@ -540,13 +222,10 @@ class ReportBuilder:
     def _append_modified_workout(
         self,
         report,
-        workout,
+        workout
     ):
 
-        if not isinstance(
-            workout,
-            dict,
-        ):
+        if not isinstance(workout, dict):
             return
 
         report.append("")
@@ -608,17 +287,19 @@ class ReportBuilder:
                 "Note",
         }
 
+
         for key, value in workout.items():
 
             label = mapping.get(
                 key,
-                self._label(key),
+                self._label(key)
             )
 
             report.append(
                 f"{label}: "
                 f"{self._format_value(value)}"
             )
+
 
     # -------------------------------------------------
     # SINTESI COACH
@@ -628,23 +309,24 @@ class ReportBuilder:
         self,
         report,
         context,
-        decision,
+        decision
     ):
 
         recovery = context.get(
             "recovery",
-            {},
+            {}
         ) or {}
 
         training = context.get(
             "training",
-            {},
+            {}
         ) or {}
 
         nutrition = context.get(
             "nutrition",
-            {},
+            {}
         ) or {}
+
 
         report.append("")
         report.append(
@@ -654,49 +336,48 @@ class ReportBuilder:
             "-" * 60
         )
 
+
         recovery_state = recovery.get(
             "Stato Recovery",
             recovery.get(
                 "recovery_state",
-                "N/D",
-            ),
+                "N/D"
+            )
         )
 
         recovery_score = recovery.get(
             "Recovery Score",
             recovery.get(
                 "recovery_score",
-                "N/D",
-            ),
+                "N/D"
+            )
         )
 
         sleep = recovery.get(
             "Sleep Score",
-            "N/D",
+            "N/D"
         )
 
         sleep_hours = recovery.get(
             "Ore sonno",
-            "N/D",
+            "N/D"
         )
 
         workout = training.get(
             "Nome seduta",
-            "N/D",
+            "N/D"
         )
 
         rpe = training.get(
             "RPE percepito",
-            training.get(
-                "Rpe percepito",
-                "N/D",
-            ),
+            "N/D"
         )
 
         nutrition_state = nutrition.get(
             "Stato recupero nutrizionale",
-            "N/D",
+            "N/D"
         )
+
 
         report.append(
             f"• Stato recovery: {recovery_state}, "
@@ -717,12 +398,13 @@ class ReportBuilder:
             f"• Nutrizione: {nutrition_state}"
         )
 
+
         risk = decision.get(
             "risk_level",
             decision.get(
                 "risk",
-                "N/D",
-            ),
+                "N/D"
+            )
         )
 
         report.append("")
@@ -730,13 +412,14 @@ class ReportBuilder:
             f"Rischio complessivo: {risk}"
         )
 
+
     # -------------------------------------------------
     # FORMATTAZIONE
     # -------------------------------------------------
 
     def _label(
         self,
-        value,
+        value
     ):
 
         return (
@@ -745,21 +428,17 @@ class ReportBuilder:
             .capitalize()
         )
 
+
     def _format_value(
         self,
-        value,
+        value
     ):
 
         if value is None:
             return "N/D"
 
-        if isinstance(
-            value,
-            dict,
-        ):
 
-            if not value:
-                return "N/D"
+        if isinstance(value, dict):
 
             if "value" in value:
 
@@ -768,32 +447,23 @@ class ReportBuilder:
                 )
 
             return ", ".join(
-                f"{self._label(key)}: "
-                f"{self._format_value(item)}"
-                for key, item in value.items()
+                f"{k}={self._format_value(v)}"
+                for k, v in value.items()
             )
 
-        if isinstance(
-            value,
-            (
-                list,
-                tuple,
-                set,
-            ),
-        ):
+
+        if isinstance(value, list):
 
             if not value:
                 return "N/D"
 
-            return "; ".join(
+            return ", ".join(
                 self._format_value(item)
                 for item in value
             )
 
-        if isinstance(
-            value,
-            str,
-        ):
+
+        if isinstance(value, str):
 
             value = value.strip()
 
@@ -802,141 +472,5 @@ class ReportBuilder:
 
             return value
 
-        if isinstance(
-            value,
-            float,
-        ):
-
-            if value.is_integer():
-                return str(
-                    int(value)
-                )
-
-            return str(
-                round(
-                    value,
-                    2,
-                )
-            )
 
         return str(value)
-
-    def _format_sport_distribution(
-        self,
-        distribution,
-    ):
-
-        if not isinstance(
-            distribution,
-            dict,
-        ):
-
-            return "N/D"
-
-        if not distribution:
-            return "N/D"
-
-        labels = {
-            "run": "Corsa",
-            "running": "Corsa",
-            "bike": "Bici",
-            "cycling": "Bici",
-            "swim": "Nuoto",
-            "swimming": "Nuoto",
-            "strength": "Forza",
-            "unknown": "Altro",
-        }
-
-        values = []
-
-        for sport, load in distribution.items():
-
-            label = labels.get(
-                str(sport).lower(),
-                self._label(sport),
-            )
-
-            values.append(
-                f"{label}: "
-                f"{self._format_value(load)}"
-            )
-
-        return "; ".join(values)
-
-    def _format_performance_metrics(
-        self,
-        metrics,
-    ):
-
-        if not isinstance(
-            metrics,
-            dict,
-        ):
-
-            return "N/D"
-
-        if not metrics:
-            return "N/D"
-
-        labels = {
-            "vo2max_run": "VO₂max corsa",
-            "vo2max_bike": "VO₂max bici",
-            "ftp": "FTP",
-            "css": "CSS",
-        }
-
-        values = []
-
-        for metric, change in metrics.items():
-
-            label = labels.get(
-                metric,
-                self._label(metric),
-            )
-
-            numeric_change = self._number(
-                change
-            )
-
-            if numeric_change is None:
-
-                formatted_change = (
-                    self._format_value(change)
-                )
-
-            elif numeric_change > 0:
-
-                formatted_change = (
-                    f"+{numeric_change:g}%"
-                )
-
-            else:
-
-                formatted_change = (
-                    f"{numeric_change:g}%"
-                )
-
-            values.append(
-                f"{label}: {formatted_change}"
-            )
-
-        return "; ".join(values)
-
-    def _number(
-        self,
-        value,
-    ):
-
-        if value is None:
-            return None
-
-        try:
-
-            return float(value)
-
-        except (
-            TypeError,
-            ValueError,
-        ):
-
-            return None
