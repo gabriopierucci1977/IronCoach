@@ -1,127 +1,163 @@
 """
-IronCoach - Context Builder v0.4
+IronCoach - Context Builder
 
-Costruisce il contesto completo dell'atleta.
-
-Integra:
-
-- AthleteProfileEngine
-- HistoryBuilder
-
-Preparato per future sorgenti:
-
-- Garmin Connect
-- Strava
-
-La logica decisionale esistente
-rimane invariata.
+Costruisce il contesto completo dell'atleta
+leggendo dati da Airtable e preparando
+gli storici per gli analyzer.
 """
 
 
-from backend.intelligence.athlete_profile_engine import (
-    AthleteProfileEngine,
-)
-
-from backend.history.history_builder import (
-    HistoryBuilder,
-)
+from backend.history.training_history import TrainingHistory
+from backend.history.recovery_history import RecoveryHistory
+from backend.history.performance_history import PerformanceHistory
 
 
 
 class ContextBuilder:
 
 
-
-    def __init__(
-        self,
-        airtable_client,
-    ):
+    def __init__(self, airtable_client):
 
         self.client = airtable_client
-
-
-        self.profile_engine = (
-            AthleteProfileEngine()
-        )
-
-
-        self.history_builder = (
-            HistoryBuilder()
-        )
 
 
 
     def build(self):
 
 
-        context = {
+        athlete = self.client.get_athlete_profile()
+
+        recovery = self.client.get_latest_recovery()
+
+        training = self.client.get_latest_training()
+
+        nutrition = self.client.get_latest_nutrition()
+
+        decision = self.client.get_latest_decision()
 
 
-            "athlete": (
-                self.client.get_athlete_profile()
-            ),
+
+        # -----------------------------------------
+        # HISTORY LAYER
+        # -----------------------------------------
+
+        training_history = TrainingHistory()
+
+        recovery_history = RecoveryHistory()
+
+        performance_history = PerformanceHistory()
 
 
-            "recovery": (
-                self.client.get_latest_recovery()
-            ),
+
+        # -----------------------------------------
+        # TRAINING HISTORY
+        # -----------------------------------------
+
+        try:
+
+            sessions = self.client.get_training_history()
+
+            for session in sessions:
+
+                training_history.add_session(
+                    session
+                )
 
 
-            "training": (
-                self.client.get_latest_training()
-            ),
+        except Exception:
+
+            pass
 
 
-            "nutrition": (
-                self.client.get_latest_nutrition()
-            ),
+
+        # -----------------------------------------
+        # RECOVERY HISTORY
+        # -----------------------------------------
+
+        try:
+
+            records = self.client.get_recovery_history()
+
+            for record in records:
+
+                recovery_history.add_record(
+                    record
+                )
 
 
-            "decision": (
-                self.client.get_latest_decision()
-            ),
+        except Exception:
+
+            pass
 
 
-            # Storico predisposto per:
-            # Garmin Connect / Strava
 
-            "training_history": [],
+        # -----------------------------------------
+        # PERFORMANCE HISTORY
+        # -----------------------------------------
 
-            "recovery_history": [],
+        try:
 
-            "performance_history": [],
+            metrics = self.client.get_performance_history()
+
+            for metric in metrics:
+
+                performance_history.add_record(
+                    metric
+                )
+
+
+        except Exception:
+
+            pass
+
+
+
+        return {
+
+
+            "athlete": athlete,
+
+
+            "recovery": recovery,
+
+
+            "training": training,
+
+
+            "nutrition": nutrition,
+
+
+            "decision": decision,
+
+
+
+            # storico grezzo
+            "training_history":
+                training_history.get_metrics(),
+
+
+            "recovery_history":
+                recovery_history.get_metrics(),
+
+
+            "performance_history":
+                performance_history.get_metrics(),
+
+
+
+            # oggetti history disponibili
+            # per analyzer futuri
+            "history": {
+
+                "training":
+                    training_history,
+
+                "recovery":
+                    recovery_history,
+
+                "performance":
+                    performance_history
+
+            }
 
         }
-
-
-
-        context["athlete_profile"] = (
-            self.profile_engine.analyze(
-                {
-                    "athlete": context["athlete"]
-                }
-            )
-        )
-
-
-
-        context["history"] = (
-            self.history_builder.build(
-                {
-
-                    "training_history":
-                        context["training_history"],
-
-                    "recovery_history":
-                        context["recovery_history"],
-
-                    "performance_history":
-                        context["performance_history"],
-
-                }
-            )
-        )
-
-
-
-        return context
