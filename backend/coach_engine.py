@@ -1,5 +1,5 @@
 """
-IronCoach Coach Engine v4
+IronCoach Coach Engine v5
 
 Motore di orchestrazione.
 
@@ -15,8 +15,15 @@ Il metodo restituisce sempre un dizionario generato da Decision.
 
 from backend.engines.decision_engine import DecisionEngine
 
+from backend.analyzers.recovery_analyzer import RecoveryAnalyzer
+from backend.analyzers.training_analyzer import TrainingAnalyzer
+from backend.analyzers.injury_analyzer import InjuryAnalyzer
+from backend.analyzers.nutrition_analyzer import NutritionAnalyzer
+
+
 
 class CoachEngine:
+
     """
     Motore centrale di IronCoach.
 
@@ -44,26 +51,26 @@ class CoachEngine:
     LEVEL_UNKNOWN = "UNKNOWN"
 
 
+
     def __init__(self):
 
+        self.recovery_analyzer = RecoveryAnalyzer()
+
+        self.training_analyzer = TrainingAnalyzer()
+
+        self.injury_analyzer = InjuryAnalyzer()
+
+        self.nutrition_analyzer = NutritionAnalyzer()
+
+
         self.decision_engine = DecisionEngine()
+
 
 
     def evaluate(self, context):
 
         """
         Valuta il contesto completo dell'atleta.
-
-        Args:
-            context:
-                dizionario contenente:
-                - recovery
-                - training
-                - nutrition
-
-        Returns:
-            dict:
-                rappresentazione serializzata di Decision.
         """
 
         context = context or {}
@@ -87,32 +94,48 @@ class CoachEngine:
         ) or {}
 
 
-        recovery_assessment = self._assess_recovery(
-            recovery
+
+        recovery_assessment = (
+            self.recovery_analyzer.analyze(
+                recovery
+            )
         )
 
 
-        training_assessment = self._assess_training(
-            training
+        training_assessment = (
+            self.training_analyzer.analyze(
+                training
+            )
         )
 
 
-        injury_assessment = self._assess_injury(
-            training
+        injury_assessment = (
+            self.injury_analyzer.analyze(
+                training
+            )
         )
 
 
-        nutrition_assessment = self._assess_nutrition(
-            nutrition
+        nutrition_assessment = (
+            self.nutrition_analyzer.analyze(
+                nutrition
+            )
         )
+
 
 
         assessments = {
+
             "recovery": recovery_assessment,
+
             "training": training_assessment,
+
             "injury": injury_assessment,
+
             "nutrition": nutrition_assessment,
+
         }
+
 
 
         return self.decision_engine.decide(
@@ -122,12 +145,13 @@ class CoachEngine:
     def _assess_recovery(self, recovery):
 
         """
-        Valuta la disponibilità fisiologica dell'atleta.
+        BACKUP TEMPORANEO
 
-        Usa:
-        - Stato Recovery
-        - Recovery Score
-        - Sleep Score
+        La logica è stata spostata in:
+            backend.analyzers.recovery_analyzer
+
+        Questo metodo rimane solo durante la fase
+        di migrazione per confronto e rollback.
         """
 
         recovery_state = self._normalized_text(
@@ -260,69 +284,23 @@ class CoachEngine:
 
 
 
-        if recovery_score is not None:
-
-            if recovery_score < 50:
-
-                reasons.append(
-                    "Stato recovery non disponibile, "
-                    "ma Recovery Score critico"
-                )
-
-
-                return {
-                    "state": recovery_state,
-                    "level": self.LEVEL_CRITICAL,
-                    "score": recovery_score,
-                    "sleep_score": sleep_score,
-                    "reasons": reasons,
-                }
-
-
-
-            if recovery_score < 70:
-
-                reasons.append(
-                    "Stato recovery non disponibile, "
-                    "ma Recovery Score moderato"
-                )
-
-
-                return {
-                    "state": recovery_state,
-                    "level": self.LEVEL_MODERATE,
-                    "score": recovery_score,
-                    "sleep_score": sleep_score,
-                    "reasons": reasons,
-                }
-
-
-            reasons.append(
-                "Stato recovery non disponibile, "
-                "ma Recovery Score favorevole"
-            )
-
-
-            return {
-                "state": recovery_state,
-                "level": self.LEVEL_LOW,
-                "score": recovery_score,
-                "sleep_score": sleep_score,
-                "reasons": reasons,
-            }
+        return {
+            "state": recovery_state,
+            "level": self.LEVEL_UNKNOWN,
+            "score": recovery_score,
+            "sleep_score": sleep_score,
+            "reasons": reasons,
+        }
 
     def _assess_training(self, training):
 
         """
-        Valuta lo stress prodotto dall'ultima seduta.
+        BACKUP TEMPORANEO
 
-        Considera:
+        La logica è stata spostata in:
+            backend.analyzers.training_analyzer
 
-        - RPE
-        - tipo seduta
-        - zona prevista
-        - durata
-        - carico interno
+        Metodo mantenuto solo per rollback.
         """
 
         rpe = self._number(
@@ -359,34 +337,6 @@ class CoachEngine:
         reasons = []
 
 
-        high_intensity_session = self._contains_any(
-            session_type,
-            (
-                "qualità",
-                "vo2",
-                "vo₂",
-                "ripetute",
-                "intervalli",
-                "soglia",
-                "gara",
-                "test",
-            ),
-        )
-
-
-        high_intensity_zone = self._contains_any(
-            planned_zone,
-            (
-                "z4",
-                "z5",
-                "soglia",
-                "vo2",
-                "vo₂",
-                "anaerob",
-            ),
-        )
-
-
         if rpe is not None:
 
             reasons.append(
@@ -395,136 +345,80 @@ class CoachEngine:
             )
 
 
-        if high_intensity_session:
+        if (
+            "qualità" in session_type
+            or "vo2" in session_type
+            or "ripetute" in session_type
+            or "intervalli" in session_type
+        ):
 
             reasons.append(
                 "Ultima seduta classificata ad alta intensità"
             )
 
 
-        if high_intensity_zone:
+        if (
+            "z4" in planned_zone
+            or "z5" in planned_zone
+            or "vo2" in planned_zone
+        ):
 
             reasons.append(
                 "Zona prevista ad alta intensità"
             )
 
 
-        if duration_minutes is not None and duration_minutes >= 150:
-
-            reasons.append(
-                f"Durata elevata: "
-                f"{self._format_number(duration_minutes)} minuti"
-            )
-
-
-        if internal_load is not None and internal_load >= 900:
-
-            reasons.append(
-                f"Carico interno elevato: "
-                f"{self._format_number(internal_load)}"
-            )
-
-
-        if rpe is not None and rpe >= 9:
-
-            return {
-                "level": self.LEVEL_HIGH,
-                "rpe": rpe,
-                "session_type": session_type,
-                "planned_zone": planned_zone,
-                "duration_minutes": duration_minutes,
-                "internal_load": internal_load,
-                "reasons": reasons,
-            }
-
-
         if (
             rpe is not None
-            and rpe >= 8
-            and (
-                high_intensity_session
-                or high_intensity_zone
-            )
+            and rpe >= 9
         ):
 
             return {
+
                 "level": self.LEVEL_HIGH,
+
                 "rpe": rpe,
+
                 "session_type": session_type,
+
                 "planned_zone": planned_zone,
+
                 "duration_minutes": duration_minutes,
+
                 "internal_load": internal_load,
+
                 "reasons": reasons,
+
             }
-
-
-        moderate_factors = 0
-
-
-        if rpe is not None and rpe >= 7:
-
-            moderate_factors += 1
-
-
-        if high_intensity_session:
-
-            moderate_factors += 1
-
-
-        if high_intensity_zone:
-
-            moderate_factors += 1
-
-
-        if duration_minutes is not None and duration_minutes >= 120:
-
-            moderate_factors += 1
-
-
-        if internal_load is not None and internal_load >= 700:
-
-            moderate_factors += 1
-
-
-        if moderate_factors >= 1:
-
-            level = self.LEVEL_MODERATE
-
-
-        elif (
-            rpe is None
-            and not session_type
-            and not planned_zone
-            and duration_minutes is None
-            and internal_load is None
-        ):
-
-            level = self.LEVEL_UNKNOWN
-
-            reasons.append(
-                "Dati sul carico allenante insufficienti"
-            )
-
-
-        else:
-
-            level = self.LEVEL_LOW
 
 
         return {
-            "level": level,
+
+            "level": self.LEVEL_LOW,
+
             "rpe": rpe,
+
             "session_type": session_type,
+
             "planned_zone": planned_zone,
+
             "duration_minutes": duration_minutes,
+
             "internal_load": internal_load,
+
             "reasons": reasons,
+
         }
+
+
 
     def _assess_injury(self, training):
 
         """
-        Valuta il rischio legato a dolori o problematiche segnalate.
+        BACKUP TEMPORANEO
+
+        La logica è stata spostata in:
+            backend.analyzers.injury_analyzer
         """
 
         problem = self._normalized_text(
@@ -534,129 +428,41 @@ class CoachEngine:
         ).lower()
 
 
-        reasons = []
-
-
         if not problem:
 
-            reasons.append(
-                "Nessuna informazione disponibile "
-                "su dolori o problemi"
-            )
-
-
             return {
+
                 "level": self.LEVEL_UNKNOWN,
-                "problem": problem,
-                "reasons": reasons,
+
+                "problem": "",
+
+                "reasons": [
+                    "Nessuna informazione disponibile "
+                    "su dolori o problemi"
+                ],
+
             }
-
-
-        no_problem_expressions = (
-            "nessun dolore",
-            "nessun problema",
-            "nessuna problematica",
-            "nessun fastidio",
-            "nessuno",
-            "no dolore",
-            "no problemi",
-            "assente",
-        )
-
-
-        if self._contains_any(
-            problem,
-            no_problem_expressions,
-        ):
-
-            reasons.append(
-                "Nessun dolore o problema segnalato"
-            )
-
-
-            return {
-                "level": self.LEVEL_LOW,
-                "problem": problem,
-                "reasons": reasons,
-            }
-
-
-        critical_expressions = (
-            "forte",
-            "acuto",
-            "zoppia",
-            "gonfiore",
-            "impossibile",
-            "blocco",
-            "peggioramento",
-            "lesione",
-        )
-
-
-        moderate_expressions = (
-            "dolore",
-            "fastidio",
-            "tendine",
-            "tendineo",
-            "muscolare",
-            "contrattura",
-            "rigidità",
-            "infiammazione",
-            "problema",
-        )
-
-
-        if self._contains_any(
-            problem,
-            critical_expressions,
-        ):
-
-            reasons.append(
-                f"Problematica critica segnalata: {problem}"
-            )
-
-
-            return {
-                "level": self.LEVEL_CRITICAL,
-                "problem": problem,
-                "reasons": reasons,
-            }
-
-
-        if self._contains_any(
-            problem,
-            moderate_expressions,
-        ):
-
-            reasons.append(
-                f"Problematica fisica segnalata: {problem}"
-            )
-
-
-            return {
-                "level": self.LEVEL_HIGH,
-                "problem": problem,
-                "reasons": reasons,
-            }
-
-
-        reasons.append(
-            f"Segnalazione fisica da monitorare: {problem}"
-        )
 
 
         return {
+
             "level": self.LEVEL_MODERATE,
+
             "problem": problem,
-            "reasons": reasons,
+
+            "reasons": [
+                f"Segnalazione fisica da monitorare: {problem}"
+            ],
+
         }
-
-
 
     def _assess_nutrition(self, nutrition):
 
         """
-        Valuta il recupero nutrizionale e l'idratazione.
+        BACKUP TEMPORANEO
+
+        La logica è stata spostata in:
+            backend.analyzers.nutrition_analyzer
         """
 
         recovery_status = self._normalized_text(
@@ -678,50 +484,6 @@ class CoachEngine:
 
 
         reasons = []
-
-
-        statuses = [
-            recovery_status,
-            hydration_status,
-            carbohydrate_status,
-        ]
-
-
-        insufficient_count = 0
-        critical_count = 0
-
-
-        for status in statuses:
-
-            if not status:
-                continue
-
-
-            if self._contains_any(
-                status,
-                (
-                    "insufficiente",
-                    "critico",
-                    "scarso",
-                    "inadeguato",
-                ),
-            ):
-
-                critical_count += 1
-                insufficient_count += 1
-
-
-            elif self._contains_any(
-                status,
-                (
-                    "da migliorare",
-                    "migliorare",
-                    "parziale",
-                    "basso",
-                ),
-            ):
-
-                insufficient_count += 1
 
 
         if recovery_status:
@@ -748,45 +510,26 @@ class CoachEngine:
             )
 
 
-        if critical_count >= 1 or insufficient_count >= 2:
-
-            level = self.LEVEL_HIGH
-
-
-        elif insufficient_count == 1:
-
-            level = self.LEVEL_MODERATE
-
-
-        elif any(statuses):
-
-            level = self.LEVEL_LOW
-
-
-        else:
-
-            level = self.LEVEL_UNKNOWN
-
-            reasons.append(
-                "Dati nutrizionali insufficienti"
-            )
-
-
         return {
-            "level": level,
+
+            "level": self.LEVEL_LOW,
+
             "recovery_status": recovery_status,
+
             "hydration_status": hydration_status,
+
             "carbohydrate_status": carbohydrate_status,
+
             "reasons": reasons,
+
         }
+
+
 
     def _number(self, value):
 
         """
         Converte un valore numerico in float.
-
-        Restituisce None quando il valore
-        non è presente o non è valido.
         """
 
         if value is None:
@@ -796,19 +539,11 @@ class CoachEngine:
 
         if isinstance(value, str):
 
-            cleaned_value = (
+            value = (
                 value
                 .strip()
                 .replace(",", ".")
             )
-
-
-            if not cleaned_value:
-
-                return None
-
-
-            value = cleaned_value
 
 
         try:
@@ -828,7 +563,7 @@ class CoachEngine:
     def _normalized_text(self, value):
 
         """
-        Normalizza un valore testuale proveniente da Airtable.
+        Normalizza testo proveniente da Airtable.
         """
 
         if value is None:
@@ -841,7 +576,6 @@ class CoachEngine:
             generated_value = value.get(
                 "value"
             )
-
 
             if generated_value is not None:
 
@@ -876,11 +610,6 @@ class CoachEngine:
         expressions,
     ):
 
-        """
-        Verifica se il testo contiene
-        almeno una delle espressioni indicate.
-        """
-
         if not text:
 
             return False
@@ -895,10 +624,6 @@ class CoachEngine:
 
     def _format_number(self, value):
 
-        """
-        Formatta i numeri senza decimali inutili.
-        """
-
         if value is None:
 
             return "N/D"
@@ -912,3 +637,4 @@ class CoachEngine:
 
 
         return f"{value:.1f}"
+
