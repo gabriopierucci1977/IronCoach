@@ -1,5 +1,5 @@
 """
-IronCoach Coach Engine v6.4
+IronCoach Coach Engine v6.5
 
 Motore centrale di orchestrazione.
 
@@ -35,6 +35,7 @@ class CoachEngine:
     """
 
 
+
     def __init__(self):
 
         self.recovery_analyzer = RecoveryAnalyzer()
@@ -56,7 +57,7 @@ class CoachEngine:
 
 
     # ==================================================
-    # ATHLETE INTELLIGENCE NORMALIZER
+    # HELPERS
     # ==================================================
 
     def _first_value(
@@ -65,10 +66,6 @@ class CoachEngine:
         keys,
         default="N/D",
     ):
-        """
-        Recupera il primo valore disponibile
-        tra più possibili nomi campo.
-        """
 
         for key in keys:
 
@@ -90,8 +87,8 @@ class CoachEngine:
         athlete_profile,
     ):
         """
-        Normalizza il profilo atleta Airtable
-        per la sezione Intelligence.
+        Normalizzazione profilo atleta
+        per Intelligence Report.
         """
 
         athlete_profile = athlete_profile or {}
@@ -115,7 +112,7 @@ class CoachEngine:
                     athlete_profile,
                     [
                         "Punti di forza",
-                        "Obiettivi principali",
+                        "Note coach",
                         "strengths",
                     ],
                 ),
@@ -136,9 +133,20 @@ class CoachEngine:
                 self._first_value(
                     athlete_profile,
                     [
-                        "Preferenze allenamento",
                         "Preferenza",
+                        "Preferenze allenamento",
+                        "Disponibilità allenamento",
                         "training_preferences",
+                    ],
+                ),
+
+
+            "training_distribution":
+                self._first_value(
+                    athlete_profile,
+                    [
+                        "Allenamento distribuito tra",
+                        "training_distribution",
                     ],
                 ),
 
@@ -148,7 +156,7 @@ class CoachEngine:
                     athlete_profile,
                     [
                         "Tolleranza al carico",
-                        "Note coach",
+                        "Disponibilità allenamento",
                         "load_tolerance",
                     ],
                 ),
@@ -190,6 +198,7 @@ class CoachEngine:
                     athlete_profile,
                     [
                         "Vo₂max corsa",
+                        "VO₂max corsa",
                         "VO2max corsa",
                         "vo2max_run",
                     ],
@@ -201,6 +210,7 @@ class CoachEngine:
                     athlete_profile,
                     [
                         "Vo₂max bici",
+                        "VO₂max bici",
                         "VO2max bici",
                         "vo2max_bike",
                     ],
@@ -208,6 +218,10 @@ class CoachEngine:
         }
 
 
+
+    # ==================================================
+    # EVALUATION
+    # ==================================================
 
     def evaluate(
         self,
@@ -235,13 +249,11 @@ class CoachEngine:
         ) or {}
 
 
-
         athlete_profile = (
             context.get("athlete_profile")
             or context.get("athlete")
             or {}
         )
-
 
 
         training_history = context.get(
