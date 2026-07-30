@@ -1,21 +1,17 @@
 """
-IronCoach Coach Engine v6
+IronCoach Coach Engine v6.1
 
 Motore di orchestrazione.
 
 Responsabilità:
 
 - ricevere il contesto atleta;
-- chiamare gli analyzer dedicati;
-- passare gli assessment al DecisionEngine;
-- restituire la decisione finale.
+- chiamare gli analyzer;
+- arricchire il contesto con informazioni intelligence;
+- passare gli assessment al DecisionEngine.
 
-La logica di valutazione è contenuta nei moduli:
-
-backend/analyzers/
-
+La logica decisionale rimane nel DecisionEngine.
 """
-
 
 
 from backend.engines.decision_engine import DecisionEngine
@@ -25,6 +21,8 @@ from backend.analyzers.recovery_analyzer import RecoveryAnalyzer
 from backend.analyzers.training_analyzer import TrainingAnalyzer
 from backend.analyzers.injury_analyzer import InjuryAnalyzer
 from backend.analyzers.nutrition_analyzer import NutritionAnalyzer
+from backend.analyzers.load_analyzer import LoadAnalyzer
+from backend.analyzers.adaptation_analyzer import AdaptationAnalyzer
 
 
 
@@ -32,15 +30,7 @@ from backend.analyzers.nutrition_analyzer import NutritionAnalyzer
 class CoachEngine:
 
 
-    """
-    Orchestratore principale IronCoach.
-
-    Non contiene logica decisionale.
-    """
-
-
     def __init__(self):
-
 
         self.recovery_analyzer = RecoveryAnalyzer()
 
@@ -51,8 +41,12 @@ class CoachEngine:
         self.nutrition_analyzer = NutritionAnalyzer()
 
 
-        self.decision_engine = DecisionEngine()
+        self.load_analyzer = LoadAnalyzer()
 
+        self.adaptation_analyzer = AdaptationAnalyzer()
+
+
+        self.decision_engine = DecisionEngine()
 
 
 
@@ -60,23 +54,6 @@ class CoachEngine:
         self,
         context,
     ):
-
-        """
-        Valuta il contesto completo atleta.
-
-        Input:
-
-            {
-                "recovery": {},
-                "training": {},
-                "nutrition": {}
-            }
-
-
-        Output:
-
-            decision generata dal DecisionEngine
-        """
 
 
         context = context or {}
@@ -89,12 +66,10 @@ class CoachEngine:
         ) or {}
 
 
-
         training = context.get(
             "training",
             {},
         ) or {}
-
 
 
         nutrition = context.get(
@@ -102,6 +77,12 @@ class CoachEngine:
             {},
         ) or {}
 
+
+
+        athlete_profile = context.get(
+            "athlete_profile",
+            {},
+        ) or {}
 
 
 
@@ -137,20 +118,64 @@ class CoachEngine:
 
 
 
+        #
+        # Intelligence layer
+        #
+
+
+        load_analysis = (
+            self.load_analyzer.analyze(
+                {
+                    "training_history":
+                        context.get(
+                            "training_history",
+                            []
+                        )
+                }
+            )
+        )
+
+
+
+        adaptation_analysis = (
+            self.adaptation_analyzer.analyze(
+                {
+                    "athlete_profile":
+                        athlete_profile,
+
+                    "load_analysis":
+                        load_analysis,
+                }
+            )
+        )
+
+
 
         assessments = {
 
 
-            "recovery": recovery_assessment,
+            "recovery":
+                recovery_assessment,
 
 
-            "training": training_assessment,
+            "training":
+                training_assessment,
 
 
-            "injury": injury_assessment,
+            "injury":
+                injury_assessment,
 
 
-            "nutrition": nutrition_assessment,
+            "nutrition":
+                nutrition_assessment,
+
+
+            "load":
+                load_analysis,
+
+
+            "adaptation":
+                adaptation_analysis,
 
 
         }
