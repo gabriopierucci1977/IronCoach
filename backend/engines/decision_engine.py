@@ -2,30 +2,20 @@
 IronCoach Decision Engine
 
 Responsabilità:
+
 - combinare le valutazioni prodotte dagli analyzer;
 - generare la decisione finale;
+- utilizzare intelligence storica atleta;
 - mantenere compatibilità con Decision.to_dict().
-
-La logica decisionale è estratta da CoachEngine senza
-modificare il comportamento originale.
 """
+
 
 from backend.decision import Decision
 
 
+
 class DecisionEngine:
-    """
-    Decision layer centrale di IronCoach.
 
-    Riceve:
-        - recovery assessment
-        - training assessment
-        - injury assessment
-        - nutrition assessment
-
-    Restituisce:
-        dizionario serializzato tramite Decision.to_dict()
-    """
 
     LEVEL_LOW = "LOW"
     LEVEL_MODERATE = "MODERATE"
@@ -34,29 +24,120 @@ class DecisionEngine:
     LEVEL_UNKNOWN = "UNKNOWN"
 
 
-    def decide(self, assessments):
-        """
-        Combina le valutazioni e genera la decisione finale.
-        """
 
-        recovery = assessments["recovery"]
-        training = assessments["training"]
-        injury = assessments["injury"]
-        nutrition = assessments["nutrition"]
-
-        recovery_level = recovery["level"]
-        training_level = training["level"]
-        injury_level = injury["level"]
-        nutrition_level = nutrition["level"]
-
-        reasoning = self._build_reasoning(assessments)
+    def decide(
+        self,
+        assessments,
+    ):
 
 
-        # ------------------------------------------------------
-        # BLOCCO DI SICUREZZA: RISCHIO FISICO CRITICO
-        # ------------------------------------------------------
+        assessments = assessments or {}
+
+
+        recovery = assessments.get(
+            "recovery",
+            {},
+        )
+
+
+        training = assessments.get(
+            "training",
+            {},
+        )
+
+
+        injury = assessments.get(
+            "injury",
+            {},
+        )
+
+
+        nutrition = assessments.get(
+            "nutrition",
+            {},
+        )
+
+
+        load = assessments.get(
+            "load",
+            {},
+        )
+
+
+        recovery_trend = assessments.get(
+            "recovery_trend",
+            {},
+        )
+
+
+        adaptation = assessments.get(
+            "adaptation",
+            {},
+        )
+
+
+        performance = assessments.get(
+            "performance",
+            {},
+        )
+
+
+
+        recovery_level = recovery.get(
+            "level",
+            self.LEVEL_UNKNOWN,
+        )
+
+
+        training_level = training.get(
+            "level",
+            self.LEVEL_UNKNOWN,
+        )
+
+
+        injury_level = injury.get(
+            "level",
+            self.LEVEL_UNKNOWN,
+        )
+
+
+        nutrition_level = nutrition.get(
+            "level",
+            self.LEVEL_UNKNOWN,
+        )
+
+
+        load_level = load.get(
+            "level",
+            self.LEVEL_UNKNOWN,
+        )
+
+
+        recovery_trend_status = recovery_trend.get(
+            "trend",
+            "UNKNOWN",
+        )
+
+
+        adaptation_level = adaptation.get(
+            "adaptation_level",
+            "UNKNOWN",
+        )
+
+
+
+        reasoning = self._build_reasoning(
+            assessments
+        )
+
+
+
+        # ======================================================
+        # RISCHIO FISICO CRITICO
+        # ======================================================
 
         if injury_level == self.LEVEL_CRITICAL:
+
 
             return self._decision(
                 decision="RECUPERA",
@@ -76,11 +157,13 @@ class DecisionEngine:
             )
 
 
-        # ------------------------------------------------------
-        # RECOVERY ROSSO O CRITICO
-        # ------------------------------------------------------
+
+        # ======================================================
+        # RECOVERY CRITICO
+        # ======================================================
 
         if recovery_level == self.LEVEL_CRITICAL:
+
 
             return self._decision(
                 decision="RECUPERA",
@@ -100,14 +183,48 @@ class DecisionEngine:
             )
 
 
-        # ------------------------------------------------------
-        # RECOVERY GIALLO + RISCHIO FISICO
-        # ------------------------------------------------------
+
+        # ======================================================
+        # INTELLIGENCE:
+        # CARICO ALTO + TREND RECOVERY NEGATIVO
+        # ======================================================
+
+        if (
+            recovery_level == self.LEVEL_MODERATE
+            and load_level == self.LEVEL_HIGH
+            and recovery_trend_status == "DECLINING"
+        ):
+
+
+            return self._decision(
+                decision="RECUPERA",
+                reason=(
+                    "Il carico recente è elevato e il trend del recupero "
+                    "è in peggioramento. Aumentare lo stress allenante "
+                    "potrebbe compromettere l'adattamento."
+                ),
+                priority="Recovery",
+                confidence=96,
+                strategy="RECOVERY",
+                recommended_action=(
+                    "Ridurre il carico. Preferire recupero attivo, "
+                    "zona aerobica facile e nessun lavoro ad alta intensità."
+                ),
+                reasoning=reasoning,
+                risk_level="HIGH_ALERT",
+            )
+
+
+
+        # ======================================================
+        # RECOVERY MODERATO + RISCHIO FISICO
+        # ======================================================
 
         if (
             recovery_level == self.LEVEL_MODERATE
             and injury_level == self.LEVEL_HIGH
         ):
+
 
             return self._decision(
                 decision="RECUPERA",
@@ -126,9 +243,11 @@ class DecisionEngine:
                 risk_level="HIGH_ALERT",
             )
 
-        # ------------------------------------------------------
-        # RECOVERY GIALLO + CARICO ALTO + NUTRIZIONE CARENTE
-        # ------------------------------------------------------
+
+
+        # ======================================================
+        # RECOVERY GIALLO + CARICO + NUTRIZIONE
+        # ======================================================
 
         if (
             recovery_level == self.LEVEL_MODERATE
@@ -136,206 +255,63 @@ class DecisionEngine:
             and nutrition_level == self.LEVEL_HIGH
         ):
 
+
             return self._decision(
                 decision="RECUPERA",
                 reason=(
                     "Recovery moderato, stress allenante elevato e recupero "
-                    "nutrizionale insufficiente indicano la necessità di una "
-                    "giornata rigenerante."
+                    "nutrizionale insufficiente indicano la necessità di "
+                    "una giornata rigenerante."
                 ),
                 priority="Recovery",
                 confidence=96,
                 strategy="RECOVERY",
                 recommended_action=(
                     "Riposo oppure attività rigenerante in Z1. "
-                    "Ripristina carboidrati, liquidi e proteine prima "
-                    "del prossimo lavoro di qualità."
+                    "Ripristina carboidrati, liquidi e proteine."
                 ),
                 reasoning=reasoning,
                 risk_level="HIGH_ALERT",
             )
-
-
-        # ------------------------------------------------------
-        # RECOVERY GIALLO + DUE FATTORI MODERATI/ALTI
-        # ------------------------------------------------------
-
-        if recovery_level == self.LEVEL_MODERATE:
-
-            additional_risk_factors = self._count_levels(
-                (
-                    training_level,
-                    injury_level,
-                    nutrition_level,
-                ),
-                (
-                    self.LEVEL_MODERATE,
-                    self.LEVEL_HIGH,
-                    self.LEVEL_CRITICAL,
-                ),
-            )
-
-            high_risk_factors = self._count_levels(
-                (
-                    training_level,
-                    injury_level,
-                    nutrition_level,
-                ),
-                (
-                    self.LEVEL_HIGH,
-                    self.LEVEL_CRITICAL,
-                ),
-            )
-
-
-            if high_risk_factors >= 2:
-
-                return self._decision(
-                    decision="RECUPERA",
-                    reason=(
-                        "Il recovery è moderato e sono presenti più fattori "
-                        "di rischio elevato. Una seduta allenante non è "
-                        "consigliata."
-                    ),
-                    priority="Recovery",
-                    confidence=95,
-                    strategy="RECOVERY",
-                    recommended_action=(
-                        "Giornata di recupero o attività rigenerante in Z1, "
-                        "senza intensità."
-                    ),
-                    reasoning=reasoning,
-                    risk_level="HIGH_ALERT",
-                )
-
-
-            if additional_risk_factors >= 1:
-
-                return self._decision(
-                    decision="RIDUZIONE",
-                    reason=(
-                        "Il recovery è moderato e il contesto non supporta "
-                        "il carico completo previsto."
-                    ),
-                    priority="Recovery",
-                    confidence=92,
-                    strategy="REDUCE_LOAD",
-                    recommended_action=(
-                        "Riduci volume e intensità. Mantieni solo lavoro "
-                        "aerobico facile e interrompi in caso di peggioramento "
-                        "delle sensazioni."
-                    ),
-                    reasoning=reasoning,
-                    risk_level="CAUTION",
-                )
-
-
-            return self._decision(
-                decision="RIDUZIONE",
-                reason=(
-                    "Il recovery è moderato: è prudente ridurre il carico "
-                    "anche in assenza di altri segnali critici."
-                ),
-                priority="Recovery",
-                confidence=90,
-                strategy="REDUCE_LOAD",
-                recommended_action=(
-                    "Riduci il volume previsto e mantieni intensità "
-                    "prevalentemente aerobica."
-                ),
-                reasoning=reasoning,
-                risk_level="CAUTION",
-            )
-
-
-        # ------------------------------------------------------
-        # RECOVERY VERDE + PROBLEMATICA FISICA
-        # ------------------------------------------------------
-
-        if injury_level == self.LEVEL_HIGH:
-
-            return self._decision(
-                decision="ADATTA",
-                reason=(
-                    "Il recovery generale è favorevole, ma la problematica "
-                    "fisica richiede una modifica specifica della seduta."
-                ),
-                priority="Recovery",
-                confidence=94,
-                strategy="ADAPT",
-                recommended_action=(
-                    "Evita il gesto o la disciplina che provoca dolore. "
-                    "Sostituisci la seduta con attività a basso impatto."
-                ),
-                reasoning=reasoning,
-                risk_level="CAUTION",
-            )
-
-        # ------------------------------------------------------
-        # RECOVERY VERDE + CARICO ALTO E NUTRIZIONE CARENTE
-        # ------------------------------------------------------
+        # ======================================================
+        # RECOVERY VERDE + CARICO ELEVATO
+        # ======================================================
 
         if (
             recovery_level == self.LEVEL_LOW
             and training_level == self.LEVEL_HIGH
-            and nutrition_level == self.LEVEL_HIGH
+            and load_level == self.LEVEL_HIGH
         ):
+
 
             return self._decision(
                 decision="ADATTA",
                 reason=(
-                    "Il recovery è favorevole, ma lo stress dell'ultima "
-                    "seduta e il recupero nutrizionale insufficiente "
-                    "suggeriscono di adattare lo stimolo."
-                ),
-                priority="Recovery",
-                confidence=91,
-                strategy="ADAPT",
-                recommended_action=(
-                    "Mantieni la seduta, ma riduci intensità o durata. "
-                    "Cura il reintegro nutrizionale e l'idratazione."
-                ),
-                reasoning=reasoning,
-                risk_level="CAUTION",
-            )
-
-
-        # ------------------------------------------------------
-        # RECOVERY VERDE + CARICO ALTO
-        # ------------------------------------------------------
-
-        if (
-            recovery_level == self.LEVEL_LOW
-            and training_level == self.LEVEL_HIGH
-        ):
-
-            return self._decision(
-                decision="ADATTA",
-                reason=(
-                    "Il recovery è favorevole, ma l'ultima seduta ha "
-                    "prodotto uno stress elevato. Lo stimolo può essere "
-                    "mantenuto in forma ridotta."
+                    "Il recovery è favorevole ma il carico recente è elevato. "
+                    "È necessario mantenere lo stimolo riducendo il rischio."
                 ),
                 priority="Performance",
-                confidence=89,
+                confidence=90,
                 strategy="ADAPT",
                 recommended_action=(
-                    "Mantieni l'obiettivo della seduta riducendo durata, "
-                    "numero di ripetute o intensità."
+                    "Mantieni la seduta modificando volume o intensità "
+                    "in base alle sensazioni."
                 ),
                 reasoning=reasoning,
                 risk_level="CAUTION",
             )
 
 
-        # ------------------------------------------------------
+
+        # ======================================================
         # RECOVERY VERDE + NUTRIZIONE CARENTE
-        # ------------------------------------------------------
+        # ======================================================
 
         if (
             recovery_level == self.LEVEL_LOW
             and nutrition_level == self.LEVEL_HIGH
         ):
+
 
             return self._decision(
                 decision="ADATTA",
@@ -355,11 +331,13 @@ class DecisionEngine:
             )
 
 
-        # ------------------------------------------------------
+
+        # ======================================================
         # DATI RECOVERY NON DISPONIBILI
-        # ------------------------------------------------------
+        # ======================================================
 
         if recovery_level == self.LEVEL_UNKNOWN:
+
 
             if (
                 injury_level in (
@@ -369,6 +347,7 @@ class DecisionEngine:
                 or training_level == self.LEVEL_HIGH
                 or nutrition_level == self.LEVEL_HIGH
             ):
+
 
                 return self._decision(
                     decision="RIDUZIONE",
@@ -380,8 +359,8 @@ class DecisionEngine:
                     confidence=78,
                     strategy="REDUCE_LOAD",
                     recommended_action=(
-                        "Esegui solo lavoro aerobico facile e raccogli nuovi "
-                        "dati recovery prima di una seduta intensa."
+                        "Esegui solo lavoro aerobico facile e raccogli "
+                        "nuovi dati recovery prima di una seduta intensa."
                     ),
                     reasoning=reasoning,
                     risk_level="CAUTION",
@@ -405,9 +384,11 @@ class DecisionEngine:
                 risk_level="CAUTION",
             )
 
-        # ------------------------------------------------------
-        # RECOVERY VERDE + FATTORI MODERATI
-        # ------------------------------------------------------
+
+
+        # ======================================================
+        # FATTORI MODERATI
+        # ======================================================
 
         moderate_factors = self._count_levels(
             (
@@ -422,6 +403,7 @@ class DecisionEngine:
 
 
         if moderate_factors >= 2:
+
 
             return self._decision(
                 decision="ADATTA",
@@ -441,9 +423,10 @@ class DecisionEngine:
             )
 
 
-        # ------------------------------------------------------
-        # CONFERMA DEL PIANO
-        # ------------------------------------------------------
+
+        # ======================================================
+        # CONFERMA PIANO
+        # ======================================================
 
         return self._decision(
             decision="CONFERMA",
@@ -460,38 +443,133 @@ class DecisionEngine:
         )
 
 
-    def _build_reasoning(self, assessments):
-        """
-        Costruisce una lista leggibile e priva di duplicati.
-        """
+
+    # ======================================================
+    # REASONING
+    # ======================================================
+
+    def _build_reasoning(
+        self,
+        assessments,
+    ):
+
 
         reasoning = []
 
+
         labels = (
-            ("Recovery", assessments["recovery"]),
-            ("Carico", assessments["training"]),
-            ("Rischio fisico", assessments["injury"]),
-            ("Nutrizione", assessments["nutrition"]),
+
+            (
+                "Recovery",
+                assessments.get(
+                    "recovery",
+                    {},
+                ),
+            ),
+
+            (
+                "Carico",
+                assessments.get(
+                    "load",
+                    {},
+                ),
+            ),
+
+            (
+                "Trend recovery",
+                assessments.get(
+                    "recovery_trend",
+                    {},
+                ),
+            ),
+
+            (
+                "Adattamento",
+                assessments.get(
+                    "adaptation",
+                    {},
+                ),
+            ),
+
+            (
+                "Allenamento",
+                assessments.get(
+                    "training",
+                    {},
+                ),
+            ),
+
+            (
+                "Rischio fisico",
+                assessments.get(
+                    "injury",
+                    {},
+                ),
+            ),
+
+            (
+                "Nutrizione",
+                assessments.get(
+                    "nutrition",
+                    {},
+                ),
+            ),
         )
+
+
 
         for label, assessment in labels:
 
-            level = assessment.get(
-                "level",
-                self.LEVEL_UNKNOWN,
+
+            level = (
+                assessment.get(
+                    "level"
+                )
+                or assessment.get(
+                    "adaptation_level"
+                )
+                or assessment.get(
+                    "trend"
+                )
+                or self.LEVEL_UNKNOWN
             )
 
-            reasoning.append(
-                f"{label}: {self._level_label(level)}"
+
+            item = (
+                f"{label}: "
+                f"{self._level_label(level)}"
             )
 
-            for reason in assessment.get("reasons", []):
 
-                if reason and reason not in reasoning:
-                    reasoning.append(reason)
+            if item not in reasoning:
+                reasoning.append(item)
+
+
+
+            for reason in assessment.get(
+                "reasons",
+                [],
+            ):
+
+
+                if (
+                    reason
+                    and reason not in reasoning
+                ):
+
+                    reasoning.append(
+                        reason
+                    )
+
+
 
         return reasoning
 
+
+
+    # ======================================================
+    # CREAZIONE DECISIONE
+    # ======================================================
 
     def _decision(
         self,
@@ -504,11 +582,9 @@ class DecisionEngine:
         reasoning,
         risk_level,
     ):
-        """
-        Crea e serializza una Decision.
-        """
 
-        return Decision(
+
+        result = Decision(
             decision=decision,
             reason=reason,
             priority=priority,
@@ -517,39 +593,66 @@ class DecisionEngine:
             recommended_action=recommended_action,
             reasoning=reasoning,
             risk_level=risk_level,
-        ).to_dict()
-
-
-    def _count_levels(
-        self,
-        levels,
-        accepted_levels,
-    ):
-        """
-        Conta quanti livelli appartengono all'insieme indicato.
-        """
-
-        return sum(
-            1
-            for level in levels
-            if level in accepted_levels
         )
 
 
-    def _level_label(self, level):
-        """
-        Converte i livelli interni in etichette leggibili.
-        """
+        return result.to_dict()
 
-        labels = {
-            self.LEVEL_LOW: "basso",
-            self.LEVEL_MODERATE: "moderato",
-            self.LEVEL_HIGH: "alto",
-            self.LEVEL_CRITICAL: "critico",
-            self.LEVEL_UNKNOWN: "non determinato",
+
+
+    # ======================================================
+    # UTILITY
+    # ======================================================
+
+    def _count_levels(
+        self,
+        values,
+        levels,
+    ):
+
+        return sum(
+            1
+            for value in values
+            if value in levels
+        )
+
+
+
+    def _level_label(
+        self,
+        level,
+    ):
+
+
+        mapping = {
+
+            self.LEVEL_LOW:
+                "basso",
+
+            self.LEVEL_MODERATE:
+                "moderato",
+
+            self.LEVEL_HIGH:
+                "alto",
+
+            self.LEVEL_CRITICAL:
+                "critico",
+
+            self.LEVEL_UNKNOWN:
+                "non disponibile",
+
+            "DECLINING":
+                "in peggioramento",
+
+            "IMPROVING":
+                "in miglioramento",
+
+            "MODERATE":
+                "moderato",
         }
 
-        return labels.get(
+
+        return mapping.get(
             level,
-            "non determinato",
+            level,
         )
