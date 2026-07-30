@@ -1,5 +1,5 @@
 """
-IronCoach Coach Engine v6.5
+IronCoach Coach Engine v6.6
 
 Motore centrale di orchestrazione.
 
@@ -35,7 +35,6 @@ class CoachEngine:
     """
 
 
-
     def __init__(self):
 
         self.recovery_analyzer = RecoveryAnalyzer()
@@ -67,6 +66,8 @@ class CoachEngine:
         default="N/D",
     ):
 
+        data = data or {}
+
         for key in keys:
 
             value = data.get(key)
@@ -87,8 +88,8 @@ class CoachEngine:
         athlete_profile,
     ):
         """
-        Normalizzazione profilo atleta
-        per Intelligence Report.
+        Normalizza il profilo atleta Airtable
+        per la sezione Intelligence.
         """
 
         athlete_profile = athlete_profile or {}
@@ -178,6 +179,7 @@ class CoachEngine:
                     athlete_profile,
                     [
                         "Sport principale",
+                        "Sport principale ",
                         "sport_profile",
                     ],
                 ),
@@ -220,7 +222,7 @@ class CoachEngine:
 
 
     # ==================================================
-    # EVALUATION
+    # MAIN EVALUATION
     # ==================================================
 
     def evaluate(
@@ -249,11 +251,14 @@ class CoachEngine:
         ) or {}
 
 
+
         athlete_profile = (
             context.get("athlete_profile")
             or context.get("athlete")
+            or context.get("athlete_profile_data")
             or {}
         )
+
 
 
         training_history = context.get(

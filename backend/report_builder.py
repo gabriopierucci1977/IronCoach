@@ -1,14 +1,8 @@
 """
 IronCoach Report Builder
 
-Costruisce un report leggibile
+Costruisce il report leggibile
 dal Context Builder e dal Coach Engine.
-
-Versione corretta:
-- compatibilità Airtable + analyzer normalizzati
-- gestione intelligence atleta
-- separazione decisione / workout modificato
-- formattazione dizionari sicura
 """
 
 
@@ -32,50 +26,43 @@ class ReportBuilder:
         )
 
 
-        recovery = (
-            context.get("recovery")
-            or {}
-        )
+        recovery = context.get(
+            "recovery",
+            {},
+        ) or {}
 
 
-        training = (
-            context.get("training")
-            or {}
-        )
+        training = context.get(
+            "training",
+            {},
+        ) or {}
 
 
-        nutrition = (
-            context.get("nutrition")
-            or {}
-        )
+        nutrition = context.get(
+            "nutrition",
+            {},
+        ) or {}
 
 
-        last_decision = (
-            context.get("decision")
-            or {}
-        )
+        last_decision = context.get(
+            "decision",
+            {},
+        ) or {}
 
 
-        intelligence = (
-            decision.get("intelligence")
-            or {}
-        )
+        intelligence = decision.get(
+            "intelligence",
+            {},
+        ) or {}
 
 
         report = []
 
 
         report.append("=" * 60)
-        report.append(
-            "IRONCOACH REPORT"
-        )
+        report.append("IRONCOACH REPORT")
         report.append("=" * 60)
 
-
-
-        # --------------------------------------------------
-        # ATLETA
-        # --------------------------------------------------
 
         self._append_section(
             report,
@@ -84,22 +71,12 @@ class ReportBuilder:
         )
 
 
-
-        # --------------------------------------------------
-        # RECOVERY
-        # --------------------------------------------------
-
         self._append_section(
             report,
             "RECOVERY",
             recovery,
         )
 
-
-
-        # --------------------------------------------------
-        # TRAINING
-        # --------------------------------------------------
 
         self._append_section(
             report,
@@ -108,22 +85,12 @@ class ReportBuilder:
         )
 
 
-
-        # --------------------------------------------------
-        # NUTRITION
-        # --------------------------------------------------
-
         self._append_section(
             report,
             "NUTRITION",
             nutrition,
         )
 
-
-
-        # --------------------------------------------------
-        # SUMMARY
-        # --------------------------------------------------
 
         self._append_coach_summary(
             report,
@@ -132,21 +99,11 @@ class ReportBuilder:
         )
 
 
-
-        # --------------------------------------------------
-        # INTELLIGENCE
-        # --------------------------------------------------
-
         self._append_intelligence(
             report,
             intelligence,
         )
 
-
-
-        # --------------------------------------------------
-        # ULTIMA DECISIONE
-        # --------------------------------------------------
 
         report.append("")
         report.append(
@@ -155,20 +112,11 @@ class ReportBuilder:
         report.append("-" * 60)
 
 
-        self._append_fields(
+        self._append_decision_history(
             report,
             last_decision,
-            skip_keys=[
-                "modified_workout",
-                "allenamento modificato",
-            ],
         )
 
-
-
-        # --------------------------------------------------
-        # DECISIONE COACH
-        # --------------------------------------------------
 
         report.append("")
         report.append("=" * 60)
@@ -176,7 +124,6 @@ class ReportBuilder:
             "DECISIONE DEL COACH"
         )
         report.append("=" * 60)
-
 
 
         self._append_fields(
@@ -190,21 +137,13 @@ class ReportBuilder:
         )
 
 
-
-        # --------------------------------------------------
-        # WORKOUT MODIFICATO
-        # --------------------------------------------------
-
         modified_workout = (
-
             decision.get(
-                "modified_workout"
+                "modified_workout",
             )
-
             or decision.get(
-                "allenamento modificato"
+                "allenamento modificato",
             )
-
         )
 
 
@@ -216,7 +155,6 @@ class ReportBuilder:
             )
 
 
-
         report.append("")
         report.append("=" * 60)
 
@@ -225,42 +163,43 @@ class ReportBuilder:
 
 
 
-
-
     # ==================================================
-    # GENERIC SECTION
+    # DECISION HISTORY
     # ==================================================
 
-
-    def _append_section(
+    def _append_decision_history(
         self,
         report,
-        title,
-        data,
+        decision,
     ):
 
-        report.append("")
-        report.append(title)
-        report.append("-" * 60)
-
-
-        if not data:
-            report.append("N/D")
+        if not decision:
             return
 
 
+        blocked = {
+            "modified_workout",
+            "allenamento modificato",
+            "allenamento_modificato",
+        }
 
-        for key, value in data.items():
+
+        for key, value in decision.items():
+
+            if str(key).lower() in blocked:
+                continue
+
 
             report.append(
                 f"{self._label(key)}: "
                 f"{self._format_value(value)}"
             )
 
-    # ==================================================
-    # INTELLIGENCE ATLETA
-    # ==================================================
 
+
+    # ==================================================
+    # INTELLIGENCE
+    # ==================================================
 
     def _append_intelligence(
         self,
@@ -279,9 +218,9 @@ class ReportBuilder:
         report.append("-" * 60)
 
 
-
-        self._append_athlete_profile(
+        self._append_block(
             report,
+            "PROFILO ATLETA",
             intelligence.get(
                 "athlete_profile",
                 {},
@@ -330,85 +269,6 @@ class ReportBuilder:
 
 
 
-
-
-    # ==================================================
-    # ATHLETE PROFILE INTELLIGENCE
-    # ==================================================
-
-
-    def _append_athlete_profile(
-        self,
-        report,
-        profile,
-    ):
-
-        if not profile:
-            return
-
-
-
-        report.append("")
-        report.append(
-            "PROFILO ATLETA"
-        )
-
-
-
-        mapping = {
-
-            "athlete_type":
-                "Tipo atleta",
-
-            "type":
-                "Tipo atleta",
-
-
-            "strengths":
-                "Punti di forza",
-
-
-            "limitations":
-                "Limitazioni note",
-
-
-            "training_preferences":
-                "Preferenze allenamento",
-
-
-            "load_tolerance":
-                "Tolleranza al carico",
-
-
-            "injury_patterns":
-                "Pattern infortuni",
-
-        }
-
-
-
-        for key, value in profile.items():
-
-            label = mapping.get(
-                key,
-                self._label(key),
-            )
-
-
-            report.append(
-                f"• {label}: "
-                f"{self._format_value(value)}"
-            )
-
-
-
-
-
-    # ==================================================
-    # GENERIC INTELLIGENCE BLOCK
-    # ==================================================
-
-
     def _append_block(
         self,
         report,
@@ -420,10 +280,8 @@ class ReportBuilder:
             return
 
 
-
         report.append("")
         report.append(title)
-
 
 
         for key, value in data.items():
@@ -433,14 +291,9 @@ class ReportBuilder:
                 f"{self._format_value(value)}"
             )
 
-
-
-
-
     # ==================================================
     # MODIFIED WORKOUT
     # ==================================================
-
 
     def _append_modified_workout(
         self,
@@ -455,13 +308,11 @@ class ReportBuilder:
             return
 
 
-
         report.append("")
         report.append(
             "ALLENAMENTO MODIFICATO"
         )
         report.append("-" * 60)
-
 
 
         mapping = {
@@ -510,22 +361,21 @@ class ReportBuilder:
 
             "notes":
                 "Note",
-
         }
-
 
 
         for key, value in workout.items():
 
             report.append(
-                f"{mapping.get(key, key)}: "
+                f"{mapping.get(key,key)}: "
                 f"{self._format_value(value)}"
             )
 
-    # ==================================================
-    # COACH SUMMARY
-    # ==================================================
 
+
+    # ==================================================
+    # SUMMARY
+    # ==================================================
 
     def _append_coach_summary(
         self,
@@ -534,31 +384,23 @@ class ReportBuilder:
         decision,
     ):
 
-        recovery = (
-            context.get(
-                "recovery",
-                {},
-            )
-            or {}
-        )
+        recovery = context.get(
+            "recovery",
+            {},
+        ) or {}
 
 
-        training = (
-            context.get(
-                "training",
-                {},
-            )
-            or {}
-        )
+        training = context.get(
+            "training",
+            {},
+        ) or {}
 
 
-        nutrition = (
-            context.get(
-                "nutrition",
-                {},
-            )
-            or {}
-        )
+        nutrition = context.get(
+            "nutrition",
+            {},
+        ) or {}
+
 
 
         report.append("")
@@ -569,110 +411,65 @@ class ReportBuilder:
 
 
 
-        recovery_state = (
-
-            recovery.get(
-                "Stato recovery"
-            )
-
-            or recovery.get(
-                "stato_recovery"
-            )
-
-            or recovery.get(
-                "recovery_state"
-            )
-
-            or "N/D"
-
+        recovery_state = self._first_value(
+            recovery,
+            [
+                "Stato recovery",
+                "Stato Recovery",
+                "stato_recovery",
+                "recovery_state",
+                "Recovery state",
+            ],
         )
 
 
-
-        recovery_score = (
-
-            recovery.get(
-                "Recovery score"
-            )
-
-            or recovery.get(
-                "Recovery Score"
-            )
-
-            or recovery.get(
-                "recovery_score"
-            )
-
-            or "N/D"
-
+        recovery_score = self._first_value(
+            recovery,
+            [
+                "Recovery score",
+                "Recovery Score",
+                "recovery_score",
+            ],
         )
 
 
-
-        sleep_score = (
-
-            recovery.get(
-                "Sleep score"
-            )
-
-            or recovery.get(
-                "Sleep Score"
-            )
-
-            or recovery.get(
-                "sleep_score"
-            )
-
-            or "N/D"
-
+        sleep_score = self._first_value(
+            recovery,
+            [
+                "Sleep score",
+                "Sleep Score",
+                "sleep_score",
+            ],
         )
 
 
-
-        sleep_hours = (
-
-            recovery.get(
-                "Ore sonno"
-            )
-
-            or recovery.get(
-                "ore_sonno"
-            )
-
-            or "N/D"
-
+        sleep_hours = self._first_value(
+            recovery,
+            [
+                "Ore sonno",
+                "ore_sonno",
+                "sleep_hours",
+            ],
         )
 
 
-
-        workout = (
-
-            training.get(
-                "Nome seduta"
-            )
-
-            or training.get(
-                "nome_seduta"
-            )
-
-            or "N/D"
-
+        workout = self._first_value(
+            training,
+            [
+                "Nome seduta",
+                "nome_seduta",
+                "workout_name",
+            ],
         )
 
 
-
-        nutrition_state = (
-
-            nutrition.get(
-                "Stato recupero nutrizionale"
-            )
-
-            or nutrition.get(
-                "stato_recupero_nutrizionale"
-            )
-
-            or "N/D"
-
+        nutrition_state = self._first_value(
+            nutrition,
+            [
+                "Stato recupero nutrizionale",
+                "stato_recupero_nutrizionale",
+                "nutrition_state",
+            ],
         )
 
 
@@ -691,41 +488,52 @@ class ReportBuilder:
 
 
         report.append(
-            f"• Ultima seduta: "
-            f"{workout}"
+            f"• Ultima seduta: {workout}"
         )
 
 
         report.append(
-            f"• Nutrizione: "
-            f"{nutrition_state}"
-        )
-
-
-
-        risk = (
-
-            decision.get(
-                "risk_level"
-            )
-
-            or "N/D"
-
+            f"• Nutrizione: {nutrition_state}"
         )
 
 
         report.append("")
+
+
         report.append(
-            f"Rischio complessivo: {risk}"
+            "Rischio complessivo: "
+            +
+            str(
+                decision.get(
+                    "risk_level",
+                    "N/D",
+                )
+            )
         )
 
 
 
+    # ==================================================
+    # GENERIC HELPERS
+    # ==================================================
+
+    def _append_section(
+        self,
+        report,
+        title,
+        data,
+    ):
+
+        report.append("")
+        report.append(title)
+        report.append("-" * 60)
 
 
-    # ==================================================
-    # FIELD WRITER
-    # ==================================================
+        self._append_fields(
+            report,
+            data,
+        )
+
 
 
     def _append_fields(
@@ -739,17 +547,19 @@ class ReportBuilder:
             return
 
 
-
-        skip_keys = skip_keys or []
-
+        blocked = {
+            str(item).lower()
+            for item in (
+                skip_keys
+                or []
+            )
+        }
 
 
         for key, value in data.items():
 
-
-            if key in skip_keys:
+            if str(key).lower() in blocked:
                 continue
-
 
 
             report.append(
@@ -759,11 +569,30 @@ class ReportBuilder:
 
 
 
+    def _first_value(
+        self,
+        data,
+        keys,
+        default="N/D",
+    ):
+
+        data = data or {}
 
 
-    # ==================================================
-    # FORMAT HELPERS
-    # ==================================================
+        for key in keys:
+
+            value = data.get(key)
+
+            if value not in (
+                None,
+                "",
+                [],
+            ):
+                return value
+
+
+        return default
+
 
 
     def _label(
@@ -773,57 +602,62 @@ class ReportBuilder:
 
         labels = {
 
-            "risk_level":
-                "Risk level",
-
-            "recommended_action":
-                "Azione consigliata",
-
-            "strategy":
-                "Strategia",
+            "decision":
+                "Decisione ironcoach",
 
             "reason":
                 "Motivazione",
 
-            "confidence":
-                "Confidenza",
-
             "priority":
                 "Priorità",
 
-            "decision":
-                "Decisione ironcoach",
+            "confidence":
+                "Confidenza",
 
-            "reasoning":
-                "Reasoning",
+            "strategy":
+                "Strategia",
 
-            "total_load":
-                "Carico totale",
+            "recommended_action":
+                "Azione consigliata",
 
-            "sessions_with_load":
-                "Sedute con carico",
+            "risk_level":
+                "Risk level",
 
-            "sport_distribution":
-                "Distribuzione sport",
+            "athlete_type":
+                "Tipo atleta",
 
-            "adaptation_level":
-                "Livello adattamento",
+            "strengths":
+                "Punti di forza",
 
-            "data_quality":
-                "Qualità dati",
+            "limitations":
+                "Limitazioni note",
 
+            "training_preferences":
+                "Preferenze allenamento",
+
+            "sport_profile":
+                "Sport principale",
+
+            "experience_years":
+                "Anni esperienza",
+
+            "vo2max_run":
+                "Vo2max corsa",
+
+            "vo2max_bike":
+                "Vo2max bici",
         }
 
 
         return labels.get(
             key,
-            str(key).replace(
+            str(key)
+            .replace(
                 "_",
                 " ",
-            ).capitalize(),
+            )
+            .capitalize(),
         )
-
-
 
 
 
@@ -832,10 +666,8 @@ class ReportBuilder:
         value,
     ):
 
-
         if value is None:
             return "N/D"
-
 
 
         if isinstance(
@@ -843,12 +675,28 @@ class ReportBuilder:
             dict,
         ):
 
+            if "value" in value:
+
+                return self._format_value(
+                    value.get("value")
+                )
+
+
             return "; ".join(
-                [
-                    f"{self._label(k)}="
-                    f"{self._format_value(v)}"
-                    for k, v in value.items()
-                ]
+                f"{key}: {self._format_value(val)}"
+                for key, val in value.items()
+            )
+
+
+
+        if isinstance(
+            value,
+            float,
+        ):
+
+            return round(
+                value,
+                2,
             )
 
 
@@ -859,12 +707,9 @@ class ReportBuilder:
         ):
 
             return ", ".join(
-                [
-                    self._format_value(item)
-                    for item in value
-                ]
+                str(item)
+                for item in value
             )
 
 
-
-        return str(value)
+        return value
