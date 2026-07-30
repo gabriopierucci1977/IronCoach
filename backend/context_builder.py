@@ -37,10 +37,6 @@ class ContextBuilder:
 
 
 
-        # -----------------------------------------
-        # HISTORY LAYER
-        # -----------------------------------------
-
         training_history = TrainingHistory()
 
         recovery_history = RecoveryHistory()
@@ -59,9 +55,7 @@ class ContextBuilder:
 
             for session in sessions:
 
-                training_history.add_session(
-                    session
-                )
+                training_history.add_session(session)
 
 
         except Exception:
@@ -80,9 +74,7 @@ class ContextBuilder:
 
             for record in records:
 
-                recovery_history.add_record(
-                    record
-                )
+                recovery_history.add_record(record)
 
 
         except Exception:
@@ -101,9 +93,7 @@ class ContextBuilder:
 
             for metric in metrics:
 
-                performance_history.add_record(
-                    metric
-                )
+                performance_history.add_record(metric)
 
 
         except Exception:
@@ -117,36 +107,35 @@ class ContextBuilder:
 
             "athlete": athlete,
 
-
             "recovery": recovery,
-
 
             "training": training,
 
-
             "nutrition": nutrition,
-
 
             "decision": decision,
 
 
-
-            # storico grezzo
+            # dati grezzi per analyzer
             "training_history":
-                training_history.get_metrics(),
+                training_history.sessions
+                if hasattr(training_history, "sessions")
+                else [],
 
 
             "recovery_history":
-                recovery_history.get_metrics(),
+                recovery_history.records
+                if hasattr(recovery_history, "records")
+                else [],
 
 
             "performance_history":
-                performance_history.get_metrics(),
+                performance_history.records
+                if hasattr(performance_history, "records")
+                else [],
 
 
 
-            # oggetti history disponibili
-            # per analyzer futuri
             "history": {
 
                 "training":
