@@ -1,19 +1,20 @@
 """
-IronCoach - Context Builder v0.3
+IronCoach - Context Builder v0.4
 
-Costruisce il contesto completo dell'atleta
-leggendo i dati da Airtable.
+Costruisce il contesto completo dell'atleta.
 
 Integra:
 
 - AthleteProfileEngine
-- Performance History placeholder
+- HistoryBuilder
 
-Il livello storico è predisposto per future integrazioni:
+Preparato per future sorgenti:
+
 - Garmin Connect
 - Strava
 
-La logica decisionale non viene modificata.
+La logica decisionale esistente
+rimane invariata.
 """
 
 
@@ -21,9 +22,14 @@ from backend.intelligence.athlete_profile_engine import (
     AthleteProfileEngine,
 )
 
+from backend.history.history_builder import (
+    HistoryBuilder,
+)
+
 
 
 class ContextBuilder:
+
 
 
     def __init__(
@@ -33,8 +39,14 @@ class ContextBuilder:
 
         self.client = airtable_client
 
+
         self.profile_engine = (
             AthleteProfileEngine()
+        )
+
+
+        self.history_builder = (
+            HistoryBuilder()
         )
 
 
@@ -70,18 +82,14 @@ class ContextBuilder:
             ),
 
 
-            # Placeholder storico performance.
-            # In futuro alimentato da:
-            # Garmin Connect / Strava
-
-            "performance_history": [],
-
-
-            # Placeholder storico allenamenti.
-            # In futuro alimentato da:
+            # Storico predisposto per:
             # Garmin Connect / Strava
 
             "training_history": [],
+
+            "recovery_history": [],
+
+            "performance_history": [],
 
         }
 
@@ -91,6 +99,25 @@ class ContextBuilder:
             self.profile_engine.analyze(
                 {
                     "athlete": context["athlete"]
+                }
+            )
+        )
+
+
+
+        context["history"] = (
+            self.history_builder.build(
+                {
+
+                    "training_history":
+                        context["training_history"],
+
+                    "recovery_history":
+                        context["recovery_history"],
+
+                    "performance_history":
+                        context["performance_history"],
+
                 }
             )
         )
