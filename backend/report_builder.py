@@ -1,277 +1,330 @@
 """
 IronCoach Report Builder
 
-Costruisce un report leggibile
+Costruisce un report leggibile a partire
 dal Context Builder e dal Coach Engine.
 """
 
 
 class ReportBuilder:
+    """
+    Converte il contesto IronCoach e la decisione finale
+    in un report testuale leggibile.
+    """
 
-
-    def build(
-        self,
-        context,
-        decision,
-    ):
+    def build(self, context, decision):
 
         context = context or {}
         decision = decision or {}
 
-
-        athlete = context.get(
-            "athlete",
-            {},
-        ) or {}
-
-        recovery = context.get(
-            "recovery",
-            {},
-        ) or {}
-
-        training = context.get(
-            "training",
-            {},
-        ) or {}
-
-        nutrition = context.get(
-            "nutrition",
-            {},
-        ) or {}
-
-        last_decision = context.get(
-            "decision",
-            {},
-        ) or {}
-
-
-        intelligence = decision.get(
-            "intelligence",
-            {},
-        ) or {}
-
+        athlete = context.get("athlete", {}) or {}
+        recovery = context.get("recovery", {}) or {}
+        training = context.get("training", {}) or {}
+        nutrition = context.get("nutrition", {}) or {}
+        last_decision = context.get("decision", {}) or {}
 
         report = []
-
 
         report.append("=" * 60)
         report.append("IRONCOACH REPORT")
         report.append("=" * 60)
 
-
         self._append_section(
             report,
             "ATLETA",
-            athlete,
+            athlete
         )
-
 
         self._append_section(
             report,
             "RECOVERY",
-            recovery,
+            recovery
         )
-
 
         self._append_section(
             report,
             "TRAINING",
-            training,
+            training
         )
-
 
         self._append_section(
             report,
             "NUTRITION",
-            nutrition,
+            nutrition
         )
-
 
         self._append_coach_summary(
             report,
             context,
-            decision,
+            decision
         )
-
 
         self._append_intelligence(
             report,
-            intelligence,
+            decision
         )
-
 
         report.append("")
-        report.append(
-            "ULTIMA DECISIONE REGISTRATA"
-        )
+        report.append("ULTIMA DECISIONE REGISTRATA")
         report.append("-" * 60)
 
-
-        self._append_fields(
-            report,
-            last_decision,
-        )
-
+        if last_decision:
+            self._append_fields(
+                report,
+                last_decision
+            )
+        else:
+            report.append(
+                "Nessuna decisione precedente."
+            )
 
         report.append("")
         report.append("=" * 60)
-        report.append(
-            "DECISIONE DEL COACH"
-        )
+        report.append("DECISIONE DEL COACH")
         report.append("=" * 60)
-
 
         self._append_fields(
             report,
-            decision,
-            skip_keys=[
-                "intelligence",
-                "modified_workout",
-                "allenamento modificato",
-            ],
+            decision
         )
 
+        report.append("")
+        report.append("=" * 60)
 
-        modified_workout = (
-            decision.get(
-                "modified_workout",
+        return "\n".join(report)
+
+
+    # -------------------------------------------------
+    # SEZIONI STANDARD
+    # -------------------------------------------------
+
+    def _append_section(
+        self,
+        report,
+        title,
+        data
+    ):
+
+        report.append("")
+        report.append(title)
+        report.append("-" * 60)
+
+        if data:
+
+            self._append_fields(
+                report,
+                data
             )
-            or decision.get(
+
+        else:
+
+            report.append(
+                "Nessun dato disponibile."
+            )
+
+
+    # -------------------------------------------------
+    # CAMPI
+    # -------------------------------------------------
+
+    def _append_fields(
+        self,
+        report,
+        data
+    ):
+
+        if not isinstance(data, dict):
+            return
+
+        modified_workout = None
+
+        for key, value in data.items():
+
+            # Intelligence viene mostrata
+            # nella sezione dedicata
+            if key == "intelligence":
+                continue
+
+            normalized = (
+                str(key)
+                .lower()
+                .replace("_", " ")
+                .strip()
+            )
+
+            if normalized in (
                 "allenamento modificato",
+                "modified workout"
+            ):
+
+                modified_workout = value
+                continue
+
+            report.append(
+                f"{self._label(key)}: "
+                f"{self._format_value(value)}"
             )
-        )
 
 
         if modified_workout:
 
             self._append_modified_workout(
                 report,
-                modified_workout,
+                modified_workout
             )
 
 
-        report.append("")
-        report.append("=" * 60)
-
-
-        return "\n".join(report)
-
-
-
-    # ==================================================
+    # -------------------------------------------------
     # INTELLIGENCE
-    # ==================================================
+    # -------------------------------------------------
 
     def _append_intelligence(
         self,
         report,
-        intelligence,
+        decision
     ):
+
+        intelligence = decision.get(
+            "intelligence"
+        )
 
         if not intelligence:
             return
-
 
         report.append("")
         report.append(
             "INTELLIGENCE ATLETA"
         )
-        report.append("-" * 60)
-
-
-        # Il profilo atleta è già presente nella sezione ATLETA.
-        # Evitiamo duplicazione del report.
-
-
-        self._append_block(
-            report,
-            "CARICO STORICO",
-            intelligence.get(
-                "load",
-                {},
-            ),
+        report.append(
+            "-" * 60
         )
 
+        if isinstance(intelligence, dict):
 
-        self._append_block(
-            report,
-            "ADATTAMENTO AL CARICO",
-            intelligence.get(
-                "adaptation",
-                {},
-            ),
-        )
+            for key, value in intelligence.items():
 
+                report.append(
+                    f"{self._label(key)}: "
+                    f"{self._format_value(value)}"
+                )
 
-        self._append_block(
-            report,
-            "TREND RECOVERY",
-            intelligence.get(
-                "recovery_trend",
-                {},
-            ),
-        )
-
-
-        self._append_block(
-            report,
-            "TREND PERFORMANCE",
-            intelligence.get(
-                "performance",
-                {},
-            ),
-        )
-
-
-
-    def _append_block(
-        self,
-        report,
-        title,
-        data,
-    ):
-
-        if not data:
-            return
-
-
-        report.append("")
-        report.append(title)
-
-
-        for key, value in data.items():
+        else:
 
             report.append(
-                f"• {self._label(key)}: "
+                self._format_value(intelligence)
+            )
+
+
+    # -------------------------------------------------
+    # ALLENAMENTO MODIFICATO
+    # -------------------------------------------------
+
+    def _append_modified_workout(
+        self,
+        report,
+        workout
+    ):
+
+        if not isinstance(workout, dict):
+            return
+
+        report.append("")
+        report.append(
+            "ALLENAMENTO MODIFICATO"
+        )
+        report.append(
+            "-" * 60
+        )
+
+        mapping = {
+
+            "strategy":
+                "Strategia",
+
+            "original_workout":
+                "Seduta originale",
+
+            "sport":
+                "Sport",
+
+            "sport_category":
+                "Categoria sport",
+
+            "original_type":
+                "Tipo originale",
+
+            "original_zone":
+                "Zona originale",
+
+            "original_duration_minutes":
+                "Durata originale",
+
+            "duration_minutes":
+                "Nuova durata",
+
+            "intensity":
+                "Intensità",
+
+            "warmup":
+                "Riscaldamento",
+
+            "main_set":
+                "Parte centrale",
+
+            "cooldown":
+                "Defaticamento",
+
+            "technical_focus":
+                "Focus tecnico",
+
+            "removed_elements":
+                "Elementi rimossi",
+
+            "alternative":
+                "Alternativa",
+
+            "notes":
+                "Note",
+        }
+
+
+        for key, value in workout.items():
+
+            label = mapping.get(
+                key,
+                self._label(key)
+            )
+
+            report.append(
+                f"{label}: "
                 f"{self._format_value(value)}"
             )
 
 
-
-    # ==================================================
-    # SUMMARY
-    # ==================================================
+    # -------------------------------------------------
+    # SINTESI COACH
+    # -------------------------------------------------
 
     def _append_coach_summary(
         self,
         report,
         context,
-        decision,
+        decision
     ):
 
         recovery = context.get(
             "recovery",
-            {},
+            {}
         ) or {}
 
         training = context.get(
             "training",
-            {},
+            {}
         ) or {}
 
         nutrition = context.get(
             "nutrition",
-            {},
+            {}
         ) or {}
 
 
@@ -279,92 +332,67 @@ class ReportBuilder:
         report.append(
             "SINTESI DEL COACH"
         )
-        report.append("-" * 60)
+        report.append(
+            "-" * 60
+        )
 
 
-        recovery_state = self._first_value(
-            recovery,
-            [
-                "Stato recovery",
-                "stato_recovery",
+        recovery_state = recovery.get(
+            "Stato Recovery",
+            recovery.get(
                 "recovery_state",
-                "Recovery state",
-                "Recovery Stato",
-            ],
-            "N/D",
+                "N/D"
+            )
         )
 
-
-        recovery_score = self._first_value(
-            recovery,
-            [
-                "Recovery score",
-                "Recovery Score",
+        recovery_score = recovery.get(
+            "Recovery Score",
+            recovery.get(
                 "recovery_score",
-            ],
-            "N/D",
+                "N/D"
+            )
         )
 
-
-        sleep = self._first_value(
-            recovery,
-            [
-                "Sleep score",
-                "Sleep Score",
-                "sleep_score",
-            ],
-            "N/D",
+        sleep = recovery.get(
+            "Sleep Score",
+            "N/D"
         )
 
-
-        sleep_hours = self._first_value(
-            recovery,
-            [
-                "Ore sonno",
-                "ore_sonno",
-                "sleep_hours",
-            ],
-            "N/D",
+        sleep_hours = recovery.get(
+            "Ore sonno",
+            "N/D"
         )
 
-
-        workout = self._first_value(
-            training,
-            [
-                "Nome seduta",
-                "nome_seduta",
-            ],
-            "N/D",
+        workout = training.get(
+            "Nome seduta",
+            "N/D"
         )
 
+        rpe = training.get(
+            "RPE percepito",
+            "N/D"
+        )
 
-        nutrition_state = self._first_value(
-            nutrition,
-            [
-                "Stato recupero nutrizionale",
-                "stato_recupero_nutrizionale",
-            ],
-            "N/D",
+        nutrition_state = nutrition.get(
+            "Stato recupero nutrizionale",
+            "N/D"
         )
 
 
         report.append(
-            f"• Stato recovery: "
-            f"{recovery_state}, "
+            f"• Stato recovery: {recovery_state}, "
             f"Recovery Score {recovery_score}"
         )
-
 
         report.append(
             f"• Sonno: Sleep Score {sleep}; "
             f"{sleep_hours} ore registrate"
         )
 
-
         report.append(
-            f"• Ultima seduta: {workout}"
+            f"• Ultima seduta: {workout} "
+            f"(RPE {rpe}/10)"
         )
-
 
         report.append(
             f"• Nutrizione: {nutrition_state}"
@@ -373,9 +401,11 @@ class ReportBuilder:
 
         risk = decision.get(
             "risk_level",
-            "N/D",
+            decision.get(
+                "risk",
+                "N/D"
+            )
         )
-
 
         report.append("")
         report.append(
@@ -383,19 +413,64 @@ class ReportBuilder:
         )
 
 
+    # -------------------------------------------------
+    # FORMATTAZIONE
+    # -------------------------------------------------
 
-    def _first_value(
+    def _label(
         self,
-        data,
-        keys,
-        default="N/D",
+        value
     ):
 
-        for key in keys:
+        return (
+            str(value)
+            .replace("_", " ")
+            .capitalize()
+        )
 
-            value = data.get(key)
 
-            if value is not None and value != "":
-                return value
+    def _format_value(
+        self,
+        value
+    ):
 
-        return default
+        if value is None:
+            return "N/D"
+
+
+        if isinstance(value, dict):
+
+            if "value" in value:
+
+                return self._format_value(
+                    value.get("value")
+                )
+
+            return ", ".join(
+                f"{k}={self._format_value(v)}"
+                for k, v in value.items()
+            )
+
+
+        if isinstance(value, list):
+
+            if not value:
+                return "N/D"
+
+            return ", ".join(
+                self._format_value(item)
+                for item in value
+            )
+
+
+        if isinstance(value, str):
+
+            value = value.strip()
+
+            if not value:
+                return "N/D"
+
+            return value
+
+
+        return str(value)
