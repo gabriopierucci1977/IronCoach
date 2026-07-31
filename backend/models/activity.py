@@ -36,18 +36,28 @@ class IronCoachActivity:
     duration_seconds: Optional[int] = None
     distance_meters: Optional[float] = None
     elevation_gain: Optional[float] = None
+    elevation_loss: Optional[float] = None
     calories: Optional[int] = None
+
+    # Speed
+    avg_speed: Optional[float] = None
+    max_speed: Optional[float] = None
 
     # Cardio
     avg_hr: Optional[int] = None
     max_hr: Optional[int] = None
 
+    # Cadence
+    avg_cadence: Optional[float] = None
+    max_cadence: Optional[float] = None
+
     # Power
     avg_power: Optional[float] = None
     normalized_power: Optional[float] = None
 
-    # Load
+    # Training metrics
     training_load: Optional[float] = None
+    training_effect: Optional[float] = None
 
     # Complex structures
     laps: List[dict] = field(default_factory=list)

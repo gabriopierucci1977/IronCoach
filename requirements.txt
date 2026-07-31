@@ -2,3 +2,4 @@ pyairtable
 python-dotenv
 openai
 requests
+fitparse
