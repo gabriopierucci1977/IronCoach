@@ -1,7 +1,11 @@
 """
 Garmin FIT Importer
 
-Converte file Garmin FIT in oggetti IronCoachActivity.
+Converte file Garmin FIT in IronCoachActivity.
+
+Supporta:
+- attività singole
+- attività multisport Garmin
 """
 
 import hashlib
@@ -10,11 +14,12 @@ from pathlib import Path
 from fitparse import FitFile
 
 from backend.models.activity import IronCoachActivity
+from backend.models.activity_segment import IronCoachActivitySegment
 
 
 class GarminFitImporter:
     """
-    Importatore singolo file FIT Garmin.
+    Importatore Garmin FIT.
     """
 
     def __init__(self, file_path: str):
@@ -22,37 +27,55 @@ class GarminFitImporter:
         self.file_path = Path(file_path)
 
 
-    def import_activity(self) -> IronCoachActivity:
+    def import_activity(self):
 
         if not self.file_path.exists():
             raise FileNotFoundError(
                 f"FIT file not found: {self.file_path}"
             )
 
+
         fitfile = FitFile(
             str(self.file_path)
         )
 
-        session_data = self._extract_session(
+
+        sessions = self._extract_sessions(
             fitfile
         )
 
-        sport = self._normalize_sport(
-            session_data.get("sport")
+
+        if len(sessions) > 1:
+            return self._build_multisport_activity(
+                sessions
+            )
+
+
+        return self._build_single_activity(
+            sessions[0]
         )
 
-        metadata = {
-            "garmin": {
-                "file_name": self.file_path.name,
-                "sub_sport": session_data.get(
-                    "sub_sport"
-                ),
-                "trigger": session_data.get(
-                    "trigger"
-                ),
-            }
-        }
 
+    def _extract_sessions(self, fitfile):
+
+        sessions = []
+
+        for message in fitfile.get_messages(
+            "session"
+        ):
+
+            data = {}
+
+            for field in message:
+                data[field.name] = field.value
+
+            sessions.append(data)
+
+        return sessions
+
+
+
+    def _build_single_activity(self, data):
 
         return IronCoachActivity(
 
@@ -65,100 +88,153 @@ class GarminFitImporter:
             file_hash=self.file_hash(),
 
             start_time=str(
-                session_data.get(
-                    "start_time"
-                )
+                data.get("start_time")
             ),
 
-            sport=sport,
+            sport=self._normalize_sport(
+                data.get("sport")
+            ),
 
             activity_type=str(
-                session_data.get(
-                    "sub_sport"
-                )
+                data.get("sub_sport")
             ),
 
             duration_seconds=self._seconds(
-                session_data.get(
-                    "total_timer_time"
-                )
+                data.get("total_timer_time")
             ),
 
-            distance_meters=session_data.get(
+            distance_meters=data.get(
                 "total_distance"
             ),
 
-            elevation_gain=session_data.get(
-                "total_ascent"
-            ),
-
-            elevation_loss=session_data.get(
-                "total_descent"
-            ),
-
-            calories=session_data.get(
-                "total_calories"
-            ),
-
-            avg_hr=session_data.get(
+            avg_hr=data.get(
                 "avg_heart_rate"
             ),
 
-            max_hr=session_data.get(
+            max_hr=data.get(
                 "max_heart_rate"
             ),
 
-            avg_speed=session_data.get(
-                "avg_speed"
-            ),
-
-            max_speed=session_data.get(
-                "max_speed"
-            ),
-
-            avg_cadence=session_data.get(
-                "avg_cadence"
-            ),
-
-            max_cadence=session_data.get(
-                "max_cadence"
-            ),
-
-            avg_power=session_data.get(
+            avg_power=data.get(
                 "avg_power"
             ),
 
-            normalized_power=session_data.get(
-                "normalized_power"
-            ),
-
-            training_load=session_data.get(
-                "training_stress_score"
-            ),
-
-            training_effect=session_data.get(
-                "total_training_effect"
-            ),
-
-            metadata=metadata
+            metadata={
+                "garmin": {
+                    "file_name": self.file_path.name,
+                    "sub_sport": data.get(
+                        "sub_sport"
+                    )
+                }
+            }
         )
 
 
-    def _extract_session(self, fitfile):
 
-        data = {}
+    def _build_multisport_activity(
+        self,
+        sessions
+    ):
 
-        for message in fitfile.get_messages(
-            "session"
-        ):
+        segments = []
 
-            for field in message:
 
-                data[field.name] = field.value
+        for session in sessions:
 
-            break
+            segment = IronCoachActivitySegment(
 
-        return data
+                sport=self._normalize_sport(
+                    session.get("sport")
+                ),
+
+                activity_type=str(
+                    session.get(
+                        "sub_sport"
+                    )
+                ),
+
+                start_time=str(
+                    session.get(
+                        "start_time"
+                    )
+                ),
+
+                duration_seconds=self._seconds(
+                    session.get(
+                        "total_timer_time"
+                    )
+                ),
+
+                distance_meters=session.get(
+                    "total_distance"
+                ),
+
+                avg_hr=session.get(
+                    "avg_heart_rate"
+                ),
+
+                max_hr=session.get(
+                    "max_heart_rate"
+                ),
+
+                avg_power=session.get(
+                    "avg_power"
+                ),
+
+                metadata={
+                    "garmin": {
+                        "original_sport":
+                            session.get("sport")
+                    }
+                }
+            )
+
+            segments.append(segment)
+
+
+
+        total_duration = sum(
+            s.duration_seconds or 0
+            for s in segments
+        )
+
+
+        total_distance = sum(
+            s.distance_meters or 0
+            for s in segments
+        )
+
+
+        return IronCoachActivity(
+
+            activity_id=self.file_hash(),
+
+            source="garmin",
+
+            source_id=self.file_hash(),
+
+            file_hash=self.file_hash(),
+
+            sport="MULTISPORT",
+
+            activity_type="triathlon",
+
+            duration_seconds=total_duration,
+
+            distance_meters=total_distance,
+
+            segments=segments,
+
+            metadata={
+                "garmin": {
+                    "file_name":
+                        self.file_path.name,
+                    "sessions":
+                        len(segments)
+                }
+            }
+        )
+
 
 
     def file_hash(self):
@@ -174,10 +250,10 @@ class GarminFitImporter:
                 lambda: file.read(4096),
                 b""
             ):
-
                 sha.update(chunk)
 
         return sha.hexdigest()
+
 
 
     @staticmethod
@@ -187,6 +263,7 @@ class GarminFitImporter:
             return None
 
         return int(value)
+
 
 
     @staticmethod
@@ -200,9 +277,11 @@ class GarminFitImporter:
 
             "swimming": "SWIM",
 
-            "strength_training": "STRENGTH",
+            "transition": "TRANSITION",
 
+            "strength_training": "STRENGTH",
         }
+
 
         return mapping.get(
             str(value),
