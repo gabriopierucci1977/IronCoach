@@ -1,5 +1,5 @@
 """
-IronCoach Load Analyzer v0.2
+IronCoach Load Analyzer v0.3
 
 Analizza il carico storico allenante.
 
@@ -19,6 +19,8 @@ class LoadAnalyzer:
     LEVEL_NORMAL = "NORMAL"
     LEVEL_HIGH = "HIGH"
 
+
+
     def analyze(
         self,
         history,
@@ -31,11 +33,17 @@ class LoadAnalyzer:
             [],
         ) or []
 
+
         total_load = 0.0
+
         valid_load_sessions = 0
+
         sport_distribution = {}
 
+
+
         for session in sessions:
+
 
             if not isinstance(
                 session,
@@ -43,33 +51,67 @@ class LoadAnalyzer:
             ):
                 continue
 
+
+
             load = self._number(
-                session.get("load")
+
+                self._first_value(
+                    session,
+                    [
+                        "training_load",
+                        "load",
+                        "Carico interno",
+                    ],
+                )
+
             )
 
+
+
             if load is None:
+
                 continue
 
+
+
             sport = self._normalized_text(
-                session.get(
-                    "sport",
+
+                self._first_value(
+                    session,
+                    [
+                        "sport",
+                        "Sport",
+                    ],
                     "unknown",
                 )
+
             ).lower()
 
+
+
             if not sport:
+
                 sport = "unknown"
 
+
+
             total_load += load
+
             valid_load_sessions += 1
 
+
+
             sport_distribution[sport] = (
+
                 sport_distribution.get(
                     sport,
                     0.0,
                 )
                 + load
+
             )
+
+
 
         level = self._classify(
             sessions=sessions,
@@ -77,20 +119,76 @@ class LoadAnalyzer:
             total_load=total_load,
         )
 
+
+
         reasons = self._build_reasons(
             level=level,
             sessions=sessions,
             valid_load_sessions=valid_load_sessions,
         )
 
+
+
         return {
-            "level": level,
-            "total_load": total_load,
-            "sessions": len(sessions),
-            "sessions_with_load": valid_load_sessions,
-            "sport_distribution": sport_distribution,
-            "reasons": reasons,
+
+
+            "level":
+                level,
+
+
+            "total_load":
+                round(
+                    total_load,
+                    2,
+                ),
+
+
+            "sessions":
+                len(sessions),
+
+
+            "sessions_with_load":
+                valid_load_sessions,
+
+
+            "sport_distribution":
+                sport_distribution,
+
+
+            "reasons":
+                reasons,
+
         }
+
+
+
+
+    def _first_value(
+        self,
+        data,
+        keys,
+        default=None,
+    ):
+
+        data = data or {}
+
+
+        for key in keys:
+
+            value = data.get(key)
+
+
+            if value not in (
+                None,
+                "",
+            ):
+                return value
+
+
+        return default
+
+
+
 
     def _classify(
         self,
@@ -99,23 +197,35 @@ class LoadAnalyzer:
         total_load,
     ):
 
+
         if not sessions:
 
             return self.LEVEL_UNKNOWN
+
+
 
         if valid_load_sessions == 0:
 
             return self.LEVEL_UNKNOWN
 
+
+
         if total_load >= 2000:
 
             return self.LEVEL_HIGH
+
+
 
         if total_load < 500:
 
             return self.LEVEL_LOW
 
+
+
         return self.LEVEL_NORMAL
+
+
+
 
     def _build_reasons(
         self,
@@ -124,11 +234,14 @@ class LoadAnalyzer:
         valid_load_sessions,
     ):
 
+
         if not sessions:
 
             return [
                 "Storico allenamenti non disponibile"
             ]
+
+
 
         if valid_load_sessions == 0:
 
@@ -136,11 +249,15 @@ class LoadAnalyzer:
                 "Dati di carico storico insufficienti"
             ]
 
+
+
         if level == self.LEVEL_HIGH:
 
             return [
                 "Carico storico elevato"
             ]
+
+
 
         if level == self.LEVEL_LOW:
 
@@ -148,37 +265,55 @@ class LoadAnalyzer:
                 "Carico storico contenuto"
             ]
 
+
+
         return [
             "Carico storico nella norma"
         ]
+
+
+
 
     def _number(
         self,
         value,
     ):
 
+
         if value is None:
 
             return None
+
+
 
         if isinstance(
             value,
             str,
         ):
 
+
             value = (
+
                 value
                 .strip()
-                .replace(",", ".")
+                .replace(
+                    ",",
+                    ".",
+                )
+
             )
+
 
             if not value:
 
                 return None
 
+
+
         try:
 
             return float(value)
+
 
         except (
             TypeError,
@@ -187,14 +322,20 @@ class LoadAnalyzer:
 
             return None
 
+
+
+
     def _normalized_text(
         self,
         value,
     ):
 
+
         if value is None:
 
             return ""
+
+
 
         if isinstance(
             value,
@@ -206,6 +347,8 @@ class LoadAnalyzer:
                 "",
             )
 
+
+
         if isinstance(
             value,
             (
@@ -216,9 +359,15 @@ class LoadAnalyzer:
         ):
 
             return " ".join(
+
                 str(item).strip()
+
                 for item in value
+
                 if item is not None
+
             ).strip()
+
+
 
         return str(value).strip()

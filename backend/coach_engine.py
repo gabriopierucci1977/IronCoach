@@ -1,5 +1,5 @@
 """
-IronCoach Coach Engine v6.6
+IronCoach Coach Engine v6.9.5
 
 Motore centrale di orchestrazione.
 
@@ -35,6 +35,7 @@ class CoachEngine:
     """
 
 
+
     def __init__(self):
 
         self.recovery_analyzer = RecoveryAnalyzer()
@@ -44,11 +45,15 @@ class CoachEngine:
         )
 
         self.training_analyzer = TrainingAnalyzer()
+
         self.injury_analyzer = InjuryAnalyzer()
+
         self.nutrition_analyzer = NutritionAnalyzer()
 
         self.load_analyzer = LoadAnalyzer()
+
         self.adaptation_analyzer = AdaptationAnalyzer()
+
         self.performance_analyzer = PerformanceAnalyzer()
 
         self.decision_engine = DecisionEngine()
@@ -59,6 +64,7 @@ class CoachEngine:
     # HELPERS
     # ==================================================
 
+
     def _first_value(
         self,
         data,
@@ -68,156 +74,638 @@ class CoachEngine:
 
         data = data or {}
 
+
         for key in keys:
 
             value = data.get(key)
+
 
             if value not in (
                 None,
                 "",
                 [],
             ):
+
                 return value
 
-        return default
 
+        return default
+    def _raw_value(
+        self,
+        data,
+        keys,
+        default="N/D",
+    ):
+
+        data = data or {}
+
+
+        raw = data.get(
+            "raw",
+            {},
+        ) or {}
+
+
+        return self._first_value(
+            raw,
+            keys,
+            default,
+        )
+
+
+
+
+    def _nested_value(
+        self,
+        data,
+        section,
+        keys,
+        default="N/D",
+    ):
+
+        data = data or {}
+
+
+        section_data = data.get(
+            section,
+            {},
+        ) or {}
+
+
+        return self._first_value(
+            section_data,
+            keys,
+            default,
+        )
+
+
+
+
+    def _extract_training_distribution(
+        self,
+        raw,
+    ):
+
+        """
+        Estrae la distribuzione allenamento
+        dal testo raw Airtable.
+
+        Estrazione delimitata:
+        prende solo il contenuto dopo
+        "Allenamento distribuito tra:"
+        evitando campi successivi.
+        """
+
+        raw = raw or {}
+
+        marker = "Allenamento distribuito tra:"
+
+        text_sources = []
+
+        for value in raw.values():
+
+            if isinstance(value, str):
+
+                text_sources.append(value)
+
+
+        full_text = "\n".join(
+            text_sources
+        )
+
+
+        if marker not in full_text:
+
+            return "N/D"
+
+
+        extracted = (
+            full_text
+            .split(
+                marker,
+                1,
+            )[1]
+            .strip()
+        )
+
+
+        # elimina campi successivi Airtable
+        stop_markers = [
+            "; Storico problema",
+            "; VO₂max",
+            "; VO2max",
+            "\nStorico problema",
+            "\nVO₂max",
+            "\nVO2max",
+        ]
+
+
+        for stop in stop_markers:
+
+            if stop in extracted:
+
+                extracted = extracted.split(
+                    stop,
+                    1,
+                )[0].strip()
+
+
+        # elimina eventuali separatori
+        # rimasti da campi Airtable concatenati
+
+        extracted = (
+            extracted
+            .replace(
+                "\\n",
+                " "
+            )
+            .strip()
+        )
+
+
+        return extracted
+
+
+
+    # ==================================================
+    # ATHLETE INTELLIGENCE
+    # ==================================================
 
 
     def _build_athlete_intelligence(
         self,
         athlete_profile,
     ):
+
         """
-        Normalizza il profilo atleta Airtable
-        per la sezione Intelligence.
+        Costruisce il profilo intelligence atleta.
+
+        Compatibile con:
+
+        - AthleteNormalizer;
+        - Airtable originale;
+        - raw Airtable.
         """
+
 
         athlete_profile = athlete_profile or {}
 
 
+
+        identity = athlete_profile.get(
+            "identity",
+            {},
+        ) or {}
+
+
+
+        goals = athlete_profile.get(
+            "goals",
+            {},
+        ) or {}
+
+
+
+        physiology = athlete_profile.get(
+            "physiology",
+            {},
+        ) or {}
+
+
+
+        constraints = athlete_profile.get(
+            "constraints",
+            {},
+        ) or {}
+
+
+
+        preferences = athlete_profile.get(
+            "preferences",
+            {},
+        ) or {}
+
+
+
+        raw = athlete_profile.get(
+            "raw",
+            {},
+        ) or {}
+
+
+
+
+
+        # ==================================================
+        # GOALS FALLBACK
+        # ==================================================
+
+
+        primary_goal = self._first_value(
+            goals,
+            [
+                "primary",
+                "primary_goal",
+                "goal",
+            ],
+            "",
+        )
+
+
+
+        if not primary_goal:
+
+            primary_goal = self._first_value(
+                raw,
+                [
+                    "Obiettivo principale",
+                    "Obiettivo Principale",
+                    "Obiettivi principali",
+                    "Obiettivi Principali",
+                    "primary_goal",
+                    "goal",
+                ],
+            )
+
+
+
+        race_targets = self._first_value(
+            goals,
+            [
+                "race_targets",
+                "target_races",
+            ],
+            "",
+        )
+
+
+
+        if not race_targets:
+
+            race_targets = self._first_value(
+                raw,
+                [
+                    "Gare obiettivo",
+                    "Gare Obiettivo",
+                    "race_targets",
+                    "target_races",
+                ],
+            )
         return {
 
-            "athlete_type":
+
+            "athlete_name":
+
                 self._first_value(
-                    athlete_profile,
+                    identity,
                     [
-                        "Tipo atleta",
-                        "Livello atleta",
-                        "athlete_type",
+                        "name",
+                        "Nome atleta",
                     ],
+                    self._first_value(
+                        raw,
+                        [
+                            "Nome atleta",
+                            "Nome Atleta",
+                        ],
+                    ),
                 ),
+
+
+
+
+            "athlete_type":
+
+                self._first_value(
+                    identity,
+                    [
+                        "level",
+                        "Livello atleta",
+                        "athlete_level",
+                    ],
+                    self._first_value(
+                        raw,
+                        [
+                            "Livello atleta",
+                            "Livello Atleta",
+                            "Tipo atleta",
+                        ],
+                    ),
+                ),
+
+
+
+
+            "goals":
+
+                primary_goal,
+
+
+
+
+            "race_targets":
+
+                race_targets,
+
+
 
 
             "strengths":
+
                 self._first_value(
                     athlete_profile,
                     [
+                        "strengths",
                         "Punti di forza",
                         "Note coach",
-                        "strengths",
+                        "Note Coach",
+                        "note_coach",
                     ],
+                    self._first_value(
+                        raw,
+                        [
+                            "Punti di forza",
+                            "Note coach",
+                            "Note Coach",
+                        ],
+                    ),
                 ),
+
+
 
 
             "limitations":
+
                 self._first_value(
-                    athlete_profile,
+                    constraints,
                     [
-                        "Limitazioni note",
+                        "physical_limitations",
                         "Limitazioni fisiche",
                         "limitations",
                     ],
+                    self._first_value(
+                        raw,
+                        [
+                            "Limitazioni fisiche",
+                            "Limitazioni Fisiche",
+                            "Limitazioni note",
+                        ],
+                    ),
                 ),
+
+
+
+
+            "injury_history":
+
+                self._first_value(
+                    constraints,
+                    [
+                        "injury_history",
+                        "Storico infortuni",
+                    ],
+                    self._first_value(
+                        raw,
+                        [
+                            "Storico infortuni",
+                            "Storico Infortuni",
+                        ],
+                    ),
+                ),
+
+
 
 
             "training_preferences":
+
+                self._first_value(
+                    preferences,
+                    [
+                        "session_preferences",
+                        "training_preferences",
+                    ],
+                    self._first_value(
+                        raw,
+                        [
+                            "Preferenza",
+                            "Preferenze allenamento",
+                            "Disponibilità allenamento",
+                        ],
+                    ),
+                ),
+            "sport_profile":
+
                 self._first_value(
                     athlete_profile,
                     [
-                        "Preferenza",
-                        "Preferenze allenamento",
-                        "Disponibilità allenamento",
-                        "training_preferences",
+                        "sport_profile",
+                        "Sport principale",
+                        "Sport Principale",
                     ],
+                    self._first_value(
+                        raw,
+                        [
+                            "Sport principale",
+                            "Sport Principale",
+                        ],
+                    ),
                 ),
+
+
 
 
             "training_distribution":
-                self._first_value(
-                    athlete_profile,
-                    [
-                        "Allenamento distribuito tra",
-                        "training_distribution",
-                    ],
+
+                self._extract_training_distribution(
+                    raw
                 ),
+
+
+
+
+            "availability":
+
+                self._first_value(
+                    preferences,
+                    [
+                        "availability",
+                        "Disponibilità allenamento",
+                    ],
+                    self._first_value(
+                        raw,
+                        [
+                            "Disponibilità allenamento",
+                            "Disponibilita allenamento",
+                        ],
+                    ),
+                ),
+
+
 
 
             "load_tolerance":
+
                 self._first_value(
-                    athlete_profile,
+                    preferences,
                     [
-                        "Tolleranza al carico",
-                        "Disponibilità allenamento",
                         "load_tolerance",
+                        "availability",
                     ],
+                    self._first_value(
+                        raw,
+                        [
+                            "Tolleranza al carico",
+                            "Disponibilità allenamento",
+                        ],
+                    ),
                 ),
 
 
-            "injury_patterns":
+
+
+            "ftp":
+
                 self._first_value(
-                    athlete_profile,
+                    physiology,
                     [
-                        "Pattern infortuni",
-                        "Storico infortuni",
-                        "injury_patterns",
+                        "ftp",
+                        "FTP",
+                        "Ftp",
                     ],
+                    self._first_value(
+                        raw,
+                        [
+                            "FTP",
+                            "Ftp",
+                        ],
+                    ),
                 ),
 
 
-            "sport_profile":
+
+
+            "css":
+
                 self._first_value(
-                    athlete_profile,
+                    physiology,
                     [
-                        "Sport principale",
-                        "Sport principale ",
-                        "sport_profile",
+                        "css",
+                        "CSS",
+                        "Css",
                     ],
+                    self._first_value(
+                        raw,
+                        [
+                            "CSS",
+                            "Css",
+                        ],
+                    ),
                 ),
-
-
-            "experience_years":
-                self._first_value(
-                    athlete_profile,
-                    [
-                        "Anni di attività sportiva",
-                        "experience_years",
-                    ],
-                ),
-
-
             "vo2max_run":
+
                 self._first_value(
-                    athlete_profile,
+                    physiology,
                     [
+                        "vo2max_run",
                         "Vo₂max corsa",
                         "VO₂max corsa",
                         "VO2max corsa",
-                        "vo2max_run",
                     ],
+                    self._first_value(
+                        raw,
+                        [
+                            "Vo₂max corsa",
+                            "VO₂max corsa",
+                            "VO2max corsa",
+                        ],
+                    ),
                 ),
+
+
 
 
             "vo2max_bike":
+
                 self._first_value(
-                    athlete_profile,
+                    physiology,
                     [
+                        "vo2max_bike",
                         "Vo₂max bici",
                         "VO₂max bici",
                         "VO2max bici",
-                        "vo2max_bike",
                     ],
+                    self._first_value(
+                        raw,
+                        [
+                            "Vo₂max bici",
+                            "VO₂max bici",
+                            "VO2max bici",
+                        ],
+                    ),
                 ),
+
+
+
+
+            "weight":
+
+                self._first_value(
+                    physiology,
+                    [
+                        "weight",
+                        "Peso attuale kg",
+                    ],
+                    self._first_value(
+                        raw,
+                        [
+                            "Peso attuale kg",
+                            "Peso Attuale kg",
+                        ],
+                    ),
+                ),
+
+
+
+
+            "height":
+
+                self._first_value(
+                    physiology,
+                    [
+                        "height",
+                        "Altezza cm",
+                    ],
+                    self._first_value(
+                        raw,
+                        [
+                            "Altezza cm",
+                            "Altezza Cm",
+                        ],
+                    ),
+                ),
+
+
+
+
+            "equipment":
+
+                self._first_value(
+                    athlete_profile,
+                    [
+                        "equipment",
+                        "Attrezzatura disponibile",
+                    ],
+                    self._first_value(
+                        raw,
+                        [
+                            "Attrezzatura disponibile",
+                            "Attrezzatura Disponibile",
+                        ],
+                    ),
+                ),
+
         }
+
 
 
 
@@ -225,12 +713,15 @@ class CoachEngine:
     # MAIN EVALUATION
     # ==================================================
 
+
     def evaluate(
         self,
         context,
     ):
 
+
         context = context or {}
+
 
 
         recovery = context.get(
@@ -239,10 +730,12 @@ class CoachEngine:
         ) or {}
 
 
+
         training = context.get(
             "training",
             {},
         ) or {}
+
 
 
         nutrition = context.get(
@@ -253,10 +746,21 @@ class CoachEngine:
 
 
         athlete_profile = (
-            context.get("athlete_profile")
-            or context.get("athlete")
-            or context.get("athlete_profile_data")
+
+            context.get(
+                "athlete_profile"
+            )
+
+            or context.get(
+                "athlete"
+            )
+
+            or context.get(
+                "athlete_profile_data"
+            )
+
             or {}
+
         )
 
 
@@ -267,10 +771,12 @@ class CoachEngine:
         ) or []
 
 
+
         recovery_history = context.get(
             "recovery_history",
             [],
         ) or []
+
 
 
         performance_history = context.get(
@@ -280,136 +786,242 @@ class CoachEngine:
 
 
 
+
         recovery_assessment = (
+
             self.recovery_analyzer.analyze(
                 recovery
             )
+
         )
+
+
 
 
         recovery_trend_analysis = (
+
             self.recovery_trend_analyzer.analyze(
+
                 {
                     "recovery_history":
+
                         recovery_history,
+
                 }
+
             )
+
         )
+
+
 
 
         training_assessment = (
+
             self.training_analyzer.analyze(
                 training
             )
+
         )
+
+
 
 
         injury_assessment = (
+
             self.injury_analyzer.analyze(
-                training
+
+                {
+                    "training":
+
+                        training,
+
+
+                    "athlete_profile":
+
+                        athlete_profile,
+
+                }
+
             )
+
         )
+
+
 
 
         nutrition_assessment = (
+
             self.nutrition_analyzer.analyze(
                 nutrition
             )
+
         )
+
+
 
 
         load_analysis = (
+
             self.load_analyzer.analyze(
+
                 {
                     "training_history":
+
                         training_history,
+
                 }
+
             )
+
         )
+
+
 
 
         adaptation_analysis = (
+
             self.adaptation_analyzer.analyze(
+
                 {
                     "athlete_profile":
+
                         athlete_profile,
 
+
                     "load_analysis":
+
                         load_analysis,
+
                 }
+
             )
+
         )
+
+
 
 
         performance_analysis = (
+
             self.performance_analyzer.analyze(
+
                 {
                     "performance_history":
+
                         performance_history,
+
                 }
+
             )
+
         )
+
 
 
 
         assessments = {
 
+
+
             "recovery":
+
                 recovery_assessment,
 
+
+
             "recovery_trend":
+
                 recovery_trend_analysis,
 
+
+
             "training":
+
                 training_assessment,
 
+
+
             "injury":
+
                 injury_assessment,
 
+
+
             "nutrition":
+
                 nutrition_assessment,
 
+
+
             "load":
+
                 load_analysis,
 
+
+
             "adaptation":
+
                 adaptation_analysis,
 
+
+
             "performance":
+
                 performance_analysis,
+
         }
 
 
 
-        decision = self.decision_engine.decide(
-            assessments
+
+        decision = (
+
+            self.decision_engine.decide(
+                assessments
+            )
+
         )
+
 
 
 
         decision["intelligence"] = {
 
+
+
             "athlete_profile":
+
                 self._build_athlete_intelligence(
                     athlete_profile
                 ),
 
 
+
             "load":
+
                 load_analysis,
 
 
+
             "adaptation":
+
                 adaptation_analysis,
 
 
+
             "recovery_trend":
+
                 recovery_trend_analysis,
 
 
+
             "performance":
+
                 performance_analysis,
+
         }
+
 
 
 

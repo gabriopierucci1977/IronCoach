@@ -1,5 +1,5 @@
 """
-IronCoach Athlete Normalizer
+IronCoach Athlete Normalizer v0.2.3
 
 Normalizza il profilo atleta proveniente da:
 
@@ -26,18 +26,17 @@ class AthleteNormalizer:
         athlete,
         source="manual",
     ):
-        """
-        Trasforma il profilo atleta
-        nel formato IronCoach.
-        """
 
         athlete = athlete or {}
 
 
+
         return {
+
 
             "source":
                 source,
+
 
 
             "source_id":
@@ -48,6 +47,7 @@ class AthleteNormalizer:
                         "id",
                         "record_id",
                         "source_id",
+                        "Record ID",
                     ],
                 ),
 
@@ -63,10 +63,12 @@ class AthleteNormalizer:
                             athlete,
                             [
                                 "Nome atleta",
+                                "Nome Atleta",
                                 "name",
                                 "athlete_name",
                             ],
                         ),
+
 
 
                     "level":
@@ -75,6 +77,7 @@ class AthleteNormalizer:
                             athlete,
                             [
                                 "Livello atleta",
+                                "Livello Atleta",
                                 "level",
                                 "athlete_level",
                             ],
@@ -94,10 +97,14 @@ class AthleteNormalizer:
                             athlete,
                             [
                                 "Obiettivo principale",
+                                "Obiettivo Principale",
+                                "Obiettivi principali",
+                                "Obiettivi Principali",
                                 "primary_goal",
                                 "goal",
                             ],
                         ),
+
 
 
                     "race_targets":
@@ -106,15 +113,13 @@ class AthleteNormalizer:
                             athlete,
                             [
                                 "Gare obiettivo",
+                                "Gare Obiettivo",
                                 "race_targets",
                                 "target_races",
                             ],
                         ),
 
                 },
-
-
-
             "physiology":
 
                 {
@@ -125,9 +130,11 @@ class AthleteNormalizer:
                             athlete,
                             [
                                 "Peso attuale kg",
+                                "Peso Attuale kg",
                                 "weight",
                             ],
                         ),
+
 
 
                     "height":
@@ -136,9 +143,11 @@ class AthleteNormalizer:
                             athlete,
                             [
                                 "Altezza cm",
+                                "Altezza Cm",
                                 "height",
                             ],
                         ),
+
 
 
                     "ftp":
@@ -153,6 +162,7 @@ class AthleteNormalizer:
                         ),
 
 
+
                     "css":
 
                         self._get_value(
@@ -165,15 +175,20 @@ class AthleteNormalizer:
                         ),
 
 
+
                     "vo2max_run":
 
                         self._get_value(
                             athlete,
                             [
                                 "Vo₂max corsa",
+                                "VO₂max corsa",
+                                "Vo2max corsa",
+                                "VO2max corsa",
                                 "vo2max_run",
                             ],
                         ),
+
 
 
                     "vo2max_bike":
@@ -182,6 +197,9 @@ class AthleteNormalizer:
                             athlete,
                             [
                                 "Vo₂max bici",
+                                "VO₂max bici",
+                                "Vo2max bici",
+                                "VO2max bici",
                                 "vo2max_bike",
                             ],
                         ),
@@ -200,9 +218,11 @@ class AthleteNormalizer:
                             athlete,
                             [
                                 "Limitazioni fisiche",
+                                "Limitazioni Fisiche",
                                 "limitations",
                             ],
                         ),
+
 
 
                     "injury_history":
@@ -211,6 +231,7 @@ class AthleteNormalizer:
                             athlete,
                             [
                                 "Storico infortuni",
+                                "Storico Infortuni",
                                 "injury_history",
                             ],
                         ),
@@ -229,9 +250,11 @@ class AthleteNormalizer:
                             athlete,
                             [
                                 "Disponibilità allenamento",
+                                "Disponibilita allenamento",
                                 "availability",
                             ],
                         ),
+
 
 
                     "session_preferences":
@@ -240,11 +263,40 @@ class AthleteNormalizer:
                             athlete,
                             [
                                 "Preferenza",
+                                "Preferenze allenamento",
                                 "training_preferences",
                             ],
                         ),
 
+
+
+                    "training_distribution":
+
+                        self._get_value(
+                            athlete,
+                            [
+                                "Allenamento distribuito tra",
+                                "Allenamento distribuito",
+                                "training_distribution",
+                            ],
+                        ),
+
                 },
+            # ==================================================
+            # CAMPO ESPOSTO AL LIVELLO PRINCIPALE
+            # ==================================================
+
+
+            "training_distribution":
+
+                self._get_value(
+                    athlete,
+                    [
+                        "Allenamento distribuito tra",
+                        "Allenamento distribuito",
+                        "training_distribution",
+                    ],
+                ),
 
 
 
@@ -254,6 +306,7 @@ class AthleteNormalizer:
                     athlete,
                     [
                         "Attrezzatura disponibile",
+                        "Attrezzatura Disponibile",
                         "equipment",
                     ],
                 ),
@@ -265,6 +318,7 @@ class AthleteNormalizer:
                 athlete,
 
         }
+
 
 
 
@@ -280,16 +334,107 @@ class AthleteNormalizer:
         default=None,
     ):
 
+        if not isinstance(
+            data,
+            dict,
+        ):
+
+            return default
+
+
+
+        # -------------------------------------------------
+        # MATCH ESATTO
+        # -------------------------------------------------
+
+
         for key in keys:
 
-            value = data.get(key)
+            value = data.get(
+                key
+            )
 
 
             if value not in (
                 None,
                 "",
             ):
+
                 return value
+
+
+
+        # -------------------------------------------------
+        # MATCH NORMALIZZATO
+        # -------------------------------------------------
+
+
+        normalized_fields = {}
+
+
+        for original_key in data.keys():
+
+
+            if original_key is None:
+
+                continue
+
+
+
+            normalized_key = (
+
+                str(original_key)
+                .strip()
+                .lower()
+                .replace(" ", "")
+                .replace("_", "")
+
+            )
+
+
+            normalized_fields[
+                normalized_key
+            ] = original_key
+
+
+
+
+        for key in keys:
+
+
+            normalized_key = (
+
+                str(key)
+                .strip()
+                .lower()
+                .replace(" ", "")
+                .replace("_", "")
+
+            )
+
+
+
+            real_key = normalized_fields.get(
+                normalized_key
+            )
+
+
+
+            if real_key:
+
+
+                value = data.get(
+                    real_key
+                )
+
+
+                if value not in (
+                    None,
+                    "",
+                ):
+
+                    return value
+
 
 
         return default

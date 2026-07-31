@@ -1,262 +1,672 @@
 """
-IronCoach Injury Analyzer v0.3.2
+IronCoach Injury Analyzer v0.4
 
 Analizzatore dedicato alla valutazione del rischio fisico.
 
-Obiettivi:
+Supporta:
 
-- mantenere il comportamento decisionale precedente;
-- separare la logica dal CoachEngine;
-- mantenere compatibilità con DecisionEngine.
+- dati della seduta;
+- profilo atleta normalizzato;
+- storico problematiche fisiche.
+
+Responsabilità:
+
+- identificare rischio fisico;
+- classificare livello attenzione;
+- fornire informazioni al CoachEngine.
+
+Non contiene logica decisionale.
 """
+
+
 
 
 class InjuryAnalyzer:
 
 
+
     LEVEL_LOW = "LOW"
+
     LEVEL_MODERATE = "MODERATE"
+
     LEVEL_HIGH = "HIGH"
+
     LEVEL_CRITICAL = "CRITICAL"
+
     LEVEL_UNKNOWN = "UNKNOWN"
 
 
 
-    def analyze(self, training):
 
-        """
-        Valuta il rischio fisico della seduta.
-        """
+    def analyze(
+        self,
+        context,
+    ):
 
-        problem = self._normalized_text(
-            training.get("Dolori/problematiche")
-            or training.get("dolori_problematiche")
-            or training.get("Dolori")
+
+        context = context or {}
+
+
+
+        # ==================================================
+        # INPUT SUPPORTATI
+        # ==================================================
+
+
+        if "training" in context:
+
+
+            training = context.get(
+                "training",
+                {},
+            ) or {}
+
+
+            athlete_profile = context.get(
+                "athlete_profile",
+                {},
+            ) or {}
+
+
+        else:
+
+
+            # compatibilità vecchio utilizzo
+
+            training = context
+
+            athlete_profile = {}
+
+
+
+
+        constraints = athlete_profile.get(
+            "constraints",
+            {},
+        ) or {}
+
+
+
+        current_problem = self._normalized_text(
+
+            training.get(
+                "Dolori/problematiche"
+            )
+
+            or training.get(
+                "dolori_problematiche"
+            )
+
+            or training.get(
+                "Dolori"
+            )
+
+            or training.get(
+                "pain_notes"
+            )
+
         ).lower()
 
 
+
+
+        historical_problem = self._normalized_text(
+
+            constraints.get(
+                "injury_history"
+            )
+
+            or athlete_profile.get(
+                "injury_history"
+            )
+
+        ).lower()
+
+
+
+
+        physical_limitations = self._normalized_text(
+
+            constraints.get(
+                "physical_limitations"
+            )
+
+            or athlete_profile.get(
+                "physical_limitations"
+            )
+
+        ).lower()
+
+
+
+
         pain_score = self._number(
-            training.get("Pain Score")
-            or training.get("pain_score")
-            or training.get("Dolore")
+
+            training.get(
+                "Pain Score"
+            )
+
+            or training.get(
+                "pain_score"
+            )
+
+            or training.get(
+                "Dolore"
+            )
+
         )
+
+
+
+        combined_text = " ".join(
+
+            value
+
+            for value in (
+
+                current_problem,
+
+                historical_problem,
+
+                physical_limitations,
+
+            )
+
+            if value
+
+        )
+
 
 
         reasons = []
 
+        patterns = []
 
-        if not problem:
+        # ==================================================
+        # DATI INSUFFICIENTI
+        # ==================================================
+
+
+        if not combined_text and pain_score is None:
+
 
             return {
 
-                "level": self.LEVEL_UNKNOWN,
 
-                "problem": "",
+                "level":
 
-                "pain_score": pain_score,
+                    self.LEVEL_UNKNOWN,
 
-                "reasons": [
-                    "Nessuna informazione disponibile "
-                    "su dolori o problemi"
-                ],
+
+
+                "current_problem":
+
+                    "",
+
+
+
+                "history":
+
+                    "",
+
+
+
+                "patterns":
+
+                    [],
+
+
+
+                "pain_score":
+
+                    pain_score,
+
+
+
+                "risk":
+
+                    False,
+
+
+
+                "reasons":
+
+                    [
+                        "Nessuna informazione disponibile "
+                        "su dolori o problematiche"
+                    ],
 
             }
 
+
+
+
+        # ==================================================
+        # NESSUN PROBLEMA ATTUALE
+        # ==================================================
 
 
         no_problem = (
 
             "nessun dolore",
+
             "nessun problema",
+
             "nessuna problematica",
+
             "nessun fastidio",
+
             "nessuno",
+
             "no dolore",
+
             "no problemi",
 
         )
 
 
+
         if self._contains_any(
-            problem,
+            current_problem,
             no_problem,
         ):
 
-            return {
 
-                "level": self.LEVEL_LOW,
-
-                "problem": problem,
-
-                "pain_score": pain_score,
-
-                "reasons": [
-                    "Nessun dolore o problema segnalato"
-                ],
-
-            }
+            current_problem = ""
 
 
 
-        severe_signs = (
+
+        # ==================================================
+        # SEGNALI CRITICI
+        # ==================================================
+
+
+        critical_signs = (
 
             "forte",
+
             "acuto",
+
             "zoppia",
+
             "gonfiore",
+
             "blocco",
+
             "lesione",
-            "peggioramento",
+
             "impossibile",
 
-        )
-
-
-        if self._contains_any(
-            problem,
-            severe_signs,
-        ):
-
-            reasons.append(
-                f"Problematica critica segnalata: {problem}"
-            )
-
-
-            return {
-
-                "level": self.LEVEL_CRITICAL,
-
-                "problem": problem,
-
-                "pain_score": pain_score,
-
-                "reasons": reasons,
-
-            }
-
-
-
-        injury_signs = (
-
-            "tendine",
-            "tendineo",
-            "infiammazione",
-            "strappo",
-            "lesione",
+            "peggioramento",
 
         )
 
 
+
         if self._contains_any(
-            problem,
-            injury_signs,
+            combined_text,
+            critical_signs,
         ):
 
+
             reasons.append(
-                f"Problematica fisica segnalata: {problem}"
+
+                "Segnali fisici critici rilevati"
+
             )
 
 
-            return {
 
-                "level": self.LEVEL_HIGH,
+            return self._result(
 
-                "problem": problem,
+                level=self.LEVEL_CRITICAL,
 
-                "pain_score": pain_score,
+                current_problem=current_problem,
 
-                "reasons": reasons,
+                history=historical_problem,
 
-            }
+                patterns=patterns,
 
+                pain_score=pain_score,
+
+                reasons=reasons,
+
+            )
+
+
+
+
+        # ==================================================
+        # PATTERN INFORTUNIO
+        # ==================================================
+
+
+        injury_patterns = (
+
+            (
+                "tendine",
+                "Tendine / problema tendineo",
+            ),
+
+            (
+                "achille",
+                "Achilles tendon history",
+            ),
+
+            (
+                "infiammazione",
+                "Infiammazione",
+            ),
+
+            (
+                "strappo",
+                "Problema muscolare",
+            ),
+
+            (
+                "lesione",
+                "Lesione",
+            ),
+
+        )
+
+
+
+        for keyword, label in injury_patterns:
+
+
+            if keyword in combined_text:
+
+
+                patterns.append(
+                    label
+                )
+
+
+
+
+        if patterns:
+
+
+            reasons.append(
+
+                "Storico o pattern fisico rilevante: "
+
+                + ", ".join(patterns)
+
+            )
+
+
+
+            if current_problem:
+
+
+                reasons.append(
+
+                    "Problematica attuale: "
+
+                    + current_problem
+
+                )
+
+
+
+            return self._result(
+
+                level=self.LEVEL_HIGH,
+
+                current_problem=current_problem,
+
+                history=historical_problem,
+
+                patterns=patterns,
+
+                pain_score=pain_score,
+
+                reasons=reasons,
+
+            )
+
+
+
+
+        # ==================================================
+        # PAIN SCORE
+        # ==================================================
 
 
         if pain_score is not None:
 
+
             if pain_score >= 5:
 
+
                 reasons.append(
+
                     f"Pain Score elevato: {pain_score}"
+
                 )
 
 
-                return {
+                return self._result(
 
-                    "level": self.LEVEL_HIGH,
+                    level=self.LEVEL_HIGH,
 
-                    "problem": problem,
+                    current_problem=current_problem,
 
-                    "pain_score": pain_score,
+                    history=historical_problem,
 
-                    "reasons": reasons,
+                    patterns=patterns,
 
-                }
+                    pain_score=pain_score,
+
+                    reasons=reasons,
+
+                )
 
 
 
             if pain_score >= 2:
 
+
                 reasons.append(
-                    f"Problematica fisica segnalata: {problem}"
+
+                    f"Fastidio fisico presente: {pain_score}/10"
+
                 )
 
 
-                return {
+                return self._result(
 
-                    "level": self.LEVEL_HIGH,
+                    level=self.LEVEL_MODERATE,
 
-                    "problem": problem,
+                    current_problem=current_problem,
 
-                    "pain_score": pain_score,
+                    history=historical_problem,
 
-                    "reasons": reasons,
+                    patterns=patterns,
 
-                }
+                    pain_score=pain_score,
+
+                    reasons=reasons,
+
+                )
 
 
 
-        # Compatibilità con il vecchio comportamento:
-        # qualsiasi problematica descritta durante una seduta
-        # viene mantenuta come fattore di rischio.
 
-        reasons.append(
-            f"Problematica fisica segnalata: {problem}"
+        # ==================================================
+        # DEFAULT
+        # ==================================================
+
+
+        if current_problem:
+
+
+            reasons.append(
+
+                "Problematica fisica segnalata: "
+
+                + current_problem
+
+            )
+
+
+
+            return self._result(
+
+                level=self.LEVEL_MODERATE,
+
+                current_problem=current_problem,
+
+                history=historical_problem,
+
+                patterns=patterns,
+
+                pain_score=pain_score,
+
+                reasons=reasons,
+
+            )
+
+
+
+
+        return self._result(
+
+            level=self.LEVEL_LOW,
+
+            current_problem="",
+
+            history=historical_problem,
+
+            patterns=patterns,
+
+            pain_score=pain_score,
+
+            reasons=[
+
+                "Nessun rischio fisico rilevante rilevato"
+
+            ],
+
         )
+
+
+
+
+    # ==================================================
+    # RESULT
+    # ==================================================
+
+
+    def _result(
+        self,
+        level,
+        current_problem,
+        history,
+        patterns,
+        pain_score,
+        reasons,
+    ):
 
 
         return {
 
-            "level": self.LEVEL_HIGH,
 
-            "problem": problem,
+            "level":
 
-            "pain_score": pain_score,
+                level,
 
-            "reasons": reasons,
+
+
+            "risk":
+
+                level in (
+
+                    self.LEVEL_HIGH,
+
+                    self.LEVEL_CRITICAL,
+
+                ),
+
+
+
+            "current_problem":
+
+                current_problem,
+
+
+
+            "history":
+
+                history,
+
+
+
+            "patterns":
+
+                patterns,
+
+
+
+            "pain_score":
+
+                pain_score,
+
+
+
+            "reasons":
+
+                reasons,
 
         }
 
 
 
-    def _number(self, value):
+
+    # ==================================================
+    # HELPERS
+    # ==================================================
+
+
+    def _number(
+        self,
+        value,
+    ):
+
 
         if value is None:
 
             return None
 
 
-        if isinstance(value, str):
+
+        if isinstance(
+            value,
+            str,
+        ):
+
 
             value = (
+
                 value
                 .strip()
-                .replace(",", ".")
+                .replace(
+                    ",",
+                    ".",
+                )
+
             )
+
 
 
         try:
 
-            return float(value)
+            return float(
+                value
+            )
 
 
         except (
@@ -268,14 +678,24 @@ class InjuryAnalyzer:
 
 
 
-    def _normalized_text(self, value):
+
+    def _normalized_text(
+        self,
+        value,
+    ):
+
 
         if value is None:
 
             return ""
 
 
-        if isinstance(value, dict):
+
+        if isinstance(
+            value,
+            dict,
+        ):
+
 
             value = value.get(
                 "value",
@@ -283,7 +703,11 @@ class InjuryAnalyzer:
             )
 
 
-        return str(value).strip()
+
+        return str(
+            value
+        ).strip()
+
 
 
 
@@ -293,12 +717,17 @@ class InjuryAnalyzer:
         expressions,
     ):
 
+
         if not text:
 
             return False
 
 
+
         return any(
+
             expression in text
+
             for expression in expressions
+
         )

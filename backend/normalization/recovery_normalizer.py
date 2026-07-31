@@ -6,6 +6,7 @@ Normalizza dati di recupero provenienti da:
 - Garmin
 - Whoop
 - Oura
+- Airtable
 - input manuale
 
 in formato interno IronCoach.
@@ -35,12 +36,13 @@ class RecoveryNormalizer:
         recovery = recovery or {}
 
 
+
         return {
 
-            # origine dato
 
             "source":
                 source,
+
 
 
             "source_id":
@@ -51,6 +53,7 @@ class RecoveryNormalizer:
                         "id",
                         "recovery_id",
                         "source_id",
+                        "Record ID",
                     ],
                 ),
 
@@ -62,6 +65,7 @@ class RecoveryNormalizer:
                     recovery,
                     [
                         "date",
+                        "Data",
                         "timestamp",
                         "day",
                     ],
@@ -69,7 +73,9 @@ class RecoveryNormalizer:
 
 
 
-            # sonno
+            # ==================================================
+            # SONNO
+            # ==================================================
 
             "sleep":
 
@@ -80,10 +86,14 @@ class RecoveryNormalizer:
                         self._get_value(
                             recovery,
                             [
+
                                 "sleep_score",
                                 "sleepScore",
+                                "Sleep Score",
+
                             ],
                         ),
+
 
 
                     "hours":
@@ -91,11 +101,15 @@ class RecoveryNormalizer:
                         self._get_value(
                             recovery,
                             [
+
                                 "sleep_hours",
                                 "hours_sleep",
                                 "duration",
+                                "Ore sonno",
+
                             ],
                         ),
+
 
 
                     "quality":
@@ -103,7 +117,10 @@ class RecoveryNormalizer:
                         self._get_value(
                             recovery,
                             [
+
                                 "sleep_quality",
+                                "Qualità sonno",
+
                             ],
                         ),
 
@@ -111,16 +128,21 @@ class RecoveryNormalizer:
 
 
 
-            # recupero fisiologico
+            # ==================================================
+            # RECUPERO FISIOLOGICO
+            # ==================================================
 
             "readiness":
 
                 self._get_value(
                     recovery,
                     [
+
                         "readiness",
                         "recovery_score",
+                        "Recovery Score",
                         "body_battery",
+
                     ],
                 ),
 
@@ -131,9 +153,12 @@ class RecoveryNormalizer:
                 self._get_value(
                     recovery,
                     [
+
                         "hrv",
+                        "HRV",
                         "hrv_score",
                         "heart_rate_variability",
+
                     ],
                 ),
 
@@ -144,9 +169,12 @@ class RecoveryNormalizer:
                 self._get_value(
                     recovery,
                     [
+
                         "resting_hr",
+                        "Resting HR",
                         "resting_heart_rate",
                         "rhr",
+
                     ],
                 ),
 
@@ -157,22 +185,30 @@ class RecoveryNormalizer:
                 self._get_value(
                     recovery,
                     [
+
                         "stress",
+                        "Stress",
                         "stress_score",
+
                     ],
                 ),
 
 
 
-            # percezione atleta
+            # ==================================================
+            # PERCEZIONE ATLETA
+            # ==================================================
 
             "fatigue":
 
                 self._get_value(
                     recovery,
                     [
+
                         "fatigue",
                         "fatigue_score",
+                        "Fatica",
+
                     ],
                 ),
 
@@ -183,9 +219,13 @@ class RecoveryNormalizer:
                 self._get_value(
                     recovery,
                     [
+
                         "soreness",
                         "muscle_soreness",
                         "pain",
+                        "Dolore generale",
+                        "Pain Score",
+
                     ],
                 ),
 
@@ -196,8 +236,11 @@ class RecoveryNormalizer:
                 self._get_value(
                     recovery,
                     [
+
                         "energy",
                         "morning_energy",
+                        "Energia mattutina",
+
                     ],
                 ),
 
@@ -208,14 +251,16 @@ class RecoveryNormalizer:
                 self._get_value(
                     recovery,
                     [
+
                         "notes",
+                        "Note dell'atleta",
                         "comment",
+                        "Commento alla decisione Coachh",
+
                     ],
                 ),
 
 
-
-            # dato originale
 
             "raw":
 

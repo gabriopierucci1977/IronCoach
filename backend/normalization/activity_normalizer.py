@@ -5,6 +5,7 @@ Trasforma attività grezze provenienti da:
 
 - Garmin
 - Strava
+- Airtable
 - input manuale
 
 in formato standard IronCoach.
@@ -14,10 +15,6 @@ il dato dal punto di vista coaching.
 
 La valutazione rimane agli analyzer.
 """
-
-
-from datetime import datetime
-
 
 
 class ActivityNormalizer:
@@ -37,171 +34,203 @@ class ActivityNormalizer:
         nel formato IronCoach.
         """
 
-
         activity = activity or {}
 
 
 
         return {
 
-            # identificazione
-
             "source":
                 source,
 
 
+
             "source_id":
+
                 self._get_value(
                     activity,
                     [
                         "id",
                         "activity_id",
                         "source_id",
+                        "Record ID",
                     ],
                 ),
 
 
 
             "date":
+
                 self._get_value(
                     activity,
                     [
                         "date",
+                        "Date",
                         "start_date",
                         "timestamp",
+                        "Data allenamento",
                     ],
                 ),
 
 
 
-            # disciplina
-
             "sport":
+
                 self._normalize_sport(
+
                     self._get_value(
                         activity,
                         [
+
                             "sport",
+                            "Sport",
                             "activity_type",
                             "type",
+
                         ],
                     )
+
                 ),
 
 
-
-            # durata
 
             "duration_minutes":
+
                 self._normalize_duration(
+
                     self._get_value(
                         activity,
                         [
+
                             "duration_minutes",
+                            "Durata minuti",
                             "duration",
                             "moving_time",
+
                         ],
                     )
+
                 ),
 
 
 
-            # distanza
-
             "distance_km":
+
                 self._normalize_distance(
+
                     self._get_value(
                         activity,
                         [
+
                             "distance_km",
+                            "Distanza km",
                             "distance",
+
                         ],
                     )
+
                 ),
 
 
 
-            # carico
-
             "training_load":
+
                 self._get_value(
                     activity,
                     [
+
                         "training_load",
+                        "Carico interno",
                         "load",
                         "tss",
                         "icu_training_load",
+
                     ],
                     0,
                 ),
 
 
 
-            # intensità
-
             "intensity":
 
                 self._get_value(
                     activity,
                     [
+
                         "intensity",
                         "zone",
+                        "Zona prevista",
+
                     ],
                     None,
                 ),
 
 
 
-            # frequenza cardiaca
-
             "heart_rate":
 
                 {
 
                     "average":
+
                         self._get_value(
                             activity,
                             [
+
                                 "average_hr",
                                 "heart_rate_average",
+                                "FC media",
+
                             ],
                         ),
 
 
+
                     "max":
+
                         self._get_value(
                             activity,
                             [
+
                                 "max_hr",
                                 "heart_rate_max",
+                                "FC massima",
+
                             ],
                         ),
 
                 },
 
 
-
-            # potenza
 
             "power":
 
                 {
 
                     "average":
+
                         self._get_value(
                             activity,
                             [
+
                                 "average_power",
                                 "power_average",
+                                "Potenza media",
+
                             ],
                         ),
 
 
+
                     "normalized":
+
                         self._get_value(
                             activity,
                             [
+
                                 "normalized_power",
+                                "Potenza normalizzata",
+
                             ],
                         ),
 
@@ -209,15 +238,16 @@ class ActivityNormalizer:
 
 
 
-            # percezione atleta
-
             "rpe":
 
                 self._get_value(
                     activity,
                     [
+
                         "rpe",
+                        "RPE percepito",
                         "perceived_exertion",
+
                     ],
                 ),
 
@@ -228,14 +258,15 @@ class ActivityNormalizer:
                 self._get_value(
                     activity,
                     [
+
                         "notes",
+                        "Note personali",
                         "comment",
+
                     ],
                 ),
 
 
-
-            # metadati
 
             "raw":
 
@@ -286,8 +317,6 @@ class ActivityNormalizer:
             value = float(value)
 
 
-            # Garmin / Strava spesso usano metri
-
             if value > 1000:
 
                 return round(
@@ -321,8 +350,6 @@ class ActivityNormalizer:
 
             value = float(value)
 
-
-            # secondi
 
             if value > 300:
 
@@ -369,6 +396,7 @@ class ActivityNormalizer:
                 "RUN",
 
 
+
             "bike":
                 "BIKE",
 
@@ -379,11 +407,13 @@ class ActivityNormalizer:
                 "BIKE",
 
 
+
             "swim":
                 "SWIM",
 
             "nuoto":
                 "SWIM",
+
 
 
             "strength":
