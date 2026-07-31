@@ -1,0 +1,3 @@
+"""
+IronCoach models package
+"""
