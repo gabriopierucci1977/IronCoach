@@ -166,3 +166,28 @@ def test_intelligence_is_not_duplicated_as_raw_decision_field() -> None:
     )
 
     assert "Intelligence: " not in report
+
+def test_coach_summary_reads_recovery_state_from_raw_data() -> None:
+    context = _context()
+
+    context["recovery"] = {
+        "readiness": 69,
+        "sleep": {
+            "score": 70,
+            "hours": 6,
+        },
+        "raw": {
+            "Stato recovery": "GIALLO",
+            "Recovery score": 69,
+        },
+    }
+
+    report = ReportBuilder().build(
+        context,
+        _decision(),
+    )
+
+    assert (
+        "• Stato recovery: GIALLO, "
+        "Recovery Score 69"
+    ) in report

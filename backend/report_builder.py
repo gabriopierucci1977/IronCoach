@@ -618,6 +618,25 @@ class ReportBuilder:
 
 
 
+        if recovery_state == "N/D":
+
+
+            recovery_state = self._first_value(
+                recovery.get(
+                    "raw",
+                    {},
+                ) or {},
+                [
+                    "Stato recovery",
+                    "Stato Recovery",
+                    "stato_recovery",
+                    "recovery_state",
+                    "Recovery state",
+                ],
+            )
+
+
+
         recovery_score = self._first_value(
             recovery,
             [
@@ -627,6 +646,24 @@ class ReportBuilder:
                 "readiness",
             ],
         )
+
+
+
+        if recovery_score == "N/D":
+
+
+            recovery_score = self._first_value(
+                recovery.get(
+                    "raw",
+                    {},
+                ) or {},
+                [
+                    "Recovery score",
+                    "Recovery Score",
+                    "recovery_score",
+                    "readiness",
+                ],
+            )
 
 
 
