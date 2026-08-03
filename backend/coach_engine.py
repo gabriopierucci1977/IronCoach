@@ -879,6 +879,24 @@ class CoachEngine:
 
 
 
+        performance_analysis = (
+
+            self.performance_analyzer.analyze(
+
+                {
+                    "performance_history":
+
+                        performance_history,
+
+                }
+
+            )
+
+        )
+
+
+
+
         adaptation_analysis = (
 
             self.adaptation_analyzer.analyze(
@@ -893,23 +911,15 @@ class CoachEngine:
 
                         load_analysis,
 
-                }
 
-            )
+                    "performance_analysis":
 
-        )
-
+                        performance_analysis,
 
 
+                    "recovery_analysis":
 
-        performance_analysis = (
-
-            self.performance_analyzer.analyze(
-
-                {
-                    "performance_history":
-
-                        performance_history,
+                        recovery_assessment,
 
                 }
 
