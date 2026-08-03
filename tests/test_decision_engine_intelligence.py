@@ -137,3 +137,19 @@ def test_unknown_adaptation_does_not_force_recovery() -> None:
     )
 
     assert result["decision"] == "CONFERMA"
+
+def test_high_risk_combination_has_priority_over_moderate_adaptation() -> None:
+    result = DecisionEngine().decide(
+        _assessment(
+            recovery_level="MODERATE",
+            load_level="HIGH",
+            recovery_trend="DECLINING",
+            adaptation_level="MODERATE",
+            performance_trend="UNKNOWN",
+        )
+    )
+
+    assert result["decision"] == "RECUPERA"
+    assert result["strategy"] == "RECOVERY"
+    assert result["risk_level"] == "HIGH_ALERT"
+    assert result["confidence"] == 96

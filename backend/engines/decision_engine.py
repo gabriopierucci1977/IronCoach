@@ -258,138 +258,6 @@ class DecisionEngine:
 
 
         # ======================================================
-        # ADATTAMENTO LIMITATO
-        # ======================================================
-
-
-        if adaptation_level == "LIMITED":
-
-
-            return self._decision(
-
-                decision=self.DECISION_RECOVER,
-
-                reason=(
-
-                    "La capacità di adattamento risulta limitata. "
-                    "È necessario ridurre lo stress allenante e "
-                    "favorire il recupero."
-
-                ),
-
-                priority="Recovery",
-
-                confidence=96,
-
-                strategy=self.STRATEGY_RECOVERY,
-
-                recommended_action=(
-
-                    "Riduci nettamente il carico. Preferisci riposo, "
-                    "recupero attivo o lavoro aerobico molto facile."
-
-                ),
-
-                reasoning=reasoning,
-
-                risk_level="HIGH_ALERT",
-
-            )
-
-
-
-
-        # ======================================================
-        # ADATTAMENTO MODERATO
-        # ======================================================
-
-
-        if adaptation_level == "MODERATE":
-
-
-            return self._decision(
-
-                decision=self.DECISION_ADAPT,
-
-                reason=(
-
-                    "La capacità di adattamento è da monitorare. "
-                    "Il piano va mantenuto con una riduzione prudente "
-                    "di volume o intensità."
-
-                ),
-
-                priority="Performance",
-
-                confidence=90,
-
-                strategy=self.STRATEGY_ADAPT,
-
-                recommended_action=(
-
-                    "Mantieni l'obiettivo della seduta riducendo "
-                    "volume, intensità o densità del lavoro."
-
-                ),
-
-                reasoning=reasoning,
-
-                risk_level="CAUTION",
-
-            )
-
-
-
-
-        # ======================================================
-        # PERFORMANCE IN CALO + CARICO ALTO
-        # ======================================================
-
-
-        if (
-
-            performance_trend_status == "DECLINING"
-
-            and load_level == self.LEVEL_HIGH
-
-        ):
-
-
-            return self._decision(
-
-                decision=self.DECISION_ADAPT,
-
-                reason=(
-
-                    "Il trend prestativo è in calo mentre il carico "
-                    "recente è elevato. È opportuno adattare il piano "
-                    "prima di aumentare ulteriormente lo stress."
-
-                ),
-
-                priority="Performance",
-
-                confidence=89,
-
-                strategy=self.STRATEGY_ADAPT,
-
-                recommended_action=(
-
-                    "Riduci moderatamente volume o intensità e "
-                    "mantieni solo lo stimolo principale della seduta."
-
-                ),
-
-                reasoning=reasoning,
-
-                risk_level="CAUTION",
-
-            )
-
-
-
-
-        # ======================================================
         # INTELLIGENCE:
         # CARICO ALTO + TREND RECOVERY NEGATIVO
         # ======================================================
@@ -618,6 +486,138 @@ class DecisionEngine:
 
                     "Riduci leggermente la seduta e completa il reintegro "
                     "di carboidrati, proteine e liquidi."
+
+                ),
+
+                reasoning=reasoning,
+
+                risk_level="CAUTION",
+
+            )
+
+
+
+
+        # ======================================================
+        # ADATTAMENTO LIMITATO
+        # ======================================================
+
+
+        if adaptation_level == "LIMITED":
+
+
+            return self._decision(
+
+                decision=self.DECISION_RECOVER,
+
+                reason=(
+
+                    "La capacità di adattamento risulta limitata. "
+                    "È necessario ridurre lo stress allenante e "
+                    "favorire il recupero."
+
+                ),
+
+                priority="Recovery",
+
+                confidence=96,
+
+                strategy=self.STRATEGY_RECOVERY,
+
+                recommended_action=(
+
+                    "Riduci nettamente il carico. Preferisci riposo, "
+                    "recupero attivo o lavoro aerobico molto facile."
+
+                ),
+
+                reasoning=reasoning,
+
+                risk_level="HIGH_ALERT",
+
+            )
+
+
+
+
+        # ======================================================
+        # ADATTAMENTO MODERATO
+        # ======================================================
+
+
+        if adaptation_level == "MODERATE":
+
+
+            return self._decision(
+
+                decision=self.DECISION_ADAPT,
+
+                reason=(
+
+                    "La capacità di adattamento è da monitorare. "
+                    "Il piano va mantenuto con una riduzione prudente "
+                    "di volume o intensità."
+
+                ),
+
+                priority="Performance",
+
+                confidence=90,
+
+                strategy=self.STRATEGY_ADAPT,
+
+                recommended_action=(
+
+                    "Mantieni l'obiettivo della seduta riducendo "
+                    "volume, intensità o densità del lavoro."
+
+                ),
+
+                reasoning=reasoning,
+
+                risk_level="CAUTION",
+
+            )
+
+
+
+
+        # ======================================================
+        # PERFORMANCE IN CALO + CARICO ALTO
+        # ======================================================
+
+
+        if (
+
+            performance_trend_status == "DECLINING"
+
+            and load_level == self.LEVEL_HIGH
+
+        ):
+
+
+            return self._decision(
+
+                decision=self.DECISION_ADAPT,
+
+                reason=(
+
+                    "Il trend prestativo è in calo mentre il carico "
+                    "recente è elevato. È opportuno adattare il piano "
+                    "prima di aumentare ulteriormente lo stress."
+
+                ),
+
+                priority="Performance",
+
+                confidence=89,
+
+                strategy=self.STRATEGY_ADAPT,
+
+                recommended_action=(
+
+                    "Riduci moderatamente volume o intensità e "
+                    "mantieni solo lo stimolo principale della seduta."
 
                 ),
 
