@@ -332,7 +332,7 @@ class ReportBuilder:
 
         self._append_block(
             report,
-            "CARICO STORICO",
+            "CARICO RECENTE",
             intelligence.get(
                 "load",
                 {},
@@ -1109,7 +1109,8 @@ class ReportBuilder:
 
             return "; ".join(
 
-                f"{key}: {self._format_value(val)}"
+                f"{self._label(key)}: "
+                f"{self._format_value(val)}"
 
                 for key, val in value.items()
 
