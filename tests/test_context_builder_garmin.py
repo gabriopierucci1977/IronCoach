@@ -421,3 +421,101 @@ def test_airtable_training_error_is_non_fatal() -> None:
         "Storico allenamenti Airtable non disponibile"
         in context["context_warnings"][0]
     )
+
+def test_cross_source_duplicates_are_merged() -> None:
+    garmin_activity = _activity(
+        source_id="9001",
+        start_time="2026-07-23T16:07:34Z",
+        sport="RUN",
+        duration_seconds=3478.98,
+        distance_meters=10500,
+        training_load=226.17,
+    )
+
+    client = FakeClient(
+        training_history=[
+            {
+                "Data allenamento": "2026-07-24",
+                "Sport": "Corsa",
+                "Durata minuti": 57.98,
+                "Distanza km": 10.5,
+                "Carico interno": 521.82,
+                "RPE percepito": 9,
+                "Note personali": "Seduta qualità",
+            }
+        ]
+    )
+
+    context = ContextBuilder(
+        client,
+        garmin_archive=FakeArchive(
+            [
+                garmin_activity
+            ]
+        ),
+    ).build()
+
+    assert context["history_sources"] == {
+        "training_total": 1,
+        "training_airtable": 1,
+        "training_garmin": 1,
+        "garmin_enabled": True,
+    }
+
+    assert len(
+        context["training_history"]
+    ) == 1
+
+    session = context[
+        "training_history"
+    ][0]
+
+    # TrainingHistory conserva i campi normalizzati necessari
+    # all'analisi, ma non espone il campo tecnico "source".
+    # La priorità Airtable è verificata dai valori specifici della
+    # sessione Airtable, diversi da quelli Garmin.
+    assert session["date"] == "2026-07-24"
+    assert session["sport"] == "run"
+    assert session["duration_minutes"] == 57.98
+    assert session["distance_km"] == 10.5
+    assert session["training_load"] == 521.82
+
+
+def test_similar_sessions_are_not_merged_without_metric_match() -> None:
+    garmin_activity = _activity(
+        source_id="9002",
+        start_time="2026-07-24T08:00:00Z",
+        sport="RUN",
+        duration_seconds=3600,
+        distance_meters=10000,
+        training_load=200,
+    )
+
+    client = FakeClient(
+        training_history=[
+            {
+                "Data allenamento": "2026-07-24",
+                "Sport": "Corsa",
+                "Durata minuti": 50,
+                "Distanza km": 8,
+                "Carico interno": 400,
+            }
+        ]
+    )
+
+    context = ContextBuilder(
+        client,
+        garmin_archive=FakeArchive(
+            [
+                garmin_activity
+            ]
+        ),
+    ).build()
+
+    assert context["history_sources"][
+        "training_total"
+    ] == 2
+
+    assert len(
+        context["training_history"]
+    ) == 2

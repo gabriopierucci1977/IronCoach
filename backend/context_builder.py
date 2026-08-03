@@ -208,10 +208,22 @@ class ContextBuilder:
         merged: List[Dict[str, Any]] = []
         seen = set()
 
-        for session in [*garmin_sessions, *airtable_sessions]:
+        # Airtable ha priorità nel totale combinato perché conserva
+        # informazioni soggettive come RPE, sensazioni, note e carico
+        # interno. Gli elenchi separati Garmin e Airtable restano intatti.
+        for session in [*airtable_sessions, *garmin_sessions]:
             key = self._session_key(session)
 
             if key in seen:
+                continue
+
+            if any(
+                self._sessions_match_cross_source(
+                    session,
+                    existing,
+                )
+                for existing in merged
+            ):
                 continue
 
             seen.add(key)
@@ -219,6 +231,93 @@ class ContextBuilder:
 
         merged.sort(key=self._session_sort_key)
         return merged
+
+    @classmethod
+    def _sessions_match_cross_source(
+        cls,
+        first: Dict[str, Any],
+        second: Dict[str, Any],
+    ) -> bool:
+        first_source = str(
+            first.get("source") or ""
+        ).strip().lower()
+        second_source = str(
+            second.get("source") or ""
+        ).strip().lower()
+
+        if (
+            not first_source
+            or not second_source
+            or first_source == second_source
+        ):
+            return False
+
+        first_sport = str(
+            first.get("sport") or ""
+        ).strip().upper()
+        second_sport = str(
+            second.get("sport") or ""
+        ).strip().upper()
+
+        if (
+            not first_sport
+            or first_sport != second_sport
+        ):
+            return False
+
+        first_date = cls._parse_datetime(
+            first.get("date")
+        )
+        second_date = cls._parse_datetime(
+            second.get("date")
+        )
+
+        if first_date is None or second_date is None:
+            return False
+
+        if abs(
+            (first_date.date() - second_date.date()).days
+        ) > 1:
+            return False
+
+        first_duration = cls._number_or_none(
+            first.get("duration_minutes")
+        )
+        second_duration = cls._number_or_none(
+            second.get("duration_minutes")
+        )
+
+        if (
+            first_duration is None
+            or second_duration is None
+            or first_duration <= 0
+            or second_duration <= 0
+            or abs(first_duration - second_duration) > 1.0
+        ):
+            return False
+
+        first_distance = cls._number_or_none(
+            first.get("distance_km")
+        )
+        second_distance = cls._number_or_none(
+            second.get("distance_km")
+        )
+
+        has_distance = (
+            (first_distance or 0) > 0
+            or (second_distance or 0) > 0
+        )
+
+        if has_distance and (
+            first_distance is None
+            or second_distance is None
+            or first_distance <= 0
+            or second_distance <= 0
+            or abs(first_distance - second_distance) > 0.2
+        ):
+            return False
+
+        return True
 
     def _session_key(
         self,
@@ -306,6 +405,18 @@ class ContextBuilder:
             return round(float(value or 0), 3)
         except (TypeError, ValueError):
             return 0.0
+
+    @staticmethod
+    def _number_or_none(
+        value: Any,
+    ) -> Optional[float]:
+        try:
+            if value is None or value == "":
+                return None
+
+            return float(value)
+        except (TypeError, ValueError):
+            return None
 
     @classmethod
     def _normalized_datetime_text(cls, value: Any) -> str:
