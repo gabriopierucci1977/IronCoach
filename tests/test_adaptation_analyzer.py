@@ -170,7 +170,8 @@ def test_poor_recovery_with_high_load_is_limited() -> None:
                 "sessions_with_load": 18,
             },
             recovery={
-                "level": "LOW",
+                "state": "ROSSO",
+                "level": "CRITICAL",
             },
         )
     )
@@ -191,7 +192,8 @@ def test_good_recovery_is_positive_factor() -> None:
                 "sessions_with_load": 10,
             },
             recovery={
-                "level": "GOOD",
+                "state": "VERDE",
+                "level": "LOW",
             },
         )
     )

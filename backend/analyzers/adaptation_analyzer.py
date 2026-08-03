@@ -93,13 +93,24 @@ class AdaptationAnalyzer:
             )
         ).upper()
 
+        recovery_state = self._normalized_text(
+            self._first_value(
+                recovery,
+                [
+                    "state",
+                    "recovery_state",
+                    "status",
+                ],
+                "",
+            )
+        ).upper()
+
         recovery_level = self._normalized_text(
             self._first_value(
                 recovery,
                 [
                     "level",
                     "recovery_level",
-                    "status",
                 ],
                 "",
             )
@@ -125,10 +136,16 @@ class AdaptationAnalyzer:
             "UNKNOWN",
         }
 
-        has_recovery_data = recovery_level not in {
-            "",
-            "UNKNOWN",
-        }
+        has_recovery_data = (
+            recovery_state not in {
+                "",
+                "UNKNOWN",
+            }
+            or recovery_level not in {
+                "",
+                "UNKNOWN",
+            }
+        )
 
         has_meaningful_data = (
             has_load_data
@@ -216,20 +233,46 @@ class AdaptationAnalyzer:
                 "Performance stabile",
             )
 
-        poor_recovery = recovery_level in {
-            "LOW",
-            "POOR",
-            "LIMITED",
-            "BAD",
-            "CRITICAL",
-        }
+        poor_recovery = (
+            recovery_state in {
+                "ROSSO",
+                "RED",
+            }
+            or recovery_level in {
+                "POOR",
+                "LIMITED",
+                "BAD",
+                "CRITICAL",
+            }
+        )
 
-        good_recovery = recovery_level in {
-            "GOOD",
-            "HIGH",
-            "NORMAL",
-            "OPTIMAL",
-        }
+        moderate_recovery = (
+            recovery_state in {
+                "GIALLO",
+                "YELLOW",
+            }
+            or recovery_level == "MODERATE"
+        )
+
+        good_recovery = (
+            recovery_state in {
+                "VERDE",
+                "GREEN",
+            }
+            or recovery_level in {
+                "GOOD",
+                "HIGH",
+                "NORMAL",
+                "OPTIMAL",
+            }
+            or (
+                recovery_level == "LOW"
+                and recovery_state not in {
+                    "ROSSO",
+                    "RED",
+                }
+            )
+        )
 
         if poor_recovery:
             self._append_unique(
@@ -238,6 +281,14 @@ class AdaptationAnalyzer:
             )
             reasons.append(
                 "Recupero recente insufficiente"
+            )
+        elif moderate_recovery:
+            self._append_unique(
+                risk_factors,
+                "Recupero da monitorare",
+            )
+            reasons.append(
+                "Recupero recente moderato"
             )
         elif good_recovery:
             self._append_unique(
@@ -268,6 +319,7 @@ class AdaptationAnalyzer:
             or high_ratio
             or performance_trend == "DECLINING"
             or poor_recovery
+            or moderate_recovery
             or bool(limitations)
         )
 
