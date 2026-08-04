@@ -186,13 +186,63 @@ class AirtableClient:
 
     def get_performance_history(self):
         """
-        Restituisce lo stato performance corrente del profilo atleta.
+        Legge lo storico verticale dalla tabella Performance Log.
 
-        Questo non rappresenta ancora uno storico temporale: finché non
-        saranno disponibili almeno due rilevazioni datate della stessa
-        metrica, il PerformanceAnalyzer continuerà correttamente a
-        restituire trend UNKNOWN.
+        Se la tabella è vuota, mantiene il fallback sullo stato corrente
+        presente nel profilo atleta.
         """
+
+        table = self.base.table(
+            "Performance Log"
+        )
+
+        records = table.all() or []
+
+        performance = []
+
+        for record in records:
+            fields = record.get(
+                "fields",
+                {},
+            )
+
+            item = {
+                "date": fields.get(
+                    "Data"
+                ),
+                "metric": fields.get(
+                    "Metrica"
+                ),
+                "value": fields.get(
+                    "Valore"
+                ),
+            }
+
+            note = fields.get(
+                "Note"
+            )
+
+            if note not in (
+                None,
+                "",
+            ):
+                item["note"] = note
+
+            performance.append(
+                item
+            )
+
+        performance.sort(
+            key=lambda item: str(
+                item.get(
+                    "date"
+                )
+                or ""
+            )
+        )
+
+        if performance:
+            return performance
 
         athlete = self.get_athlete_profile()
 
