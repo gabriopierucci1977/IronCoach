@@ -957,6 +957,58 @@ class DecisionEngine:
                     )
 
 
+        # --------------------------------------------------
+        # PERFORMANCE DETAILS
+        # --------------------------------------------------
+
+        performance = assessments.get(
+            "performance",
+            {},
+        ) or {}
+
+        details = performance.get(
+            "details",
+            {},
+        ) or {}
+
+        for metric, data in details.items():
+
+            if not isinstance(
+                data,
+                dict,
+            ):
+                continue
+
+            start = data.get(
+                "start"
+            )
+
+            end = data.get(
+                "end"
+            )
+
+            change = data.get(
+                "change_percent"
+            )
+
+            if (
+                start is None
+                or end is None
+                or change is None
+            ):
+                continue
+
+            detail = (
+                f"{str(metric).upper()}: "
+                f"{start} -> {end} "
+                f"({change}%)"
+            )
+
+            if detail not in reasoning:
+                reasoning.append(
+                    detail
+                )
+
 
         return reasoning
 
