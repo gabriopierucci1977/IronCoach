@@ -116,6 +116,33 @@ def test_performance_is_included_in_reasoning() -> None:
     ]
 
 
+def test_performance_details_are_included_in_reasoning() -> None:
+    assessment = _assessment(
+        performance_trend="DECLINING",
+    )
+
+    assessment["performance"] = {
+        "trend": "DECLINING",
+        "details": {
+            "ftp": {
+                "start": 280,
+                "end": 267.4,
+                "change_percent": -4.5,
+            }
+        },
+        "reasons": [],
+    }
+
+    result = DecisionEngine().decide(
+        assessment
+    )
+
+    assert (
+        "FTP: 280 -> 267.4 (-4.5%)"
+        in result["reasoning"]
+    )
+
+
 def test_adaptation_prevents_confirmation_despite_green_recovery() -> None:
     result = DecisionEngine().decide(
         _assessment(
@@ -137,6 +164,7 @@ def test_unknown_adaptation_does_not_force_recovery() -> None:
     )
 
     assert result["decision"] == "CONFERMA"
+
 
 def test_high_risk_combination_has_priority_over_moderate_adaptation() -> None:
     result = DecisionEngine().decide(
