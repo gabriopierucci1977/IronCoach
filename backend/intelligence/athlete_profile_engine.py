@@ -429,6 +429,12 @@ class AthleteProfileEngine:
         data,
         field_name,
     ):
+        """
+        Estrae un campo compatibile sia con:
+
+        - formato Airtable flat;
+        - formato normalizzato annidato.
+        """
 
         if not isinstance(
             data,
@@ -450,6 +456,20 @@ class AthleteProfileEngine:
                 return self._normalized_text(
                     value
                 )
+
+            if isinstance(
+                value,
+                dict,
+            ):
+
+                nested_value = self._field(
+                    value,
+                    field_name,
+                )
+
+                if nested_value:
+
+                    return nested_value
 
         return ""
 

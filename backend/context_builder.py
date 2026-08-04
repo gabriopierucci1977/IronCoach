@@ -21,6 +21,9 @@ from backend.models.activity import IronCoachActivity
 from backend.normalization.activity_normalizer import ActivityNormalizer
 from backend.normalization.athlete_normalizer import AthleteNormalizer
 from backend.normalization.recovery_normalizer import RecoveryNormalizer
+from backend.intelligence.athlete_profile_engine import (
+    AthleteProfileEngine,
+)
 
 
 class ContextBuilder:
@@ -36,6 +39,7 @@ class ContextBuilder:
         self.activity_normalizer = ActivityNormalizer()
         self.recovery_normalizer = RecoveryNormalizer()
         self.athlete_normalizer = AthleteNormalizer()
+        self.athlete_profile_engine = AthleteProfileEngine()
 
     def build(self) -> Dict[str, Any]:
         warnings: List[str] = []
@@ -50,6 +54,13 @@ class ContextBuilder:
             raw_athlete,
             source="airtable",
         )
+        athlete_profile_intelligence = (
+    self.athlete_profile_engine.analyze(
+        {
+            "athlete": athlete,
+        }
+    )
+)
         recovery = self.recovery_normalizer.normalize(
             raw_recovery,
             source="airtable",
@@ -84,6 +95,8 @@ class ContextBuilder:
         return {
             "athlete": athlete,
             "athlete_profile": athlete,
+            "athlete_profile_intelligence":
+    athlete_profile_intelligence,
             "recovery": recovery,
             "training": training,
             "nutrition": nutrition,
