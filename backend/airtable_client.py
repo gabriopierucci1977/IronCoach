@@ -21,6 +21,7 @@ class AirtableClient:
     # -------------------------------------------------
 
     def test_connection(self):
+
         try:
             tables = self.base.tables()
 
@@ -43,8 +44,14 @@ class AirtableClient:
     # INTERNAL READERS
     # -------------------------------------------------
 
-    def _get_first_record(self, table_name):
-        table = self.base.table(table_name)
+    def _get_first_record(
+        self,
+        table_name,
+    ):
+
+        table = self.base.table(
+            table_name
+        )
 
         record = table.first()
 
@@ -61,7 +68,10 @@ class AirtableClient:
         table_name,
         date_field=None,
     ):
-        table = self.base.table(table_name)
+
+        table = self.base.table(
+            table_name
+        )
 
         records = table.all()
 
@@ -69,10 +79,17 @@ class AirtableClient:
             return {}
 
         if date_field:
+
             record = max(
                 records,
                 key=lambda r: (
-                    r.get("fields", {}).get(date_field, ""),
+                    r.get(
+                        "fields",
+                        {},
+                    ).get(
+                        date_field,
+                        "",
+                    ),
                     r.get(
                         "createdTime",
                         "",
@@ -81,9 +98,11 @@ class AirtableClient:
             )
 
         else:
+
             record = max(
                 records,
-                key=lambda r: r.get(
+                key=lambda r:
+                r.get(
                     "createdTime",
                     "",
                 ),
@@ -100,7 +119,10 @@ class AirtableClient:
         limit=100,
         date_field=None,
     ):
-        table = self.base.table(table_name)
+
+        table = self.base.table(
+            table_name
+        )
 
         records = table.all()
 
@@ -116,8 +138,10 @@ class AirtableClient:
         ]
 
         if date_field:
+
             data.sort(
-                key=lambda x: x.get(
+                key=lambda x:
+                x.get(
                     date_field,
                     "",
                 )
@@ -130,6 +154,7 @@ class AirtableClient:
     # -------------------------------------------------
 
     def get_athlete_profile(self):
+
         return self._get_first_record(
             "Athlete Profile"
         )
@@ -139,22 +164,26 @@ class AirtableClient:
     # -------------------------------------------------
 
     def get_latest_recovery(self):
+
         return self._get_latest_record(
             "Recovery Log"
         )
 
     def get_latest_training(self):
+
         return self._get_latest_record(
             "Training Log",
             "Data allenamento",
         )
 
     def get_latest_nutrition(self):
+
         return self._get_latest_record(
             "Nutrition Log"
         )
 
     def get_latest_decision(self):
+
         return self._get_latest_record(
             "Decision Log",
             "Data",
@@ -168,6 +197,7 @@ class AirtableClient:
         self,
         limit=100,
     ):
+
         return self._get_history(
             "Training Log",
             limit,
@@ -178,18 +208,21 @@ class AirtableClient:
         self,
         limit=100,
     ):
+
         return self._get_history(
             "Recovery Log",
             limit,
             "Data",
         )
-
     def get_performance_history(self):
+
         """
         Legge lo storico verticale dalla tabella Performance Log.
 
-        Se la tabella è vuota, mantiene il fallback sullo stato corrente
-        presente nel profilo atleta.
+        Ignora record vuoti o incompleti.
+
+        Se la tabella è vuota, mantiene il fallback
+        sul profilo atleta.
         """
 
         table = self.base.table(
@@ -201,21 +234,44 @@ class AirtableClient:
         performance = []
 
         for record in records:
+
             fields = record.get(
                 "fields",
                 {},
             )
 
+            date = fields.get(
+                "Data"
+            )
+
+            metric = fields.get(
+                "Metrica"
+            )
+
+            value = fields.get(
+                "Valore"
+            )
+
+            if (
+                date in (
+                    None,
+                    "",
+                )
+                or metric in (
+                    None,
+                    "",
+                )
+                or value in (
+                    None,
+                    "",
+                )
+            ):
+                continue
+
             item = {
-                "date": fields.get(
-                    "Data"
-                ),
-                "metric": fields.get(
-                    "Metrica"
-                ),
-                "value": fields.get(
-                    "Valore"
-                ),
+                "date": date,
+                "metric": metric,
+                "value": value,
             }
 
             note = fields.get(
@@ -233,7 +289,8 @@ class AirtableClient:
             )
 
         performance.sort(
-            key=lambda item: str(
+            key=lambda item:
+            str(
                 item.get(
                     "date"
                 )
@@ -251,10 +308,18 @@ class AirtableClient:
 
         return [
             {
-                "ftp": athlete.get("FTP"),
-                "vo2max_run": athlete.get("VO₂max corsa"),
-                "vo2max_bike": athlete.get("VO₂max bici"),
-                "css": athlete.get("CSS"),
+                "ftp": athlete.get(
+                    "FTP"
+                ),
+                "vo2max_run": athlete.get(
+                    "VO₂max corsa"
+                ),
+                "vo2max_bike": athlete.get(
+                    "VO₂max bici"
+                ),
+                "css": athlete.get(
+                    "CSS"
+                ),
             }
         ]
 
@@ -266,6 +331,7 @@ class AirtableClient:
         self,
         fields,
     ):
+
         table = self.base.table(
             "Decision Log"
         )
