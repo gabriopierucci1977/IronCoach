@@ -25,30 +25,38 @@ class WorkoutAdapter:
     strategia prodotta dal Coach Engine.
     """
 
-    def adapt(self, context, decision):
+    def adapt(
+        self,
+        context,
+        decision,
+    ):
         """
         Costruisce l'eventuale allenamento modificato.
-
-        Args:
-            context (dict): Contesto complessivo dell'atleta.
-            decision (dict): Decisione prodotta dal Coach Engine.
-
-        Returns:
-            dict | None: Allenamento modificato oppure None
-                quando il piano viene confermato.
         """
 
         context = context or {}
         decision = decision or {}
 
-        training = context.get("training", {}) or {}
+        training = context.get(
+            "training",
+            {},
+        ) or {}
 
         strategy = self._normalize_text(
-            decision.get("strategy", "")
+            decision.get(
+                "strategy",
+                "",
+            )
         ).upper()
 
         if strategy == "KEEP_PLAN":
             return None
+
+        decision_context = (
+            self._build_decision_context(
+                decision
+            )
+        )
 
         sport = self._get_text(
             training,
@@ -56,7 +64,9 @@ class WorkoutAdapter:
             "sport",
         ) or "Attività aerobica"
 
-        sport_category = self._classify_sport(sport)
+        sport_category = self._classify_sport(
+            sport
+        )
 
         workout_name = self._get_text(
             training,
@@ -90,6 +100,7 @@ class WorkoutAdapter:
             "session_type": session_type,
             "planned_zone": planned_zone,
             "original_duration": original_duration,
+            "decision_context": decision_context,
         }
 
         if strategy == "ADAPT":
@@ -109,6 +120,7 @@ class WorkoutAdapter:
 
         return None
 
+
     # -------------------------------------------------
     # DISTRIBUZIONE DELLE STRATEGIE
     # -------------------------------------------------
@@ -121,6 +133,7 @@ class WorkoutAdapter:
         session_type,
         planned_zone,
         original_duration,
+        decision_context,
     ):
         """
         Mantiene parte dello stimolo allenante riducendo
@@ -143,24 +156,34 @@ class WorkoutAdapter:
             planned_zone=planned_zone,
             original_duration=original_duration,
             duration=duration,
+            decision_context=decision_context,
         )
 
         if sport_category == "RUN":
-            workout = self._build_run_adapted(duration)
+            workout = self._build_run_adapted(
+                duration
+            )
 
         elif sport_category == "BIKE":
-            workout = self._build_bike_adapted(duration)
+            workout = self._build_bike_adapted(
+                duration
+            )
 
         elif sport_category == "SWIM":
-            workout = self._build_swim_adapted(duration)
+            workout = self._build_swim_adapted(
+                duration
+            )
 
         else:
-            workout = self._build_generic_adapted(duration)
+            workout = self._build_generic_adapted(
+                duration
+            )
 
         return {
             **common_data,
             **workout,
         }
+
 
     def _build_reduced_workout(
         self,
@@ -170,6 +193,7 @@ class WorkoutAdapter:
         session_type,
         planned_zone,
         original_duration,
+        decision_context,
     ):
         """
         Riduce in modo significativo il carico previsto,
@@ -192,24 +216,33 @@ class WorkoutAdapter:
             planned_zone=planned_zone,
             original_duration=original_duration,
             duration=duration,
+            decision_context=decision_context,
         )
-
         if sport_category == "RUN":
-            workout = self._build_run_reduced(duration)
+            workout = self._build_run_reduced(
+                duration
+            )
 
         elif sport_category == "BIKE":
-            workout = self._build_bike_reduced(duration)
+            workout = self._build_bike_reduced(
+                duration
+            )
 
         elif sport_category == "SWIM":
-            workout = self._build_swim_reduced(duration)
+            workout = self._build_swim_reduced(
+                duration
+            )
 
         else:
-            workout = self._build_generic_reduced(duration)
+            workout = self._build_generic_reduced(
+                duration
+            )
 
         return {
             **common_data,
             **workout,
         }
+
 
     def _build_recovery_workout(
         self,
@@ -219,6 +252,7 @@ class WorkoutAdapter:
         session_type,
         planned_zone,
         original_duration,
+        decision_context,
     ):
         """
         Genera una proposta esclusivamente rigenerante,
@@ -238,30 +272,43 @@ class WorkoutAdapter:
             planned_zone=planned_zone,
             original_duration=original_duration,
             duration=duration,
+            decision_context=decision_context,
         )
 
         if sport_category == "RUN":
-            workout = self._build_run_recovery(duration)
+            workout = self._build_run_recovery(
+                duration
+            )
 
         elif sport_category == "BIKE":
-            workout = self._build_bike_recovery(duration)
+            workout = self._build_bike_recovery(
+                duration
+            )
 
         elif sport_category == "SWIM":
-            workout = self._build_swim_recovery(duration)
+            workout = self._build_swim_recovery(
+                duration
+            )
 
         else:
-            workout = self._build_generic_recovery(duration)
+            workout = self._build_generic_recovery(
+                duration
+            )
 
         return {
             **common_data,
             **workout,
         }
 
+
     # -------------------------------------------------
     # CORSA
     # -------------------------------------------------
 
-    def _build_run_adapted(self, duration):
+    def _build_run_adapted(
+        self,
+        duration,
+    ):
         """
         Seduta di corsa adattata.
 
@@ -306,7 +353,11 @@ class WorkoutAdapter:
             ),
         }
 
-    def _build_run_reduced(self, duration):
+
+    def _build_run_reduced(
+        self,
+        duration,
+    ):
         """
         Seduta di corsa con carico fortemente ridotto.
         """
@@ -348,7 +399,11 @@ class WorkoutAdapter:
             ),
         }
 
-    def _build_run_recovery(self, duration):
+
+    def _build_run_recovery(
+        self,
+        duration,
+    ):
         """
         Proposta rigenerante per la corsa.
         """
@@ -387,12 +442,14 @@ class WorkoutAdapter:
                 "di dolore, zoppia o peggioramento delle sensazioni."
             ),
         }
-
     # -------------------------------------------------
     # CICLISMO
     # -------------------------------------------------
 
-    def _build_bike_adapted(self, duration):
+    def _build_bike_adapted(
+        self,
+        duration,
+    ):
         """
         Seduta di ciclismo adattata.
 
@@ -435,7 +492,11 @@ class WorkoutAdapter:
             ),
         }
 
-    def _build_bike_reduced(self, duration):
+
+    def _build_bike_reduced(
+        self,
+        duration,
+    ):
         """
         Seduta ciclistica con carico fortemente ridotto.
         """
@@ -475,7 +536,11 @@ class WorkoutAdapter:
             ),
         }
 
-    def _build_bike_recovery(self, duration):
+
+    def _build_bike_recovery(
+        self,
+        duration,
+    ):
         """
         Proposta rigenerante per il ciclismo.
         """
@@ -514,16 +579,115 @@ class WorkoutAdapter:
             ),
         }
 
+
     # -------------------------------------------------
     # NUOTO
     # -------------------------------------------------
 
-    def _build_swim_adapted(self, duration):
+    def _build_swim_adapted(
+        self,
+        duration,
+    ):
         """
-        Seduta di nuoto adattata.
+        Seduta nuoto adattata.
+        """
 
-        Mantiene tecnica e continuità aerobica eliminando
-        lavori intensi e partenze massimali.
+        return {
+            "intensity": "Tecnica + aerobico facile",
+            "warmup": (
+                f"{max(5, int(duration * 0.15))}' "
+                "riscaldamento tecnico"
+            ),
+            "main_set": (
+                f"{max(15, int(duration * 0.60))}' "
+                "nuoto continuo controllato"
+            ),
+            "cooldown": (
+                f"{max(5, int(duration * 0.15))}' "
+                "defaticamento"
+            ),
+            "technical_focus": (
+                "Efficienza della bracciata e rilassamento"
+            ),
+            "removed_elements": (
+                "Serie massimali, sprint e lavori lattacidi"
+            ),
+            "notes": (
+                "Seduta nuoto adattata con intensità controllata."
+            ),
+        }
+
+
+    def _build_swim_reduced(
+        self,
+        duration,
+    ):
+        """
+        Seduta nuoto ridotta.
+        """
+
+        return {
+            "intensity": "Facile",
+            "warmup": (
+                "Riscaldamento tecnico molto leggero"
+            ),
+            "main_set": (
+                f"{duration}' nuoto facile senza variazioni"
+            ),
+            "cooldown": (
+                "Defaticamento libero"
+            ),
+            "technical_focus": (
+                "Fluidità e controllo del gesto"
+            ),
+            "removed_elements": (
+                "Serie intense e lavori di soglia"
+            ),
+            "notes": (
+                "Volume ridotto e percezione dello sforzo bassa."
+            ),
+        }
+
+
+    def _build_swim_recovery(
+        self,
+        duration,
+    ):
+        """
+        Nuoto rigenerante.
+        """
+
+        return {
+            "intensity": "Molto facile",
+            "warmup": (
+                "Mobilità in acqua e nuoto leggero"
+            ),
+            "main_set": (
+                f"{duration}' tecnica e recupero attivo"
+            ),
+            "cooldown": (
+                "Nuoto rilassato"
+            ),
+            "technical_focus": (
+                "Rilassamento e respirazione"
+            ),
+            "alternative": (
+                "Riposo o mobilità fuori acqua"
+            ),
+            "notes": (
+                "Nessun lavoro intenso."
+            ),
+        }
+    # -------------------------------------------------
+    # GENERICO
+    # -------------------------------------------------
+
+    def _build_generic_adapted(
+        self,
+        duration,
+    ):
+        """
+        Seduta generica adattata.
         """
 
         warmup_duration, main_duration, cooldown_duration = (
@@ -536,229 +700,89 @@ class WorkoutAdapter:
         )
 
         return {
-            "intensity": "Facile-aerobica",
-            "warmup": (
-                f"{warmup_duration}' di nuoto facile alternando "
-                "stile libero e dorso"
-            ),
-            "main_set": (
-                f"{main_duration}' di lavoro aerobico regolare, "
-                "con pause brevi e ritmo sempre controllato"
-            ),
-            "cooldown": (
-                f"{cooldown_duration}' di nuoto molto facile"
-            ),
-            "technical_focus": (
-                "Assetto, presa sull'acqua, respirazione regolare "
-                "e qualità della bracciata"
-            ),
-            "removed_elements": (
-                "Serie massimali, sprint, partenze forti, "
-                "palette impegnative e lavoro anaerobico"
-            ),
-            "notes": (
-                "Seduta di nuoto adattata: volume ridotto del 20% circa. "
-                "Privilegiare tecnica ed economia del gesto senza cercare "
-                "ritmi elevati."
-            ),
-        }
-
-    def _build_swim_reduced(self, duration):
-        """
-        Seduta di nuoto con carico fortemente ridotto.
-        """
-
-        warmup_duration, main_duration, cooldown_duration = (
-            self._split_duration(
-                duration=duration,
-                warmup_target=8,
-                cooldown_target=7,
-                minimum_main=10,
-            )
-        )
-
-        return {
-            "intensity": "Molto facile",
-            "warmup": (
-                f"{warmup_duration}' di nuoto sciolto "
-                "con ampio recupero"
-            ),
-            "main_set": (
-                f"{main_duration}' di tecnica e nuoto aerobico facile, "
-                "interrompendo le ripetizioni prima della fatica"
-            ),
-            "cooldown": (
-                f"{cooldown_duration}' di nuoto rilassato"
-            ),
-            "technical_focus": (
-                "Scivolamento, rilassamento e controllo respiratorio"
-            ),
-            "removed_elements": (
-                "Soglia, CSS intenso, sprint, palette pesanti "
-                "e serie con recupero ridotto"
-            ),
-            "notes": (
-                "Carico di nuoto ridotto del 35% circa. "
-                "Le pause possono essere aumentate per mantenere "
-                "la tecnica sempre pulita."
-            ),
-        }
-
-    def _build_swim_recovery(self, duration):
-        """
-        Proposta rigenerante per il nuoto.
-        """
-
-        warmup_duration, main_duration, cooldown_duration = (
-            self._split_duration(
-                duration=duration,
-                warmup_target=5,
-                cooldown_target=5,
-                minimum_main=10,
-            )
-        )
-
-        return {
-            "intensity": "Rigenerante",
-            "warmup": (
-                f"{warmup_duration}' di nuoto libero molto facile"
-            ),
-            "main_set": (
-                f"{main_duration}' di nuoto sciolto e tecnica leggera, "
-                "con recuperi completi"
-            ),
-            "cooldown": (
-                f"{cooldown_duration}' rilassati a scelta"
-            ),
-            "technical_focus": (
-                "Respirazione, mobilità e sensazioni positive in acqua"
-            ),
-            "alternative": (
-                "Riposo completo oppure mobilità fuori dall'acqua"
-            ),
-            "notes": (
-                "Nessun lavoro cronometrato o ad alta intensità. "
-                "Evitare palette e strumenti che aumentano il carico "
-                "muscolare."
-            ),
-        }
-
-    # -------------------------------------------------
-    # ATTIVITÀ GENERICA
-    # -------------------------------------------------
-
-    def _build_generic_adapted(self, duration):
-        """
-        Adattamento utilizzato quando lo sport non viene
-        riconosciuto.
-        """
-
-        warmup_duration, main_duration, cooldown_duration = (
-            self._split_duration(
-                duration=duration,
-                warmup_target=10,
-                cooldown_target=10,
-                minimum_main=10,
-            )
-        )
-
-        return {
             "intensity": "Z1-Z2",
             "warmup": (
-                f"{warmup_duration}' progressivi in Z1"
+                f"{warmup_duration}' riscaldamento facile"
             ),
             "main_set": (
-                f"{main_duration}' di lavoro aerobico controllato "
-                "in Z2"
+                f"{main_duration}' lavoro aerobico controllato"
             ),
             "cooldown": (
-                f"{cooldown_duration}' facili in Z1"
+                f"{cooldown_duration}' defaticamento"
             ),
             "technical_focus": (
-                "Movimento fluido e intensità costante"
+                "Movimento fluido e controllo dello sforzo"
             ),
             "removed_elements": (
-                "Intervalli ad alta intensità e lavoro massimale"
+                "Picchi intensi e lavoro ad alta intensità"
             ),
             "notes": (
-                "Seduta adattata: volume ridotto del 20% circa "
-                "e intensità limitata al lavoro aerobico controllato."
+                "Seduta adattata mantenendo stimolo controllato."
             ),
         }
 
-    def _build_generic_reduced(self, duration):
-        """
-        Riduzione generica del carico.
-        """
 
-        warmup_duration, main_duration, cooldown_duration = (
-            self._split_duration(
-                duration=duration,
-                warmup_target=8,
-                cooldown_target=8,
-                minimum_main=9,
-            )
-        )
+    def _build_generic_reduced(
+        self,
+        duration,
+    ):
+        """
+        Seduta generica ridotta.
+        """
 
         return {
-            "intensity": "Z1-Z2 facile",
+            "intensity": "Facile",
             "warmup": (
-                f"{warmup_duration}' molto facili in Z1"
+                "Riscaldamento leggero"
             ),
             "main_set": (
-                f"{main_duration}' aerobici facili tra Z1 e Z2"
+                f"{duration}' lavoro controllato"
             ),
             "cooldown": (
-                f"{cooldown_duration}' di defaticamento in Z1"
+                "Defaticamento"
             ),
             "technical_focus": (
-                "Controllo del gesto e bassa percezione dello sforzo"
+                "Riduzione della fatica percepita"
             ),
             "removed_elements": (
-                "Soglia, VO2max, sprint e progressioni intense"
+                "Lavori intensi e variazioni impegnative"
             ),
             "notes": (
-                "Carico ridotto del 35% circa. "
-                "Mantenere tutta la seduta a intensità facile."
+                "Volume ridotto e intensità mantenuta bassa."
             ),
         }
 
-    def _build_generic_recovery(self, duration):
+
+    def _build_generic_recovery(
+        self,
+        duration,
+    ):
         """
         Recupero generico.
         """
 
-        warmup_duration, main_duration, cooldown_duration = (
-            self._split_duration(
-                duration=duration,
-                warmup_target=5,
-                cooldown_target=5,
-                minimum_main=10,
-            )
-        )
-
         return {
             "intensity": "Z1 molto facile",
             "warmup": (
-                f"{warmup_duration}' molto facili"
+                "Movimento leggero progressivo"
             ),
             "main_set": (
-                f"{main_duration}' rigeneranti in Z1"
+                f"{duration}' recupero attivo"
             ),
             "cooldown": (
-                f"{cooldown_duration}' molto facili"
+                "Defaticamento rilassato"
             ),
             "technical_focus": (
-                "Rilassamento e recupero attivo"
+                "Rilassamento generale"
             ),
             "alternative": (
                 "Riposo completo"
             ),
             "notes": (
-                "Nessun lavoro di qualità. Interrompere la seduta "
-                "in presenza di dolore o peggioramento delle sensazioni."
+                "Nessun lavoro di qualità."
             ),
         }
+
 
     # -------------------------------------------------
     # DATI COMUNI
@@ -774,6 +798,7 @@ class WorkoutAdapter:
         planned_zone,
         original_duration,
         duration,
+        decision_context,
     ):
         """
         Costruisce i dati comuni a tutte le proposte.
@@ -796,19 +821,70 @@ class WorkoutAdapter:
             "original_zone": planned_zone,
             "original_duration_minutes": original_duration_value,
             "duration_minutes": duration,
+            "decision_context": decision_context,
         }
+
+
+    def _build_decision_context(
+        self,
+        decision,
+    ):
+        """
+        Estrae i fattori intelligence dalla decisione
+        del Coach Engine.
+        """
+
+        decision = decision or {}
+
+        intelligence = decision.get(
+            "intelligence",
+            {},
+        ) or {}
+
+        performance = intelligence.get(
+            "performance",
+            {},
+        ) or {}
+
+        adaptation = intelligence.get(
+            "adaptation",
+            {},
+        ) or {}
+
+        recovery_trend = intelligence.get(
+            "recovery_trend",
+            {},
+        ) or {}
+
+        return {
+            "risk_level": decision.get(
+                "risk_level"
+            ),
+
+            "performance_trend": performance.get(
+                "trend"
+            ),
+
+            "adaptation_level": adaptation.get(
+                "adaptation_level"
+            ),
+
+            "recovery_trend": recovery_trend.get(
+                "trend"
+            ),
+        }
+
 
     # -------------------------------------------------
     # CLASSIFICAZIONE SPORT
     # -------------------------------------------------
 
-    def _classify_sport(self, sport):
+    def _classify_sport(
+        self,
+        sport,
+    ):
         """
-        Classifica il valore dello sport in una categoria
-        interna stabile.
-
-        Returns:
-            str: RUN, BIKE, SWIM oppure GENERIC.
+        Classifica il valore dello sport.
         """
 
         normalized_sport = self._normalize_text(
@@ -863,7 +939,6 @@ class WorkoutAdapter:
             return "SWIM"
 
         return "GENERIC"
-
     # -------------------------------------------------
     # DURATE
     # -------------------------------------------------
@@ -1127,3 +1202,4 @@ class WorkoutAdapter:
         return " ".join(
             normalized_text.split()
         )
+
