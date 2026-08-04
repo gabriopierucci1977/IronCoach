@@ -175,6 +175,10 @@ class DecisionEngine:
             assessments
         )
 
+        self._intelligence = self._build_intelligence(
+            assessments
+        )
+
         # ======================================================
         # RISCHIO FISICO CRITICO
         # ======================================================
@@ -1062,6 +1066,12 @@ class DecisionEngine:
 
             risk_level=risk_level,
 
+            intelligence=getattr(
+                self,
+                "_intelligence",
+                {},
+            ),
+
         )
 
 
@@ -1070,6 +1080,36 @@ class DecisionEngine:
 
 
 
+
+
+
+    def _build_intelligence(
+        self,
+        assessments,
+    ):
+
+        return {
+            "recovery": assessments.get(
+                "recovery",
+                {},
+            ),
+            "load": assessments.get(
+                "load",
+                {},
+            ),
+            "adaptation": assessments.get(
+                "adaptation",
+                {},
+            ),
+            "recovery_trend": assessments.get(
+                "recovery_trend",
+                {},
+            ),
+            "performance": assessments.get(
+                "performance",
+                {},
+            ),
+        }
 
     # ======================================================
     # NORMALIZATION OUTPUT
