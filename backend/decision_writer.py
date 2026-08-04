@@ -38,6 +38,10 @@ class DecisionWriter:
         Prepara i campi Airtable e salva la decisione.
         """
 
+        decision = decision or {}
+
+
+
         modified_workout = (
             decision.get(
                 "modified_workout"
@@ -104,6 +108,29 @@ class DecisionWriter:
             "Strategia":
                 decision.get(
                     "strategy"
+                ),
+
+
+
+            "Risk level":
+                decision.get(
+                    "risk_level"
+                ),
+
+
+
+            "Reasoning":
+                decision.get(
+                    "reasoning",
+                    [],
+                ),
+
+
+
+            "Intelligence":
+                decision.get(
+                    "intelligence",
+                    {},
                 ),
 
         }
