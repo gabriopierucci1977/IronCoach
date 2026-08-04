@@ -6,7 +6,8 @@ Verifica che:
 - AdaptationAnalyzer riceva athlete_profile, load_analysis,
   performance_analysis e recovery_analysis;
 - gli assessment finali contengano gli stessi risultati;
-- evaluate non richieda servizi esterni o scritture.
+- evaluate non richieda servizi esterni o scritture;
+- la performance intelligence venga mantenuta nella decisione finale.
 """
 
 from backend.coach_engine import CoachEngine
@@ -124,6 +125,17 @@ def _build_engine():
             "metrics": {
                 "ftp": 5.0,
             },
+            "details": {
+                "ftp": {
+                    "start": 280,
+                    "end": 294,
+                    "change_percent": 5.0,
+                }
+            },
+            "strengths": [
+                "Performance in crescita",
+            ],
+            "concerns": [],
         },
         events,
     )
@@ -237,6 +249,17 @@ def test_adaptation_receives_all_required_analyses() -> None:
             "metrics": {
                 "ftp": 5.0,
             },
+            "details": {
+                "ftp": {
+                    "start": 280,
+                    "end": 294,
+                    "change_percent": 5.0,
+                }
+            },
+            "strengths": [
+                "Performance in crescita",
+            ],
+            "concerns": [],
         },
         "recovery_analysis": {
             "state": "VERDE",
@@ -288,6 +311,38 @@ def test_decision_engine_receives_enriched_adaptation() -> None:
     ][
         "adaptation_level"
     ] == "GOOD"
+
+
+def test_performance_intelligence_is_preserved_in_final_decision() -> None:
+    engine, _ = _build_engine()
+
+    decision = engine.evaluate(
+        _context()
+    )
+
+    performance = decision[
+        "intelligence"
+    ][
+        "performance"
+    ]
+
+    assert performance[
+        "trend"
+    ] == "IMPROVING"
+
+    assert performance[
+        "metrics"
+    ][
+        "ftp"
+    ] == 5.0
+
+    assert performance[
+        "details"
+    ][
+        "ftp"
+    ][
+        "change_percent"
+    ] == 5.0
 
 
 def test_analyzer_inputs_use_context_histories() -> None:
