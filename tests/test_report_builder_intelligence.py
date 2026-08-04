@@ -12,7 +12,6 @@ Verifica che il report esponga senza perdere informazioni:
 
 from backend.report_builder import ReportBuilder
 
-
 def _context():
     return {
         "athlete_profile": {
@@ -34,7 +33,6 @@ def _context():
         },
         "decision": {},
     }
-
 
 def _decision():
     return {
@@ -88,7 +86,6 @@ def _decision():
         },
     }
 
-
 def test_report_contains_all_intelligence_sections() -> None:
     report = ReportBuilder().build(
         _context(),
@@ -101,7 +98,6 @@ def test_report_contains_all_intelligence_sections() -> None:
     assert "TREND RECOVERY" in report
     assert "TREND PERFORMANCE" in report
 
-
 def test_report_contains_recent_load_metrics() -> None:
     report = ReportBuilder().build(
         _context(),
@@ -111,7 +107,6 @@ def test_report_contains_recent_load_metrics() -> None:
     assert "Acute load 7d: 620.0" in report
     assert "Chronic load 28d: 2100.0" in report
     assert "Acute chronic ratio: 1.18" in report
-
 
 def test_report_contains_adaptation_details() -> None:
     report = ReportBuilder().build(
@@ -123,6 +118,70 @@ def test_report_contains_adaptation_details() -> None:
     assert "Carico recente elevato" in report
     assert "Adattamento da monitorare" in report
 
+def test_report_contains_performance_details() -> None:
+    report = ReportBuilder().build(
+        _context(),
+        _decision(),
+    )
+
+    assert "Trend: DECLINING" in report
+    assert "FTP: -4.5" in report
+    assert "Performance in calo" in report
+
+def test_report_contains_decision_reasoning() -> None:
+    report = ReportBuilder().build(
+        _context(),
+        _decision(),
+    )
+
+    assert "Reasoning: " in report
+    assert "Performance: in peggioramento" in report
+    assert "Adattamento: moderato" in report
+
+def test_report_contains_risk_and_recommended_action() -> None:
+    report = ReportBuilder().build(
+        _context(),
+        _decision(),
+    )
+
+    assert "Risk level: CAUTION" in report
+    assert (
+        "Azione consigliata: "
+        "Riduci moderatamente volume o intensità."
+    ) in report
+
+def test_intelligence_is_not_duplicated_as_raw_decision_field() -> None:
+    report = ReportBuilder().build(
+        _context(),
+        _decision(),
+    )
+
+    assert "Intelligence: " not in report
+
+def test_coach_summary_reads_recovery_state_from_raw_data() -> None:
+    context = _context()
+
+    context["recovery"] = {
+        "readiness": 69,
+        "sleep": {
+            "score": 70,
+            "hours": 6,
+        },
+        "raw": {
+            "Stato recovery": "GIALLO",
+            "Recovery score": 69,
+        },
+    }
+
+    report = ReportBuilder().build(
+        context,
+        _decision(),
+    )
+
+    assert (
+        "• Stato recovery: GIALLO, "
+        "Recovery Score 69"
+    ) in report
 
 def test_report_contains_performance_details() -> None:
     report = ReportBuilder().build(
@@ -133,6 +192,30 @@ def test_report_contains_performance_details() -> None:
     assert "Trend: DECLINING" in report
     assert "FTP: -4.5" in report
     assert "Performance in calo" in report
+
+
+def test_report_contains_improving_performance_details() -> None:
+    decision = _decision()
+
+    decision["intelligence"]["performance"] = {
+        "trend": "IMPROVING",
+        "metrics": {
+            "ftp": 3.9,
+        },
+        "strengths": [
+            "Performance in crescita",
+        ],
+        "concerns": [],
+    }
+
+    report = ReportBuilder().build(
+        _context(),
+        decision,
+    )
+
+    assert "Trend: IMPROVING" in report
+    assert "FTP: 3.9" in report
+    assert "Performance in crescita" in report
 
 
 def test_report_contains_decision_reasoning() -> None:
@@ -166,6 +249,7 @@ def test_intelligence_is_not_duplicated_as_raw_decision_field() -> None:
     )
 
     assert "Intelligence: " not in report
+
 
 def test_coach_summary_reads_recovery_state_from_raw_data() -> None:
     context = _context()
