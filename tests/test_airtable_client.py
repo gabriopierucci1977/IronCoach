@@ -174,3 +174,32 @@ def test_performance_history_falls_back_to_profile_when_log_is_empty() -> None:
             "css": 107,
         }
     ]
+
+
+def test_empty_performance_records_are_ignored() -> None:
+    client = _client_with_tables(
+        {
+            "Performance Log": [
+                {
+                    "fields": {},
+                },
+                {
+                    "fields": {
+                        "Data": "2026-01-15",
+                        "Metrica": "ftp",
+                        "Valore": 255,
+                    }
+                },
+            ]
+        }
+    )
+
+    history = client.get_performance_history()
+
+    assert history == [
+        {
+            "date": "2026-01-15",
+            "metric": "ftp",
+            "value": 255,
+        }
+    ]
