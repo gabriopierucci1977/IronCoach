@@ -59,6 +59,13 @@ class DecisionEngine:
 
 
 
+        self._athlete_profile = assessments.get(
+            "athlete_profile",
+            {},
+        ) or {}
+
+
+
         recovery = assessments.get(
             "recovery",
             {},
@@ -1209,6 +1216,16 @@ class DecisionEngine:
 
 
 
+        (
+            reason,
+            recommended_action,
+        ) = self._personalize_decision_text(
+            reason=reason,
+            recommended_action=recommended_action,
+        )
+
+
+
         result = Decision(
 
             decision=decision,
@@ -1241,6 +1258,139 @@ class DecisionEngine:
 
 
 
+
+
+
+    def _personalize_decision_text(
+        self,
+        reason,
+        recommended_action,
+    ):
+
+        athlete_profile = getattr(
+            self,
+            "_athlete_profile",
+            {},
+        ) or {}
+
+        athlete_type = athlete_profile.get(
+            "athlete_type"
+        )
+
+        if self._meaningful_profile_value(
+            athlete_type
+        ):
+
+            reason = self._append_sentence(
+                reason,
+                (
+                    "La valutazione considera il profilo "
+                    f"{str(athlete_type).strip()}."
+                ),
+            )
+
+        limitation = self._first_profile_item(
+            athlete_profile.get(
+                "limitations"
+            )
+        )
+
+        injury_pattern = self._first_profile_item(
+            athlete_profile.get(
+                "injury_patterns"
+            )
+        )
+
+        preference = self._first_profile_item(
+            athlete_profile.get(
+                "training_preferences"
+            )
+        )
+
+        if limitation:
+
+            recommended_action = self._append_sentence(
+                recommended_action,
+                (
+                    "Considera la limitazione individuale: "
+                    f"{limitation}."
+                ),
+            )
+
+        elif injury_pattern:
+
+            recommended_action = self._append_sentence(
+                recommended_action,
+                (
+                    "Monitoraggio individuale: "
+                    f"{injury_pattern}."
+                ),
+            )
+
+        elif preference:
+
+            recommended_action = self._append_sentence(
+                recommended_action,
+                (
+                    "Compatibilmente con la strategia, "
+                    "considera la preferenza allenante: "
+                    f"{preference}."
+                ),
+            )
+
+        return (
+            reason,
+            recommended_action,
+        )
+
+
+
+    def _first_profile_item(
+        self,
+        value,
+    ):
+
+        items = self._profile_items(
+            value
+        )
+
+        if not items:
+
+            return ""
+
+        return items[0]
+
+
+
+    def _append_sentence(
+        self,
+        text,
+        sentence,
+    ):
+
+        base = str(
+            text or ""
+        ).strip()
+
+        addition = str(
+            sentence or ""
+        ).strip()
+
+        if not addition:
+
+            return base
+
+        if addition in base:
+
+            return base
+
+        if not base:
+
+            return addition
+
+        return (
+            f"{base} {addition}"
+        )
 
 
 
