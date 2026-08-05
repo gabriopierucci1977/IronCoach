@@ -110,6 +110,12 @@ class WorkoutAdapter:
             strategy,
         )
 
+        planned_zone = self._apply_intensity_zone(
+            planned_zone,
+            intensity_adjustment,
+            strategy,
+        )
+
         workout_data = {
             "sport": sport,
             "sport_category": sport_category,
@@ -862,6 +868,7 @@ class WorkoutAdapter:
             "sport_category": sport_category,
             "original_type": session_type,
             "original_zone": planned_zone,
+            "planned_zone": planned_zone,
             "original_duration_minutes": original_duration_value,
             "duration_minutes": duration,
             "decision_context": decision_context,
@@ -869,6 +876,42 @@ class WorkoutAdapter:
             "goal_adjustment": goal_adjustment,
             "intensity_adjustment": intensity_adjustment,
         }
+
+
+    def _apply_intensity_zone(
+        self,
+        planned_zone,
+        intensity_adjustment,
+        strategy,
+    ):
+        """
+        Applica il profilo intensità alla zona prevista.
+        """
+
+        intensity_adjustment = intensity_adjustment or {}
+
+        goal_type = intensity_adjustment.get(
+            "goal_type"
+        )
+
+        if strategy == "RECOVERY":
+            return "Z2"
+
+        if goal_type in (
+            "EVENTO",
+            "PERFORMANCE",
+        ):
+            return planned_zone
+
+        if goal_type == "BENESSERE":
+            if planned_zone == "Z5":
+                return "Z3"
+            if planned_zone == "Z4":
+                return "Z3"
+            return planned_zone
+
+        return planned_zone
+
 
 
     def _build_intensity_adjustment(
