@@ -816,7 +816,7 @@ class DecisionEngine:
 
             return self._decision(
 
-                decision=self.DECISION_ADAPT,
+                decision=self.DECISION_RECOVER,
 
                 reason=(
                     "L'obiettivo benessere richiede maggiore prudenza "
@@ -1299,6 +1299,31 @@ class DecisionEngine:
 
 
 
+    def _build_training_priority(self, strategy=None):
+        """
+        Definisce la priorità allenante derivata
+        da obiettivo atleta e situazione corrente.
+        """
+
+        goal_type = self._goal_profile.get(
+            "goal_type"
+        )
+
+        if strategy == self.STRATEGY_RECOVERY:
+            return "RIPRISTINO"
+
+        if goal_type == "EVENTO":
+            return "SPECIFICITA_GARA"
+
+        if goal_type == "PERFORMANCE":
+            return "SVILUPPO_PRESTAZIONE"
+
+        if goal_type == "BENESSERE":
+            return "CONTINUITA"
+
+        return "STANDARD"
+
+
     # ======================================================
     # CREAZIONE DECISIONE
     # ======================================================
@@ -1364,9 +1389,18 @@ class DecisionEngine:
 
         )
 
+        result_dict = result.to_dict()
+
+        result_dict["training_priority"] = (
+            self._build_training_priority(
+                strategy=strategy,
+            )
+        )
+
+        return result_dict
 
 
-        return result.to_dict()
+
 
 
 
