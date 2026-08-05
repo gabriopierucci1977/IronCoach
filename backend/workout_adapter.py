@@ -105,6 +105,11 @@ class WorkoutAdapter:
             strategy,
         )
 
+        intensity_adjustment = self._build_intensity_adjustment(
+            goal_adjustment,
+            strategy,
+        )
+
         workout_data = {
             "sport": sport,
             "sport_category": sport_category,
@@ -115,6 +120,7 @@ class WorkoutAdapter:
             "decision_context": decision_context,
             "goal_profile": goal_profile,
             "goal_adjustment": goal_adjustment,
+            "intensity_adjustment": intensity_adjustment,
         }
 
         if strategy == "ADAPT":
@@ -150,6 +156,7 @@ class WorkoutAdapter:
         decision_context,
         goal_profile,
         goal_adjustment,
+        intensity_adjustment,
     ):
         """
         Mantiene parte dello stimolo allenante riducendo
@@ -177,6 +184,7 @@ class WorkoutAdapter:
             decision_context=decision_context,
             goal_profile=goal_profile,
             goal_adjustment=goal_adjustment,
+            intensity_adjustment=intensity_adjustment,
         )
 
         if sport_category == "RUN":
@@ -216,6 +224,7 @@ class WorkoutAdapter:
         decision_context,
         goal_profile,
         goal_adjustment,
+        intensity_adjustment,
     ):
         """
         Riduce in modo significativo il carico previsto,
@@ -241,6 +250,7 @@ class WorkoutAdapter:
             decision_context=decision_context,
             goal_profile=goal_profile,
             goal_adjustment=goal_adjustment,
+            intensity_adjustment=intensity_adjustment,
         )
         if sport_category == "RUN":
             workout = self._build_run_reduced(
@@ -279,6 +289,7 @@ class WorkoutAdapter:
         decision_context,
         goal_profile,
         goal_adjustment,
+        intensity_adjustment,
     ):
         """
         Genera una proposta esclusivamente rigenerante,
@@ -301,6 +312,7 @@ class WorkoutAdapter:
             decision_context=decision_context,
             goal_profile=goal_profile,
             goal_adjustment=goal_adjustment,
+            intensity_adjustment=intensity_adjustment,
         )
 
         if sport_category == "RUN":
@@ -829,6 +841,7 @@ class WorkoutAdapter:
         decision_context,
         goal_profile,
         goal_adjustment,
+        intensity_adjustment,
     ):
         """
         Costruisce i dati comuni a tutte le proposte.
@@ -854,7 +867,62 @@ class WorkoutAdapter:
             "decision_context": decision_context,
             "goal_profile": goal_profile,
             "goal_adjustment": goal_adjustment,
+            "intensity_adjustment": intensity_adjustment,
         }
+
+
+    def _build_intensity_adjustment(
+        self,
+        goal_adjustment,
+        strategy,
+    ):
+        """
+        Definisce il comportamento intensità
+        legato all'obiettivo atleta.
+        """
+
+        goal_adjustment = goal_adjustment or {}
+
+        goal_type = goal_adjustment.get(
+            "goal_type"
+        )
+
+        if goal_type == "EVENTO":
+            return {
+                "goal_type": "EVENTO",
+                "focus": (
+                    "Mantenere specificità "
+                    "dello stimolo gara."
+                ),
+                "strategy": strategy,
+            }
+
+        if goal_type == "PERFORMANCE":
+            return {
+                "goal_type": "PERFORMANCE",
+                "focus": (
+                    "Preservare stimoli "
+                    "qualitativi compatibili."
+                ),
+                "strategy": strategy,
+            }
+
+        if goal_type == "BENESSERE":
+            return {
+                "goal_type": "BENESSERE",
+                "focus": (
+                    "Ridurre intensità e "
+                    "prioritizzare recupero."
+                ),
+                "strategy": strategy,
+            }
+
+        return {
+            "goal_type": "NON DEFINITO",
+            "focus": "Intensità standard adattata.",
+            "strategy": strategy,
+        }
+
 
 
     def _build_goal_adjustment(
