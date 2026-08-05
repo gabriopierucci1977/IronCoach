@@ -50,7 +50,17 @@ class WorkoutAdapter:
         ).upper()
 
         if strategy == "KEEP_PLAN":
-            return None
+            training_priority = decision.get(
+                "training_priority"
+            )
+
+            if training_priority is None:
+                return None
+
+            return {
+                "training_priority": training_priority,
+                "strategy": strategy,
+            }
 
         decision_context = (
             self._build_decision_context(
@@ -63,6 +73,10 @@ class WorkoutAdapter:
         goal_profile = self._get_goal_profile(
             context,
             decision,
+        )
+
+        training_priority = decision.get(
+            "training_priority"
         )
 
         sport = self._get_text(
@@ -134,6 +148,7 @@ class WorkoutAdapter:
             "goal_adjustment": goal_adjustment,
             "intensity_adjustment": intensity_adjustment,
             "stimulus_adjustment": stimulus_adjustment,
+            "training_priority": training_priority,
         }
 
         if strategy == "ADAPT":
@@ -171,6 +186,7 @@ class WorkoutAdapter:
         goal_adjustment,
         intensity_adjustment,
         stimulus_adjustment,
+        training_priority,
     ):
         """
         Mantiene parte dello stimolo allenante riducendo
@@ -200,6 +216,7 @@ class WorkoutAdapter:
             goal_adjustment=goal_adjustment,
             intensity_adjustment=intensity_adjustment,
             stimulus_adjustment=stimulus_adjustment,
+            training_priority=training_priority,
         )
 
         if sport_category == "RUN":
@@ -241,6 +258,7 @@ class WorkoutAdapter:
         goal_adjustment,
         intensity_adjustment,
         stimulus_adjustment,
+        training_priority,
     ):
         """
         Riduce in modo significativo il carico previsto,
@@ -268,6 +286,7 @@ class WorkoutAdapter:
             goal_adjustment=goal_adjustment,
             intensity_adjustment=intensity_adjustment,
             stimulus_adjustment=stimulus_adjustment,
+            training_priority=training_priority,
         )
         if sport_category == "RUN":
             workout = self._build_run_reduced(
@@ -308,6 +327,7 @@ class WorkoutAdapter:
         goal_adjustment,
         intensity_adjustment,
         stimulus_adjustment,
+        training_priority,
     ):
         """
         Genera una proposta esclusivamente rigenerante,
@@ -332,6 +352,7 @@ class WorkoutAdapter:
             goal_adjustment=goal_adjustment,
             intensity_adjustment=intensity_adjustment,
             stimulus_adjustment=stimulus_adjustment,
+            training_priority=training_priority,
         )
 
         if sport_category == "RUN":
@@ -862,6 +883,7 @@ class WorkoutAdapter:
         goal_adjustment,
         intensity_adjustment,
         stimulus_adjustment,
+        training_priority,
     ):
         """
         Costruisce i dati comuni a tutte le proposte.
@@ -890,6 +912,7 @@ class WorkoutAdapter:
             "goal_adjustment": goal_adjustment,
             "intensity_adjustment": intensity_adjustment,
             "stimulus_adjustment": stimulus_adjustment,
+            "training_priority": training_priority,
         }
 
 
