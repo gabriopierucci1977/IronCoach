@@ -128,6 +128,7 @@ class WorkoutAdapter:
             goal_adjustment,
             strategy,
             session_type,
+            training_priority,
         )
 
         planned_zone = self._apply_intensity_zone(
@@ -957,6 +958,7 @@ class WorkoutAdapter:
         goal_adjustment,
         strategy,
         session_type,
+        training_priority=None,
     ):
         """
         Definisce il tipo di stimolo coerente
@@ -964,6 +966,50 @@ class WorkoutAdapter:
         """
 
         goal_adjustment = goal_adjustment or {}
+
+        if training_priority == "SVILUPPO_PRESTAZIONE":
+            return {
+                "type": "QUALITY",
+                "focus": "Qualità dello stimolo allenante.",
+                "preserved_elements": [
+                    "Lavoro qualitativo",
+                ],
+                "removed_elements": [],
+            }
+
+        if training_priority == "SPECIFICITA_GARA":
+            return {
+                "type": "SPECIFICITY",
+                "focus": "Specificità dello stimolo gara.",
+                "preserved_elements": [
+                    "Stimolo gara",
+                ],
+                "removed_elements": [],
+            }
+
+        if training_priority == "CONTINUITA":
+            return {
+                "type": "AEROBIC_CONTROL",
+                "focus": "Controllo aerobico e continuità.",
+                "preserved_elements": [
+                    "Lavoro aerobico",
+                ],
+                "removed_elements": [
+                    "VO2",
+                    "Sprint",
+                    "Soglia",
+                ],
+            }
+
+        if training_priority == "RIPRISTINO":
+            return {
+                "type": "RECOVERY",
+                "focus": "Recupero e ripristino.",
+                "preserved_elements": [],
+                "removed_elements": [
+                    "Alta intensità",
+                ],
+            }
 
         goal_type = goal_adjustment.get(
             "goal_type"
