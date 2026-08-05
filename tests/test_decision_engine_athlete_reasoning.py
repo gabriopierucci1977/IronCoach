@@ -176,3 +176,158 @@ def test_profile_reasoning_does_not_change_safe_decision():
     assert decision["decision"] == "CONFERMA"
     assert decision["strategy"] == "KEEP_PLAN"
     assert decision["risk_level"] == "NORMAL"
+
+
+def test_reason_is_personalized_with_athlete_type():
+    assessments = _safe_assessments()
+    assessments["athlete_profile"] = {
+        "athlete_type": (
+            "Triatleta Age Group endurance "
+            "multidisciplinare"
+        ),
+    }
+
+    decision = DecisionEngine().decide(
+        assessments
+    )
+
+    assert (
+        "La valutazione considera il profilo "
+        "Triatleta Age Group endurance "
+        "multidisciplinare."
+        in decision["reason"]
+    )
+
+
+def test_recommended_action_prioritizes_limitation():
+    assessments = _safe_assessments()
+    assessments["athlete_profile"] = {
+        "limitations": [
+            "Storico problematiche tendinee",
+        ],
+        "injury_patterns": [
+            (
+                "Monitorare la risposta del tendine "
+                "d'Achille al carico di corsa"
+            ),
+        ],
+        "training_preferences": [
+            "Possibilità di allenamento quotidiano",
+        ],
+    }
+
+    decision = DecisionEngine().decide(
+        assessments
+    )
+
+    recommended_action = decision[
+        "recommended_action"
+    ]
+
+    assert (
+        "Considera la limitazione individuale: "
+        "Storico problematiche tendinee."
+        in recommended_action
+    )
+
+    assert (
+        "Monitoraggio individuale:"
+        not in recommended_action
+    )
+
+    assert (
+        "considera la preferenza allenante:"
+        not in recommended_action
+    )
+
+
+def test_recommended_action_uses_injury_pattern_without_limitations():
+    assessments = _safe_assessments()
+    assessments["athlete_profile"] = {
+        "limitations": [],
+        "injury_patterns": [
+            (
+                "Monitorare la risposta del tendine "
+                "d'Achille al carico di corsa"
+            ),
+        ],
+        "training_preferences": [
+            "Possibilità di allenamento quotidiano",
+        ],
+    }
+
+    decision = DecisionEngine().decide(
+        assessments
+    )
+
+    recommended_action = decision[
+        "recommended_action"
+    ]
+
+    assert (
+        "Monitoraggio individuale: "
+        "Monitorare la risposta del tendine "
+        "d'Achille al carico di corsa."
+        in recommended_action
+    )
+
+    assert (
+        "considera la preferenza allenante:"
+        not in recommended_action
+    )
+
+
+def test_recommended_action_uses_preference_as_final_fallback():
+    assessments = _safe_assessments()
+    assessments["athlete_profile"] = {
+        "limitations": [],
+        "injury_patterns": [],
+        "training_preferences": [
+            "Possibilità di allenamento quotidiano",
+        ],
+    }
+
+    decision = DecisionEngine().decide(
+        assessments
+    )
+
+    assert (
+        "Compatibilmente con la strategia, "
+        "considera la preferenza allenante: "
+        "Possibilità di allenamento quotidiano."
+        in decision["recommended_action"]
+    )
+
+
+def test_personalized_output_is_not_duplicated():
+    assessments = _safe_assessments()
+    assessments["athlete_profile"] = {
+        "athlete_type": "Atleta Age Group endurance",
+        "limitations": [
+            "Storico problematiche tendinee",
+        ],
+    }
+
+    decision = DecisionEngine().decide(
+        assessments
+    )
+
+    reason_sentence = (
+        "La valutazione considera il profilo "
+        "Atleta Age Group endurance."
+    )
+
+    action_sentence = (
+        "Considera la limitazione individuale: "
+        "Storico problematiche tendinee."
+    )
+
+    assert decision["reason"].count(
+        reason_sentence
+    ) == 1
+
+    assert decision[
+        "recommended_action"
+    ].count(
+        action_sentence
+    ) == 1
