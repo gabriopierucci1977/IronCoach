@@ -1014,7 +1014,168 @@ class DecisionEngine:
                 )
 
 
+        # --------------------------------------------------
+        # ATHLETE PROFILE DETAILS
+        # --------------------------------------------------
+
+        athlete_profile = assessments.get(
+            "athlete_profile",
+            {},
+        ) or {}
+
+        athlete_type = athlete_profile.get(
+            "athlete_type"
+        )
+
+        if self._meaningful_profile_value(
+            athlete_type
+        ):
+
+            self._append_unique_reasoning(
+                reasoning,
+                (
+                    "Profilo atleta: "
+                    f"{athlete_type}"
+                ),
+            )
+
+        for strength in self._profile_items(
+            athlete_profile.get(
+                "strengths"
+            )
+        ):
+
+            self._append_unique_reasoning(
+                reasoning,
+                (
+                    "Punto di forza atleta: "
+                    f"{strength}"
+                ),
+            )
+
+        for limitation in self._profile_items(
+            athlete_profile.get(
+                "limitations"
+            )
+        ):
+
+            self._append_unique_reasoning(
+                reasoning,
+                (
+                    "Limitazione atleta: "
+                    f"{limitation}"
+                ),
+            )
+
+        for preference in self._profile_items(
+            athlete_profile.get(
+                "training_preferences"
+            )
+        ):
+
+            self._append_unique_reasoning(
+                reasoning,
+                (
+                    "Preferenza allenante: "
+                    f"{preference}"
+                ),
+            )
+
+        for pattern in self._profile_items(
+            athlete_profile.get(
+                "injury_patterns"
+            )
+        ):
+
+            self._append_unique_reasoning(
+                reasoning,
+                (
+                    "Pattern infortunio: "
+                    f"{pattern}"
+                ),
+            )
+
+
         return reasoning
+
+
+
+    def _append_unique_reasoning(
+        self,
+        reasoning,
+        item,
+    ):
+
+        if (
+            item
+            and item not in reasoning
+        ):
+
+            reasoning.append(
+                item
+            )
+
+
+
+    def _profile_items(
+        self,
+        value,
+    ):
+
+        if value is None:
+
+            return []
+
+        if isinstance(
+            value,
+            (
+                list,
+                tuple,
+                set,
+            ),
+        ):
+
+            items = value
+
+        else:
+
+            items = [
+                value
+            ]
+
+        return [
+            str(item).strip()
+            for item in items
+            if self._meaningful_profile_value(
+                item
+            )
+        ]
+
+
+
+    def _meaningful_profile_value(
+        self,
+        value,
+    ):
+
+        if value is None:
+
+            return False
+
+        normalized = str(
+            value
+        ).strip()
+
+        if not normalized:
+
+            return False
+
+        return normalized.upper() not in {
+            "N/D",
+            "UNKNOWN",
+            "NONE",
+            "NON DISPONIBILE",
+        }
 
 
 

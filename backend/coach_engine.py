@@ -765,6 +765,22 @@ class CoachEngine:
 
 
 
+        athlete_profile_intelligence = (
+
+            context.get(
+                "athlete_profile_intelligence"
+            )
+
+            or self._build_athlete_intelligence(
+                athlete_profile
+            )
+
+            or {}
+
+        )
+
+
+
         training_history = context.get(
             "training_history",
             [],
@@ -979,6 +995,12 @@ class CoachEngine:
             "performance":
 
                 performance_analysis,
+
+
+
+            "athlete_profile":
+
+                athlete_profile_intelligence,
 
         }
 
