@@ -1351,6 +1351,8 @@ class DecisionEngine:
             strategy
         )
 
+        self._current_strategy = strategy
+
 
 
         (
@@ -1442,6 +1444,30 @@ class DecisionEngine:
             "_goal_profile",
             {},
         ) or {}
+
+        training_priority = self._build_training_priority(
+            strategy=getattr(
+                self,
+                "_current_strategy",
+                None,
+            )
+        )
+
+        priority_labels = {
+            "SPECIFICITA_GARA": "Specificità gara",
+            "SVILUPPO_PRESTAZIONE": "Sviluppo prestazione",
+            "CONTINUITA": "Continuità",
+            "RIPRISTINO": "Ripristino",
+        }
+
+        if training_priority in priority_labels:
+            reason = self._append_sentence(
+                reason,
+                (
+                    "Priorità allenante: "
+                    f"{priority_labels[training_priority]}."
+                ),
+            )
 
         goal_type = goal_profile.get(
             "goal_type"
