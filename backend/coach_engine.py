@@ -1016,6 +1016,15 @@ class CoachEngine:
 
                 athlete_profile_intelligence,
 
+
+
+            "goal_profile":
+
+                athlete_profile_intelligence.get(
+                    "goal_profile",
+                    {},
+                ),
+
         }
 
 
@@ -1040,6 +1049,15 @@ class CoachEngine:
 
                 self._build_athlete_intelligence(
                     athlete_profile
+                ),
+
+
+
+            "goal_profile":
+
+                athlete_profile_intelligence.get(
+                    "goal_profile",
+                    {},
                 ),
 
 
