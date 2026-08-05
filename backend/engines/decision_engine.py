@@ -799,6 +799,49 @@ class DecisionEngine:
             )
 
         # ======================================================
+        # GOAL BENESSERE + STRESS ELEVATO
+        # ======================================================
+
+        goal_type = self._goal_profile.get(
+            "goal_type"
+        )
+
+        if (
+            goal_type == "BENESSERE"
+            and (
+                training_level == self.LEVEL_HIGH
+                or load_level == self.LEVEL_HIGH
+            )
+        ):
+
+            return self._decision(
+
+                decision=self.DECISION_ADAPT,
+
+                reason=(
+                    "L'obiettivo benessere richiede maggiore prudenza "
+                    "in presenza di stress allenante elevato."
+                ),
+
+                priority="Recovery",
+
+                confidence=88,
+
+                strategy=self.STRATEGY_RECOVERY,
+
+                recommended_action=(
+                    "Riduci il carico privilegiando recupero, "
+                    "continuità e sostenibilità del percorso."
+                ),
+
+                reasoning=reasoning,
+
+                risk_level="CAUTION",
+
+            )
+
+
+        # ======================================================
         # CONFERMA PIANO
         # ======================================================
 
