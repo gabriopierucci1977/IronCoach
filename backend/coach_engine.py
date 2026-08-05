@@ -765,19 +765,33 @@ class CoachEngine:
 
 
 
-        athlete_profile_intelligence = (
+        generated_athlete_intelligence = (
+            self._build_athlete_intelligence(
+                athlete_profile
+            )
+        )
+
+
+
+        context_athlete_intelligence = (
 
             context.get(
                 "athlete_profile_intelligence"
             )
 
-            or self._build_athlete_intelligence(
-                athlete_profile
-            )
-
             or {}
 
         )
+
+
+
+        athlete_profile_intelligence = {
+
+            **generated_athlete_intelligence,
+
+            **context_athlete_intelligence,
+
+        }
 
 
 
