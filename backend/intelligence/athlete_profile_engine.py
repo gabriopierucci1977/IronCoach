@@ -40,6 +40,9 @@ class AthleteProfileEngine:
             "injury_patterns": self._injury_patterns(
                 athlete
             ),
+            "goal_profile": self._goal_profile(
+                athlete
+            ),
         }
 
     def _athlete_type(
@@ -384,6 +387,69 @@ class AthleteProfileEngine:
                 "non ancora disponibile"
             ),
         }
+
+    def _goal_profile(
+        self,
+        athlete,
+    ):
+        """
+        Costruisce una sintesi dell'obiettivo atleta.
+
+        Non modifica la decisione allenante.
+        Fornisce solo contesto al coach.
+        """
+
+        goals = self._field(
+            athlete,
+            "Obiettivi principali",
+        )
+
+        races = self._field(
+            athlete,
+            "Gare obiettivo",
+        )
+
+        combined = (
+            goals
+            + " "
+            + races
+        ).lower()
+
+        if self._contains_any(
+            combined,
+            (
+                "ironman",
+                "triathlon",
+                "gara",
+                "maratona",
+                "gran fondo",
+            ),
+        ):
+            goal_type = "EVENTO"
+
+        elif self._contains_any(
+            combined,
+            (
+                "dimagr",
+                "salute",
+                "benessere",
+                "fitness",
+            ),
+        ):
+            goal_type = "BENESSERE"
+
+        elif goals:
+            goal_type = "PERFORMANCE"
+
+        else:
+            goal_type = "NON DEFINITO"
+
+        return {
+            "primary_goal": goals,
+            "race_target": races,
+            "goal_type": goal_type,
+        }
+
 
     def _injury_patterns(
         self,
