@@ -110,6 +110,12 @@ class WorkoutAdapter:
             strategy,
         )
 
+        stimulus_adjustment = self._build_stimulus_adjustment(
+            goal_adjustment,
+            strategy,
+            session_type,
+        )
+
         planned_zone = self._apply_intensity_zone(
             planned_zone,
             intensity_adjustment,
@@ -127,6 +133,7 @@ class WorkoutAdapter:
             "goal_profile": goal_profile,
             "goal_adjustment": goal_adjustment,
             "intensity_adjustment": intensity_adjustment,
+            "stimulus_adjustment": stimulus_adjustment,
         }
 
         if strategy == "ADAPT":
@@ -163,6 +170,7 @@ class WorkoutAdapter:
         goal_profile,
         goal_adjustment,
         intensity_adjustment,
+        stimulus_adjustment,
     ):
         """
         Mantiene parte dello stimolo allenante riducendo
@@ -191,6 +199,7 @@ class WorkoutAdapter:
             goal_profile=goal_profile,
             goal_adjustment=goal_adjustment,
             intensity_adjustment=intensity_adjustment,
+            stimulus_adjustment=stimulus_adjustment,
         )
 
         if sport_category == "RUN":
@@ -231,6 +240,7 @@ class WorkoutAdapter:
         goal_profile,
         goal_adjustment,
         intensity_adjustment,
+        stimulus_adjustment,
     ):
         """
         Riduce in modo significativo il carico previsto,
@@ -257,6 +267,7 @@ class WorkoutAdapter:
             goal_profile=goal_profile,
             goal_adjustment=goal_adjustment,
             intensity_adjustment=intensity_adjustment,
+            stimulus_adjustment=stimulus_adjustment,
         )
         if sport_category == "RUN":
             workout = self._build_run_reduced(
@@ -296,6 +307,7 @@ class WorkoutAdapter:
         goal_profile,
         goal_adjustment,
         intensity_adjustment,
+        stimulus_adjustment,
     ):
         """
         Genera una proposta esclusivamente rigenerante,
@@ -319,6 +331,7 @@ class WorkoutAdapter:
             goal_profile=goal_profile,
             goal_adjustment=goal_adjustment,
             intensity_adjustment=intensity_adjustment,
+            stimulus_adjustment=stimulus_adjustment,
         )
 
         if sport_category == "RUN":
@@ -848,6 +861,7 @@ class WorkoutAdapter:
         goal_profile,
         goal_adjustment,
         intensity_adjustment,
+        stimulus_adjustment,
     ):
         """
         Costruisce i dati comuni a tutte le proposte.
@@ -875,6 +889,7 @@ class WorkoutAdapter:
             "goal_profile": goal_profile,
             "goal_adjustment": goal_adjustment,
             "intensity_adjustment": intensity_adjustment,
+            "stimulus_adjustment": stimulus_adjustment,
         }
 
 
@@ -912,6 +927,79 @@ class WorkoutAdapter:
 
         return planned_zone
 
+
+
+    def _build_stimulus_adjustment(
+        self,
+        goal_adjustment,
+        strategy,
+        session_type,
+    ):
+        """
+        Definisce il tipo di stimolo coerente
+        con obiettivo e strategia.
+        """
+
+        goal_adjustment = goal_adjustment or {}
+
+        goal_type = goal_adjustment.get(
+            "goal_type"
+        )
+
+        if strategy == "RECOVERY":
+            return {
+                "type": "RECOVERY",
+                "focus": "Recupero e controllo del carico.",
+                "preserved_elements": [],
+                "removed_elements": [
+                    "VO2",
+                    "Soglia",
+                    "Sprint",
+                ],
+            }
+
+        if goal_type == "EVENTO":
+            return {
+                "type": "SPECIFICITY",
+                "focus": "Specificità dello stimolo gara.",
+                "preserved_elements": [
+                    "Ripetute",
+                    "Qualità",
+                    "Stimolo gara",
+                ],
+                "removed_elements": [],
+            }
+
+        if goal_type == "PERFORMANCE":
+            return {
+                "type": "QUALITY",
+                "focus": "Qualità dello stimolo allenante.",
+                "preserved_elements": [
+                    "Lavoro qualitativo",
+                ],
+                "removed_elements": [],
+            }
+
+        if goal_type == "BENESSERE":
+            return {
+                "type": "AEROBIC_CONTROL",
+                "focus": "Controllo aerobico e continuità.",
+                "preserved_elements": [
+                    "Lavoro aerobico",
+                ],
+                "removed_elements": [
+                    "VO2",
+                    "Soglia",
+                    "Sprint",
+                ],
+            }
+
+        return {
+            "type": "STANDARD",
+            "focus": "Stimolo allenante standard.",
+            "preserved_elements": [],
+            "removed_elements": [],
+        }
 
 
     def _build_intensity_adjustment(
