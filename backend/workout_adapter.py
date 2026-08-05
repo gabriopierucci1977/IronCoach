@@ -100,6 +100,11 @@ class WorkoutAdapter:
             "duration",
         )
 
+        goal_adjustment = self._build_goal_adjustment(
+            goal_profile,
+            strategy,
+        )
+
         workout_data = {
             "sport": sport,
             "sport_category": sport_category,
@@ -109,6 +114,7 @@ class WorkoutAdapter:
             "original_duration": original_duration,
             "decision_context": decision_context,
             "goal_profile": goal_profile,
+            "goal_adjustment": goal_adjustment,
         }
 
         if strategy == "ADAPT":
@@ -143,6 +149,7 @@ class WorkoutAdapter:
         original_duration,
         decision_context,
         goal_profile,
+        goal_adjustment,
     ):
         """
         Mantiene parte dello stimolo allenante riducendo
@@ -167,6 +174,7 @@ class WorkoutAdapter:
             duration=duration,
             decision_context=decision_context,
             goal_profile=goal_profile,
+            goal_adjustment=goal_adjustment,
         )
 
         if sport_category == "RUN":
@@ -205,6 +213,7 @@ class WorkoutAdapter:
         original_duration,
         decision_context,
         goal_profile,
+        goal_adjustment,
     ):
         """
         Riduce in modo significativo il carico previsto,
@@ -229,6 +238,7 @@ class WorkoutAdapter:
             duration=duration,
             decision_context=decision_context,
             goal_profile=goal_profile,
+            goal_adjustment=goal_adjustment,
         )
         if sport_category == "RUN":
             workout = self._build_run_reduced(
@@ -266,6 +276,7 @@ class WorkoutAdapter:
         original_duration,
         decision_context,
         goal_profile,
+        goal_adjustment,
     ):
         """
         Genera una proposta esclusivamente rigenerante,
@@ -287,6 +298,7 @@ class WorkoutAdapter:
             duration=duration,
             decision_context=decision_context,
             goal_profile=goal_profile,
+            goal_adjustment=goal_adjustment,
         )
 
         if sport_category == "RUN":
@@ -814,6 +826,7 @@ class WorkoutAdapter:
         duration,
         decision_context,
         goal_profile,
+        goal_adjustment,
     ):
         """
         Costruisce i dati comuni a tutte le proposte.
@@ -838,7 +851,62 @@ class WorkoutAdapter:
             "duration_minutes": duration,
             "decision_context": decision_context,
             "goal_profile": goal_profile,
+            "goal_adjustment": goal_adjustment,
         }
+
+
+    def _build_goal_adjustment(
+        self,
+        goal_profile,
+        strategy,
+    ):
+        """
+        Determina il contesto di adattamento
+        legato all'obiettivo atleta.
+        """
+
+        goal_profile = goal_profile or {}
+
+        goal_type = goal_profile.get(
+            "goal_type"
+        )
+
+        if goal_type == "EVENTO":
+            return {
+                "goal_type": "EVENTO",
+                "focus": (
+                    "Preservare la specificità "
+                    "dell'obiettivo gara."
+                ),
+                "strategy": strategy,
+            }
+
+        if goal_type == "PERFORMANCE":
+            return {
+                "goal_type": "PERFORMANCE",
+                "focus": (
+                    "Preservare gli stimoli qualitativi "
+                    "compatibili con il recupero."
+                ),
+                "strategy": strategy,
+            }
+
+        if goal_type == "BENESSERE":
+            return {
+                "goal_type": "BENESSERE",
+                "focus": (
+                    "Privilegiare continuità e gestione "
+                    "della fatica."
+                ),
+                "strategy": strategy,
+            }
+
+        return {
+            "goal_type": "NON DEFINITO",
+            "focus": "Adattamento standard.",
+            "strategy": strategy,
+        }
+
 
 
     def _get_goal_profile(
