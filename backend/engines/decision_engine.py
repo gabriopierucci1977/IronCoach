@@ -1469,6 +1469,27 @@ class DecisionEngine:
                 ),
             )
 
+            action_labels = {
+                "SPECIFICITA_GARA": (
+                    "Mantieni lo stimolo specifico gara."
+                ),
+                "SVILUPPO_PRESTAZIONE": (
+                    "Proteggi il lavoro qualitativo."
+                ),
+                "CONTINUITA": (
+                    "Privilegia sostenibilità e continuità."
+                ),
+                "RIPRISTINO": (
+                    "Favorisci recupero e ritorno progressivo."
+                ),
+            }
+
+            if training_priority in action_labels:
+                recommended_action = self._append_sentence(
+                    recommended_action,
+                    action_labels[training_priority],
+                )
+
         goal_type = goal_profile.get(
             "goal_type"
         )
