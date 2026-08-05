@@ -158,7 +158,9 @@ class WorkoutAdapter:
 
         duration = self._calculate_duration(
             original_duration=original_duration,
-            percentage=0.80,
+            percentage=self._adapt_duration_percentage(
+                goal_adjustment,
+            ),
             default_duration=45,
             minimum_duration=30,
         )
@@ -1060,6 +1062,34 @@ class WorkoutAdapter:
     # -------------------------------------------------
     # DURATE
     # -------------------------------------------------
+
+    def _adapt_duration_percentage(
+        self,
+        goal_adjustment,
+    ):
+        """
+        Modula la riduzione della durata
+        in base all'obiettivo atleta.
+        """
+
+        goal_adjustment = goal_adjustment or {}
+
+        goal_type = goal_adjustment.get(
+            "goal_type"
+        )
+
+        if goal_type == "EVENTO":
+            return 0.90
+
+        if goal_type == "PERFORMANCE":
+            return 0.85
+
+        if goal_type == "BENESSERE":
+            return 0.70
+
+        return 0.80
+
+
 
     def _calculate_duration(
         self,
