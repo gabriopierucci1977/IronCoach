@@ -66,6 +66,13 @@ class DecisionEngine:
 
 
 
+        self._goal_profile = assessments.get(
+            "goal_profile",
+            {},
+        ) or {}
+
+
+
         recovery = assessments.get(
             "recovery",
             {},
@@ -1103,6 +1110,68 @@ class DecisionEngine:
             )
 
 
+
+        # --------------------------------------------------
+        # GOAL PROFILE DETAILS
+        # --------------------------------------------------
+
+        goal_profile = assessments.get(
+            "goal_profile",
+            {},
+        ) or {}
+
+        goal_type = goal_profile.get(
+            "goal_type"
+        )
+
+        primary_goal = goal_profile.get(
+            "primary_goal"
+        )
+
+        race_target = goal_profile.get(
+            "race_target"
+        )
+
+        if self._meaningful_profile_value(
+            primary_goal
+        ):
+
+            self._append_unique_reasoning(
+                reasoning,
+                (
+                    "Obiettivo atleta: "
+                    f"{primary_goal}"
+                ),
+            )
+
+        elif self._meaningful_profile_value(
+            goal_type
+        ) and goal_type != "NON DEFINITO":
+
+            self._append_unique_reasoning(
+                reasoning,
+                (
+                    "Tipo obiettivo atleta: "
+                    f"{goal_type}"
+                ),
+            )
+
+        if (
+            goal_type == "EVENTO"
+            and self._meaningful_profile_value(
+                race_target
+            )
+        ):
+
+            self._append_unique_reasoning(
+                reasoning,
+                (
+                    "Gara obiettivo: "
+                    f"{race_target}"
+                ),
+            )
+
+
         return reasoning
 
 
@@ -1286,6 +1355,47 @@ class DecisionEngine:
                 (
                     "La valutazione considera il profilo "
                     f"{str(athlete_type).strip()}."
+                ),
+            )
+
+
+
+        goal_profile = getattr(
+            self,
+            "_goal_profile",
+            {},
+        ) or {}
+
+        goal_type = goal_profile.get(
+            "goal_type"
+        )
+
+        race_target = goal_profile.get(
+            "race_target"
+        )
+
+        if (
+            goal_type == "EVENTO"
+            and self._meaningful_profile_value(
+                race_target
+            )
+        ):
+
+            reason = self._append_sentence(
+                reason,
+                (
+                    "La gestione considera la preparazione "
+                    f"dell'obiettivo gara {race_target}."
+                ),
+            )
+
+        elif goal_type == "PERFORMANCE":
+
+            reason = self._append_sentence(
+                reason,
+                (
+                    "La strategia considera l'obiettivo "
+                    "di miglioramento prestativo."
                 ),
             )
 
