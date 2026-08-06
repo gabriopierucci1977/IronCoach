@@ -2,10 +2,7 @@
 IronCoach Decision Writer
 
 Converte una decisione del Coach Engine
-nei campi previsti dalla tabella Airtable Decision Log.
-
-Gestisce anche la compatibilità tra
-valori interni IronCoach e opzioni Airtable.
+nei campi presenti nella tabella Airtable Decision Log.
 """
 
 
@@ -70,17 +67,6 @@ class DecisionWriter:
             "Strategia": decision.get(
                 "strategy"
             ),
-            "Risk level": decision.get(
-                "risk_level"
-            ),
-            "Reasoning": decision.get(
-                "reasoning",
-                [],
-            ),
-            "Intelligence": decision.get(
-                "intelligence",
-                {},
-            ),
         }
 
         return self.client.save_decision(
@@ -107,9 +93,7 @@ class DecisionWriter:
             "MANTIENI": "MANTIENI",
         }
 
-        normalized = mapping.get(
+        return mapping.get(
             value.upper(),
             value,
         )
-
-        return normalized
