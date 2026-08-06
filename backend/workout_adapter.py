@@ -50,8 +50,10 @@ class WorkoutAdapter:
         ).upper()
 
         if strategy == "KEEP_PLAN":
-            training_priority = decision.get(
-                "training_priority"
+            training_priority = self._normalize_training_priority(
+                decision.get(
+                    "training_priority"
+                )
             )
 
             if training_priority is None:
@@ -75,8 +77,10 @@ class WorkoutAdapter:
             decision,
         )
 
-        training_priority = decision.get(
-            "training_priority"
+        training_priority = self._normalize_training_priority(
+            decision.get(
+                "training_priority"
+            )
         )
 
         sport = self._get_text(
@@ -1792,6 +1796,37 @@ class WorkoutAdapter:
 
         except (TypeError, ValueError):
             return None
+
+    def _normalize_training_priority(
+        self,
+        value,
+    ):
+        """
+        Normalizza la training priority mantenendo
+        compatibilità con valori esterni equivalenti.
+        """
+
+        normalized = self._normalize_text(
+            value
+        ).upper()
+
+        if not normalized:
+            return None
+
+        normalized = (
+            normalized
+            .replace("-", "_")
+            .replace(" ", "_")
+        )
+
+        while "__" in normalized:
+            normalized = normalized.replace(
+                "__",
+                "_",
+            )
+
+        return normalized
+
 
     def _normalize_text(self, value):
         """
