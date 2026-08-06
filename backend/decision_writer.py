@@ -5,7 +5,7 @@ Converte una decisione del Coach Engine
 nei campi presenti nella tabella Airtable Decision Log.
 """
 
-
+import json
 from datetime import datetime
 
 
@@ -53,10 +53,8 @@ class DecisionWriter:
             "Azione consigliata": decision.get(
                 "recommended_action"
             ),
-            "Allenamento modificato": (
-                str(modified_workout)
-                if modified_workout
-                else ""
+            "Allenamento modificato": self._serialize_modified_workout(
+                modified_workout
             ),
             "Priorità": decision.get(
                 "priority"
@@ -71,6 +69,30 @@ class DecisionWriter:
 
         return self.client.save_decision(
             fields
+        )
+
+    def _serialize_modified_workout(
+        self,
+        modified_workout,
+    ):
+        """
+        Serializza l'allenamento modificato come JSON leggibile.
+        """
+
+        if not modified_workout:
+            return ""
+
+        if isinstance(
+            modified_workout,
+            str,
+        ):
+            return modified_workout
+
+        return json.dumps(
+            modified_workout,
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
         )
 
     # ==================================================
