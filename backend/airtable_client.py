@@ -1,8 +1,7 @@
 """
 IronCoach - Airtable Client
 
-Gestisce lettura e scrittura
-verso Airtable.
+Gestisce lettura e scrittura verso Airtable.
 """
 
 from pyairtable import Api
@@ -21,14 +20,12 @@ class AirtableClient:
     # -------------------------------------------------
 
     def test_connection(self):
-
         try:
             tables = self.base.tables()
 
             print("=" * 60)
             print("✅ Connessione ad Airtable riuscita")
             print("=" * 60)
-
             print("\nTabelle trovate:\n")
 
             for table in tables:
@@ -48,7 +45,6 @@ class AirtableClient:
         self,
         table_name,
     ):
-
         table = self.base.table(
             table_name
         )
@@ -68,7 +64,6 @@ class AirtableClient:
         table_name,
         date_field=None,
     ):
-
         table = self.base.table(
             table_name
         )
@@ -79,7 +74,6 @@ class AirtableClient:
             return {}
 
         if date_field:
-
             record = max(
                 records,
                 key=lambda r: (
@@ -96,13 +90,10 @@ class AirtableClient:
                     ),
                 ),
             )
-
         else:
-
             record = max(
                 records,
-                key=lambda r:
-                r.get(
+                key=lambda r: r.get(
                     "createdTime",
                     "",
                 ),
@@ -119,7 +110,6 @@ class AirtableClient:
         limit=100,
         date_field=None,
     ):
-
         table = self.base.table(
             table_name
         )
@@ -130,18 +120,16 @@ class AirtableClient:
             return []
 
         data = [
-            r.get(
+            record.get(
                 "fields",
                 {},
             )
-            for r in records
+            for record in records
         ]
 
         if date_field:
-
             data.sort(
-                key=lambda x:
-                x.get(
+                key=lambda item: item.get(
                     date_field,
                     "",
                 )
@@ -154,7 +142,6 @@ class AirtableClient:
     # -------------------------------------------------
 
     def get_athlete_profile(self):
-
         return self._get_first_record(
             "Athlete Profile"
         )
@@ -164,26 +151,22 @@ class AirtableClient:
     # -------------------------------------------------
 
     def get_latest_recovery(self):
-
         return self._get_latest_record(
             "Recovery Log"
         )
 
     def get_latest_training(self):
-
         return self._get_latest_record(
             "Training Log",
             "Data allenamento",
         )
 
     def get_latest_nutrition(self):
-
         return self._get_latest_record(
             "Nutrition Log"
         )
 
     def get_latest_decision(self):
-
         return self._get_latest_record(
             "Decision Log",
             "Data",
@@ -197,7 +180,6 @@ class AirtableClient:
         self,
         limit=100,
     ):
-
         return self._get_history(
             "Training Log",
             limit,
@@ -208,21 +190,18 @@ class AirtableClient:
         self,
         limit=100,
     ):
-
         return self._get_history(
             "Recovery Log",
             limit,
             "Data",
         )
-    def get_performance_history(self):
 
+    def get_performance_history(self):
         """
         Legge lo storico verticale dalla tabella Performance Log.
 
-        Ignora record vuoti o incompleti.
-
-        Se la tabella è vuota, mantiene il fallback
-        sul profilo atleta.
+        Ignora record vuoti o incompleti. Se la tabella è vuota,
+        mantiene il fallback sul profilo atleta.
         """
 
         table = self.base.table(
@@ -230,11 +209,9 @@ class AirtableClient:
         )
 
         records = table.all() or []
-
         performance = []
 
         for record in records:
-
             fields = record.get(
                 "fields",
                 {},
@@ -243,28 +220,17 @@ class AirtableClient:
             date = fields.get(
                 "Data"
             )
-
             metric = fields.get(
                 "Metrica"
             )
-
             value = fields.get(
                 "Valore"
             )
 
             if (
-                date in (
-                    None,
-                    "",
-                )
-                or metric in (
-                    None,
-                    "",
-                )
-                or value in (
-                    None,
-                    "",
-                )
+                date in (None, "")
+                or metric in (None, "")
+                or value in (None, "")
             ):
                 continue
 
@@ -278,10 +244,7 @@ class AirtableClient:
                 "Note"
             )
 
-            if note not in (
-                None,
-                "",
-            ):
+            if note not in (None, ""):
                 item["note"] = note
 
             performance.append(
@@ -289,8 +252,7 @@ class AirtableClient:
             )
 
         performance.sort(
-            key=lambda item:
-            str(
+            key=lambda item: str(
                 item.get(
                     "date"
                 )
@@ -324,6 +286,54 @@ class AirtableClient:
         ]
 
     # -------------------------------------------------
+    # DUPLICATE PROTECTION
+    # -------------------------------------------------
+
+    def _find_duplicate_decision(
+        self,
+        table,
+        fields,
+    ):
+        """
+        Cerca una decisione identica già salvata nello stesso giorno.
+        """
+
+        records = table.all() or []
+
+        comparison_fields = (
+            "Data",
+            "Decisione IronCoach",
+            "Motivazione",
+            "Confidenza",
+            "Azione consigliata",
+            "Priorità",
+            "Priorità allenante",
+            "Strategia",
+            "Allenamento modificato",
+        )
+
+        expected = {
+            key: fields.get(key)
+            for key in comparison_fields
+        }
+
+        for record in records:
+            record_fields = record.get(
+                "fields",
+                {},
+            )
+
+            current = {
+                key: record_fields.get(key)
+                for key in comparison_fields
+            }
+
+            if current == expected:
+                return record
+
+        return None
+
+    # -------------------------------------------------
     # WRITE
     # -------------------------------------------------
 
@@ -331,10 +341,28 @@ class AirtableClient:
         self,
         fields,
     ):
+        fields = fields or {}
 
         table = self.base.table(
             "Decision Log"
         )
+
+        duplicate = self._find_duplicate_decision(
+            table,
+            fields,
+        )
+
+        if duplicate:
+            print("\n")
+            print("=" * 60)
+            print("ℹ️ DECISIONE GIÀ PRESENTE SU AIRTABLE")
+            print("=" * 60)
+            print(
+                f"Record ID: {duplicate.get('id')}"
+            )
+            print("=" * 60)
+
+            return duplicate
 
         record = table.create(
             fields
