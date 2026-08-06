@@ -240,6 +240,14 @@ class WorkoutAdapter:
                 duration
             )
 
+        workout = self._apply_training_priority_to_workout(
+            workout=workout,
+            sport_category=sport_category,
+            training_priority=training_priority,
+            strategy="ADAPT",
+            duration=duration,
+        )
+
         return {
             **common_data,
             **workout,
@@ -380,6 +388,208 @@ class WorkoutAdapter:
             **common_data,
             **workout,
         }
+
+
+    # -------------------------------------------------
+    # APPLICAZIONE OPERATIVA DELLA PRIORITÀ
+    # -------------------------------------------------
+
+    def _apply_training_priority_to_workout(
+        self,
+        workout,
+        sport_category,
+        training_priority,
+        strategy,
+        duration,
+    ):
+        """
+        Applica la training priority ai contenuti reali
+        della seduta adattata.
+
+        Le strategie REDUCE_LOAD e RECOVERY mantengono
+        sempre la precedenza per ragioni di sicurezza.
+        """
+
+        workout = dict(workout or {})
+
+        if strategy != "ADAPT":
+            return workout
+
+        if training_priority == "SPECIFICITA_GARA":
+            return self._build_specificity_workout(
+                workout=workout,
+                sport_category=sport_category,
+                duration=duration,
+            )
+
+        if training_priority == "SVILUPPO_PRESTAZIONE":
+            return self._build_quality_workout(
+                workout=workout,
+                sport_category=sport_category,
+                duration=duration,
+            )
+
+        if training_priority == "CONTINUITA":
+            workout["intensity"] = "Z1-Z2 controllata"
+            workout["technical_focus"] = (
+                "Continuità aerobica, regolarità del gesto "
+                "e controllo dello sforzo"
+            )
+            workout["removed_elements"] = (
+                "VO2max, sprint, soglia prolungata "
+                "e variazioni ad alta intensità"
+            )
+            return workout
+
+        if training_priority == "RIPRISTINO":
+            workout["intensity"] = "Z1 molto facile"
+            workout["main_set"] = (
+                f"{duration}' di recupero attivo a intensità molto bassa"
+            )
+            workout["technical_focus"] = (
+                "Rilassamento, mobilità e assenza di affaticamento"
+            )
+            workout["removed_elements"] = (
+                "Qualsiasi lavoro di qualità, soglia, VO2max e sprint"
+            )
+
+        return workout
+
+
+    def _build_specificity_workout(
+        self,
+        workout,
+        sport_category,
+        duration,
+    ):
+        """
+        Preserva uno stimolo specifico gara controllato.
+        """
+
+        workout = dict(workout or {})
+        main_duration = max(12, round(duration * 0.55))
+
+        if sport_category == "RUN":
+            main_set = (
+                f"{main_duration}' con blocchi a ritmo gara controllato, "
+                "recuperati con corsa facile"
+            )
+            focus = (
+                "Economia di corsa, ritmo gara e gestione regolare dello sforzo"
+            )
+
+        elif sport_category == "BIKE":
+            main_set = (
+                f"{main_duration}' con blocchi a potenza gara controllata, "
+                "intervallati da pedalata facile"
+            )
+            focus = (
+                "Posizione gara, cadenza specifica e distribuzione della potenza"
+            )
+
+        elif sport_category == "SWIM":
+            main_set = (
+                f"{main_duration}' con serie a passo gara controllato "
+                "e recuperi completi"
+            )
+            focus = (
+                "Passo gara, efficienza tecnica e regolarità della bracciata"
+            )
+
+        else:
+            main_set = (
+                f"{main_duration}' con blocchi specifici per l'obiettivo gara "
+                "a intensità controllata"
+            )
+            focus = (
+                "Specificità del gesto e gestione dello sforzo gara"
+            )
+
+        workout.update(
+            {
+                "intensity": "Z2-Z4 controllata",
+                "main_set": main_set,
+                "technical_focus": focus,
+                "removed_elements": (
+                    "Sforzi massimali, sprint non programmati "
+                    "e volume specifico eccessivo"
+                ),
+                "notes": (
+                    "Seduta adattata preservando uno stimolo specifico gara "
+                    "compatibile con lo stato attuale."
+                ),
+            }
+        )
+
+        return workout
+
+
+    def _build_quality_workout(
+        self,
+        workout,
+        sport_category,
+        duration,
+    ):
+        """
+        Preserva uno stimolo qualitativo controllato.
+        """
+
+        workout = dict(workout or {})
+        main_duration = max(12, round(duration * 0.50))
+
+        if sport_category == "RUN":
+            main_set = (
+                f"{main_duration}' di intervalli controllati in Z3-Z4, "
+                "con recupero facile completo"
+            )
+            focus = (
+                "Qualità del passo, tecnica stabile e controllo del ritmo"
+            )
+
+        elif sport_category == "BIKE":
+            main_set = (
+                f"{main_duration}' di intervalli controllati in Z3-Z4, "
+                "con recupero agile"
+            )
+            focus = (
+                "Qualità della potenza, cadenza stabile e gesto efficiente"
+            )
+
+        elif sport_category == "SWIM":
+            main_set = (
+                f"{main_duration}' di serie qualitative controllate, "
+                "con recuperi adeguati"
+            )
+            focus = (
+                "Qualità tecnica, velocità sostenibile e controllo della forma"
+            )
+
+        else:
+            main_set = (
+                f"{main_duration}' di lavoro qualitativo controllato "
+                "con recuperi completi"
+            )
+            focus = (
+                "Qualità del gesto e intensità sostenibile"
+            )
+
+        workout.update(
+            {
+                "intensity": "Z3-Z4 controllata",
+                "main_set": main_set,
+                "technical_focus": focus,
+                "removed_elements": (
+                    "Ripetizioni massimali, cedimento tecnico "
+                    "e volume qualitativo eccessivo"
+                ),
+                "notes": (
+                    "Seduta adattata preservando uno stimolo qualitativo "
+                    "compatibile con il recupero."
+                ),
+            }
+        )
+
+        return workout
 
 
     # -------------------------------------------------
