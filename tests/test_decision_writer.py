@@ -1,10 +1,10 @@
 """
-Test DecisionWriter.
+Test DecisionWriter sullo schema Airtable reale.
 
 Verifica che:
 - la decisione venga convertita correttamente;
-- i campi principali vengano salvati;
-- l'intelligence della decisione venga mantenuta.
+- i campi presenti in Decision Log vengano salvati;
+- i campi interni non presenti in Airtable non vengano inviati.
 """
 
 from backend.decision_writer import DecisionWriter
@@ -27,21 +27,20 @@ class FakeAirtableClient:
         }
 
 
-
 def _decision():
 
     return {
         "decision": "ADATTA",
-        "reason": (
-            "Performance da monitorare."
-        ),
+        "reason": "Performance da monitorare.",
         "confidence": 90,
-        "recommended_action": (
-            "Riduci volume."
-        ),
+        "recommended_action": "Riduci volume.",
         "priority": "Performance",
+        "training_priority": "SVILUPPO_PRESTAZIONE",
         "strategy": "ADAPT",
-        "modified_workout": None,
+        "modified_workout": {
+            "strategy": "ADAPT",
+            "training_priority": "SVILUPPO_PRESTAZIONE",
+        },
         "risk_level": "CAUTION",
         "reasoning": [
             "Performance: in calo",
@@ -50,16 +49,9 @@ def _decision():
         "intelligence": {
             "performance": {
                 "trend": "DECLINING",
-                "metrics": {
-                    "ftp": -4.5,
-                },
-            },
-            "load": {
-                "level": "HIGH",
             },
         },
     }
-
 
 
 def test_writer_saves_main_decision_fields():
@@ -89,9 +81,20 @@ def test_writer_saves_main_decision_fields():
     ] == 90
 
     assert fields[
+        "Azione consigliata"
+    ] == "Riduci volume."
+
+    assert fields[
+        "Priorità"
+    ] == "Performance"
+
+    assert fields[
+        "Priorità allenante"
+    ] == "SVILUPPO_PRESTAZIONE"
+
+    assert fields[
         "Strategia"
     ] == "ADAPT"
-
 
 
 def test_writer_normalizes_legacy_decisions():
@@ -111,40 +114,7 @@ def test_writer_normalizes_legacy_decisions():
     ) == "RIDUCI"
 
 
-
-def test_writer_preserves_intelligence_fields():
-
-    client = FakeAirtableClient()
-
-    writer = DecisionWriter(
-        client
-    )
-
-    writer.save(
-        _decision()
-    )
-
-    fields = client.saved_fields
-
-    assert fields[
-        "Intelligence"
-    ][
-        "performance"
-    ][
-        "trend"
-    ] == "DECLINING"
-
-    assert fields[
-        "Intelligence"
-    ][
-        "load"
-    ][
-        "level"
-    ] == "HIGH"
-
-
-
-def test_writer_preserves_reasoning_and_risk():
+def test_writer_serializes_modified_workout():
 
     client = FakeAirtableClient()
 
@@ -156,15 +126,28 @@ def test_writer_preserves_reasoning_and_risk():
         _decision()
     )
 
-    fields = client.saved_fields
-
-    assert fields[
-        "Risk level"
-    ] == "CAUTION"
-
-    assert fields[
-        "Reasoning"
-    ] == [
-        "Performance: in calo",
-        "Adattamento: moderato",
+    saved_workout = client.saved_fields[
+        "Allenamento modificato"
     ]
+
+    assert "SVILUPPO_PRESTAZIONE" in saved_workout
+    assert "ADAPT" in saved_workout
+
+
+def test_writer_excludes_unsupported_airtable_fields():
+
+    client = FakeAirtableClient()
+
+    writer = DecisionWriter(
+        client
+    )
+
+    writer.save(
+        _decision()
+    )
+
+    fields = client.saved_fields
+
+    assert "Risk level" not in fields
+    assert "Reasoning" not in fields
+    assert "Intelligence" not in fields
