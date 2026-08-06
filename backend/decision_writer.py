@@ -5,7 +5,6 @@ Converte una decisione del Coach Engine
 nei campi presenti nella tabella Airtable Decision Log.
 """
 
-import json
 from datetime import datetime
 
 
@@ -25,24 +24,14 @@ class DecisionWriter:
         self,
         decision,
     ):
-        """
-        Prepara i campi Airtable e salva la decisione.
-        """
-
         decision = decision or {}
-
-        modified_workout = decision.get(
-            "modified_workout"
-        )
 
         fields = {
             "Data": datetime.now().strftime(
                 "%Y-%m-%d"
             ),
             "Decisione IronCoach": self._normalize_decision(
-                decision.get(
-                    "decision"
-                )
+                decision.get("decision")
             ),
             "Motivazione": decision.get(
                 "reason"
@@ -53,8 +42,8 @@ class DecisionWriter:
             "Azione consigliata": decision.get(
                 "recommended_action"
             ),
-            "Allenamento modificato": self._serialize_modified_workout(
-                modified_workout
+            "Allenamento modificato": self._format_modified_workout(
+                decision.get("modified_workout")
             ),
             "Priorità": decision.get(
                 "priority"
@@ -71,29 +60,63 @@ class DecisionWriter:
             fields
         )
 
-    def _serialize_modified_workout(
+    def _format_modified_workout(
         self,
-        modified_workout,
+        workout,
     ):
         """
-        Serializza l'allenamento modificato come JSON leggibile.
+        Crea un riepilogo leggibile per Airtable.
         """
 
-        if not modified_workout:
+        if not workout:
             return ""
 
-        if isinstance(
-            modified_workout,
-            str,
-        ):
-            return modified_workout
+        if isinstance(workout, str):
+            return workout
 
-        return json.dumps(
-            modified_workout,
-            ensure_ascii=False,
-            indent=2,
-            sort_keys=True,
+        labels = (
+            ("strategy", "Strategia"),
+            ("original_workout", "Seduta originale"),
+            ("sport", "Sport"),
+            ("original_type", "Tipo originale"),
+            ("original_zone", "Zona originale"),
+            ("original_duration_minutes", "Durata originale"),
+            ("duration_minutes", "Nuova durata"),
+            ("training_priority", "Priorità allenante"),
+            ("intensity", "Intensità"),
+            ("warmup", "Riscaldamento"),
+            ("main_set", "Parte centrale"),
+            ("cooldown", "Defaticamento"),
+            ("technical_focus", "Focus tecnico"),
+            ("alternative", "Alternativa"),
+            ("removed_elements", "Elementi rimossi"),
+            ("notes", "Note"),
         )
+
+        lines = []
+
+        for key, label in labels:
+            value = workout.get(key)
+
+            if value in (
+                None,
+                "",
+                [],
+                {},
+            ):
+                continue
+
+            if key in (
+                "original_duration_minutes",
+                "duration_minutes",
+            ):
+                value = f"{value} min"
+
+            lines.append(
+                f"{label}: {value}"
+            )
+
+        return "\n".join(lines)
 
     # ==================================================
     # AIRTABLE COMPATIBILITY
