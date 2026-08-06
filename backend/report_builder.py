@@ -138,6 +138,7 @@ class ReportBuilder:
         self._append_intelligence(
             report,
             intelligence,
+            decision,
         )
 
 
@@ -295,6 +296,7 @@ class ReportBuilder:
         self,
         report,
         intelligence,
+        decision=None,
     ):
 
         if not intelligence:
@@ -319,13 +321,36 @@ class ReportBuilder:
 
 
 
-        self._append_block(
-            report,
-            "PROFILO ATLETA",
+        athlete_profile = dict(
             intelligence.get(
                 "athlete_profile",
                 {},
-            ),
+            )
+            or {}
+        )
+
+        goal_profile = dict(
+            athlete_profile.get(
+                "goal_profile",
+                {},
+            )
+            or {}
+        )
+
+        resolved_goal_type = self._resolve_goal_type(
+            intelligence=intelligence,
+            decision=decision or {},
+            current_goal_profile=goal_profile,
+        )
+
+        if resolved_goal_type:
+            goal_profile["goal_type"] = resolved_goal_type
+            athlete_profile["goal_profile"] = goal_profile
+
+        self._append_block(
+            report,
+            "PROFILO ATLETA",
+            athlete_profile,
         )
 
 
@@ -408,6 +433,80 @@ class ReportBuilder:
                 f"{self._format_value(value)}"
 
             )
+    def _resolve_goal_type(
+        self,
+        intelligence,
+        decision,
+        current_goal_profile,
+    ):
+        """
+        Recupera goal_type dalle diverse posizioni compatibili
+        senza sovrascrivere un valore già presente.
+        """
+
+        current = self._first_value(
+            current_goal_profile,
+            [
+                "goal_type",
+                "Goal type",
+                "tipo_obiettivo",
+            ],
+            default=None,
+        )
+
+        if current:
+            return current
+
+        candidates = [
+            intelligence.get(
+                "goal_profile"
+            ),
+            decision.get(
+                "goal_profile"
+            ),
+            (
+                decision.get(
+                    "modified_workout",
+                    {},
+                )
+                or {}
+            ).get(
+                "goal_profile"
+            ),
+            (
+                decision.get(
+                    "allenamento modificato",
+                    {},
+                )
+                or {}
+            ).get(
+                "goal_profile"
+            ),
+        ]
+
+        for candidate in candidates:
+            if not isinstance(
+                candidate,
+                dict,
+            ):
+                continue
+
+            value = self._first_value(
+                candidate,
+                [
+                    "goal_type",
+                    "Goal type",
+                    "tipo_obiettivo",
+                ],
+                default=None,
+            )
+
+            if value:
+                return value
+
+        return None
+
+
     # ==================================================
     # MODIFIED WORKOUT
     # ==================================================
