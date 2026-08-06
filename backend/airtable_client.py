@@ -76,15 +76,18 @@ class AirtableClient:
         if date_field:
             record = max(
                 records,
-                key=lambda r: (
-                    r.get(
-                        "fields",
-                        {},
-                    ).get(
-                        date_field,
-                        "",
+                key=lambda item: (
+                    str(
+                        item.get(
+                            "fields",
+                            {},
+                        ).get(
+                            date_field,
+                            "",
+                        )
+                        or ""
                     ),
-                    r.get(
+                    item.get(
                         "createdTime",
                         "",
                     ),
@@ -93,7 +96,7 @@ class AirtableClient:
         else:
             record = max(
                 records,
-                key=lambda r: r.get(
+                key=lambda item: item.get(
                     "createdTime",
                     "",
                 ),
@@ -129,9 +132,12 @@ class AirtableClient:
 
         if date_field:
             data.sort(
-                key=lambda item: item.get(
-                    date_field,
-                    "",
+                key=lambda item: str(
+                    item.get(
+                        date_field,
+                        "",
+                    )
+                    or ""
                 )
             )
 
@@ -152,7 +158,8 @@ class AirtableClient:
 
     def get_latest_recovery(self):
         return self._get_latest_record(
-            "Recovery Log"
+            "Recovery Log",
+            "Data",
         )
 
     def get_latest_training(self):
@@ -163,7 +170,8 @@ class AirtableClient:
 
     def get_latest_nutrition(self):
         return self._get_latest_record(
-            "Nutrition Log"
+            "Nutrition Log",
+            "Data",
         )
 
     def get_latest_decision(self):
