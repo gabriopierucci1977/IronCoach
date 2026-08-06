@@ -70,6 +70,19 @@ class ContextBuilder:
             source="airtable",
         )
 
+        self._add_freshness_warning(
+            warnings=warnings,
+            label="Recovery",
+            value=recovery.get("date"),
+            max_age_days=3,
+        )
+        self._add_freshness_warning(
+            warnings=warnings,
+            label="Allenamento",
+            value=training.get("date"),
+            max_age_days=7,
+        )
+
         airtable_sessions = self._load_airtable_training(warnings)
         garmin_sessions = self._load_garmin_training(warnings)
         merged_sessions = self._merge_training_sessions(
@@ -396,6 +409,35 @@ class ContextBuilder:
             warnings.append(
                 "Storico performance Airtable non disponibile: "
                 f"{type(exc).__name__}: {exc}"
+            )
+
+    @classmethod
+    def _add_freshness_warning(
+        cls,
+        warnings: List[str],
+        label: str,
+        value: Any,
+        max_age_days: int,
+    ) -> None:
+        parsed = cls._parse_datetime(value)
+
+        if parsed is None:
+            return
+
+        now = datetime.now(timezone.utc)
+        age_days = (now.date() - parsed.date()).days
+
+        if age_days < 0:
+            warnings.append(
+                f"{label}: data futura ({parsed.date().isoformat()})"
+            )
+            return
+
+        if age_days > max_age_days:
+            warnings.append(
+                f"{label}: dato obsoleto di {age_days} giorni "
+                f"(data {parsed.date().isoformat()}, "
+                f"soglia {max_age_days} giorni)"
             )
 
     @staticmethod
