@@ -93,30 +93,81 @@ class WorkoutAdapter:
             sport
         )
 
-        workout_name = self._get_text(
-            training,
-            "Nome seduta",
-            "nome_seduta",
-        ) or "Allenamento programmato"
+        raw_training = training.get(
+            "raw",
+            {},
+        ) or {}
 
-        session_type = self._get_text(
-            training,
-            "Tipo seduta",
-            "tipo_seduta",
-        ) or "Allenamento"
+        workout_name = (
+            self._get_text(
+                training,
+                "Nome seduta",
+                "nome_seduta",
+                "workout_name",
+                "name",
+            )
+            or self._get_text(
+                raw_training,
+                "Nome seduta",
+                "nome_seduta",
+                "workout_name",
+                "name",
+            )
+            or "Allenamento programmato"
+        )
 
-        planned_zone = self._get_text(
-            training,
-            "Zona prevista",
-            "zona_prevista",
-        ) or "N/D"
+        session_type = (
+            self._get_text(
+                training,
+                "Tipo seduta",
+                "tipo_seduta",
+                "session_type",
+                "activity_type",
+            )
+            or self._get_text(
+                raw_training,
+                "Tipo seduta",
+                "tipo_seduta",
+                "session_type",
+                "activity_type",
+            )
+            or "Allenamento"
+        )
+
+        planned_zone = (
+            self._get_text(
+                training,
+                "Zona prevista",
+                "zona_prevista",
+                "planned_zone",
+                "intensity",
+            )
+            or self._get_text(
+                raw_training,
+                "Zona prevista",
+                "zona_prevista",
+                "planned_zone",
+                "intensity",
+            )
+            or "N/D"
+        )
 
         original_duration = self._get_number(
             training,
             "Durata minuti",
             "durata_minuti",
             "duration",
+            "duration_minutes",
         )
+
+        if original_duration is None:
+            original_duration = self._get_number(
+                raw_training,
+                "Durata minuti",
+                "durata_minuti",
+                "duration",
+                "duration_minutes",
+            )
 
         goal_adjustment = self._build_goal_adjustment(
             goal_profile,
