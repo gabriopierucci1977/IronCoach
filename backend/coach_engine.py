@@ -735,6 +735,48 @@ class CoachEngine:
 
 
 
+    def _build_data_freshness_assessment(
+        self,
+        warnings,
+    ):
+        """
+        Trasforma i warning di freschezza del ContextBuilder
+        in un assessment strutturato per il DecisionEngine.
+        """
+
+        relevant = [
+            str(item).strip()
+            for item in (warnings or [])
+            if str(item).strip()
+            and (
+                "dato obsoleto" in str(item).lower()
+                or "data futura" in str(item).lower()
+            )
+        ]
+
+        if not relevant:
+            return {
+                "level": "LOW",
+                "reasons": [],
+            }
+
+        recovery_issue = any(
+            str(item).lower().startswith("recovery:")
+            for item in relevant
+        )
+
+        level = (
+            "HIGH"
+            if recovery_issue
+            else "MODERATE"
+        )
+
+        return {
+            "level": level,
+            "reasons": relevant,
+        }
+
+
     # ==================================================
     # MAIN EVALUATION
     # ==================================================
@@ -840,6 +882,14 @@ class CoachEngine:
             [],
         ) or []
 
+        data_freshness_assessment = (
+            self._build_data_freshness_assessment(
+                context.get(
+                    "context_warnings",
+                    [],
+                )
+            )
+        )
 
 
 
@@ -1061,6 +1111,11 @@ class CoachEngine:
                     {},
                 ),
 
+
+            "data_freshness":
+
+                data_freshness_assessment,
+
         }
 
 
@@ -1119,6 +1174,11 @@ class CoachEngine:
             "performance":
 
                 performance_analysis,
+
+
+            "data_freshness":
+
+                data_freshness_assessment,
 
         }
 

@@ -127,6 +127,13 @@ class DecisionEngine:
             {},
         )
 
+        data_freshness = assessments.get(
+            "data_freshness",
+            {},
+        ) or {}
+
+        self._data_freshness = data_freshness
+
 
 
         recovery_level = recovery.get(
@@ -955,6 +962,14 @@ class DecisionEngine:
                 ),
             ),
 
+            (
+                "Freschezza dati",
+                assessments.get(
+                    "data_freshness",
+                    {},
+                ),
+            ),
+
         )
 
 
@@ -1351,6 +1366,10 @@ class DecisionEngine:
             strategy
         )
 
+        confidence = self._adjust_confidence_for_data_freshness(
+            confidence
+        )
+
         self._current_strategy = strategy
 
 
@@ -1407,6 +1426,41 @@ class DecisionEngine:
 
 
 
+
+
+    def _adjust_confidence_for_data_freshness(
+        self,
+        confidence,
+    ):
+        """
+        Riduce la confidenza quando i dati correnti sono obsoleti
+        o riportano una data futura, senza cambiare automaticamente
+        la strategia scelta dagli assessment clinico-allenanti.
+        """
+
+        freshness = getattr(
+            self,
+            "_data_freshness",
+            {},
+        ) or {}
+
+        level = freshness.get(
+            "level",
+            self.LEVEL_LOW,
+        )
+
+        try:
+            resolved = int(confidence)
+        except (TypeError, ValueError):
+            resolved = 0
+
+        if level == self.LEVEL_HIGH:
+            return min(resolved, 75)
+
+        if level == self.LEVEL_MODERATE:
+            return min(resolved, 85)
+
+        return resolved
 
 
     def _personalize_decision_text(
@@ -1652,6 +1706,10 @@ class DecisionEngine:
             ),
             "performance": assessments.get(
                 "performance",
+                {},
+            ),
+            "data_freshness": assessments.get(
+                "data_freshness",
                 {},
             ),
         }
