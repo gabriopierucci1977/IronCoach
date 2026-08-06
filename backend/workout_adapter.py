@@ -1209,7 +1209,7 @@ class WorkoutAdapter:
         )
 
         if strategy == "RECOVERY":
-            return "Z2"
+            return "Z1"
 
         if goal_type in (
             "EVENTO",

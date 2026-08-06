@@ -72,5 +72,5 @@ def test_recovery_strategy_keeps_low_intensity():
 
     assert (
         workout["planned_zone"]
-        == "Z2"
+        == "Z1"
     )

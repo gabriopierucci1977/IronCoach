@@ -30,7 +30,7 @@ def test_adapter_reads_normalized_training_fields() -> None:
     assert workout["original_workout"] == "Corsa progressiva"
     assert workout["original_type"] == "Qualità"
     assert workout["original_zone"] == "Z4"
-    assert workout["planned_zone"] == "Z2"
+    assert workout["planned_zone"] == "Z1"
     assert workout["original_duration_minutes"] == 72
     assert workout["duration_minutes"] == 36
 
@@ -54,7 +54,7 @@ def test_adapter_reads_training_fields_from_raw_fallback() -> None:
     assert workout["original_workout"] == "6x1000 pista"
     assert workout["original_type"] == "Intervalli"
     assert workout["original_zone"] == "Z5"
-    assert workout["planned_zone"] == "Z2"
+    assert workout["planned_zone"] == "Z1"
     assert workout["original_duration_minutes"] == 58
     assert workout["duration_minutes"] == 29
 
