@@ -127,6 +127,15 @@ class ReportBuilder:
             "NUTRITION",
             nutrition,
         )
+
+        self._append_context_warnings(
+            report,
+            context.get(
+                "context_warnings",
+                [],
+            ),
+        )
+
         self._append_coach_summary(
             report,
             context,
@@ -680,6 +689,38 @@ class ReportBuilder:
             )
 
 
+
+
+    # ==================================================
+    # CONTEXT WARNINGS
+    # ==================================================
+
+    def _append_context_warnings(
+        self,
+        report,
+        warnings,
+    ):
+        warnings = [
+            str(item).strip()
+            for item in (warnings or [])
+            if str(item).strip()
+        ]
+
+        if not warnings:
+            return
+
+        report.append("")
+        report.append(
+            "ATTENZIONE DATI"
+        )
+        report.append(
+            "-" * 60
+        )
+
+        for warning in warnings:
+            report.append(
+                f"• {warning}"
+            )
 
 
     # ==================================================
