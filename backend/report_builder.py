@@ -454,6 +454,36 @@ class ReportBuilder:
 
 
 
+            "training_priority":
+
+                "Priorità allenante",
+
+
+
+            "stimulus_adjustment":
+
+                "Adattamento stimolo",
+
+
+
+            "goal_adjustment":
+
+                "Adattamento obiettivo",
+
+
+
+            "intensity_adjustment":
+
+                "Adattamento intensità",
+
+
+
+            "planned_zone":
+
+                "Zona pianificata",
+
+
+
             "original_workout":
 
                 "Seduta originale",
@@ -995,6 +1025,12 @@ class ReportBuilder:
             "strategy":
 
                 "Strategia",
+
+
+
+            "training_priority":
+
+                "Priorità allenante",
 
 
 
