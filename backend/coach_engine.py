@@ -851,6 +851,16 @@ class CoachEngine:
 
         )
 
+        explicit_recovery_level = recovery.get(
+            "level"
+        )
+
+        if explicit_recovery_level:
+            recovery_assessment = {
+                **recovery_assessment,
+                "level": explicit_recovery_level,
+            }
+
 
 
 
@@ -1066,56 +1076,6 @@ class CoachEngine:
 
 
 
-
-        goal_profile = assessments.get(
-            "goal_profile",
-            {},
-        ) or {}
-
-        recovery_level = (
-            context.get(
-                "recovery",
-                {},
-            )
-            or {}
-        ).get(
-            "level"
-        )
-
-        if not recovery_level:
-            recovery_level = (
-                assessments.get(
-                    "recovery",
-                    {},
-                )
-                or {}
-            ).get(
-                "level"
-            )
-
-        goal_type = goal_profile.get(
-            "goal_type"
-        )
-
-        if recovery_level == "CRITICAL":
-            decision["training_priority"] = (
-                "RIPRISTINO"
-            )
-
-        elif goal_type == "EVENTO":
-            decision["training_priority"] = (
-                "SPECIFICITA_GARA"
-            )
-
-        elif goal_type == "PERFORMANCE":
-            decision["training_priority"] = (
-                "SVILUPPO_PRESTAZIONE"
-            )
-
-        elif goal_type == "BENESSERE":
-            decision["training_priority"] = (
-                "CONTINUITA"
-            )
 
         decision["intelligence"] = {
 
