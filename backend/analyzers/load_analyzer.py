@@ -96,6 +96,13 @@ class LoadAnalyzer:
             ):
                 continue
 
+            # Conta tutte le sedute valide nella finestra cronica,
+            # anche quando il carico è assente o non utilizzabile.
+            sessions_28d += 1
+
+            if session_date >= acute_start:
+                sessions_7d += 1
+
             load = self._session_load(
                 session
             )
@@ -104,7 +111,6 @@ class LoadAnalyzer:
                 continue
 
             sessions_with_load += 1
-            sessions_28d += 1
             chronic_load += load
 
             sport = self._session_sport(
@@ -120,7 +126,6 @@ class LoadAnalyzer:
             )
 
             if session_date >= acute_start:
-                sessions_7d += 1
                 acute_load += load
 
         level = self._classify(
@@ -154,9 +159,9 @@ class LoadAnalyzer:
                 chronic_load,
                 2,
             ),
-            "sessions": len(
-                sessions
-            ),
+            # Numero di sedute recenti realmente considerate
+            # nella finestra cronica di 28 giorni.
+            "sessions": sessions_28d,
             "sessions_with_load": sessions_with_load,
             "sport_distribution": {
                 sport: round(
@@ -205,9 +210,9 @@ class LoadAnalyzer:
         return {
             "level": self.LEVEL_UNKNOWN,
             "total_load": 0.0,
-            "sessions": len(
-                sessions
-            ),
+            # Nessuna seduta valida è stata inclusa
+            # nella finestra temporale analizzata.
+            "sessions": 0,
             "sessions_with_load": 0,
             "sport_distribution": {},
             "reasons": [
