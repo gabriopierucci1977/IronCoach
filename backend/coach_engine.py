@@ -883,7 +883,11 @@ class CoachEngine:
         ) or []
 
         data_freshness_assessment = (
-            self._build_data_freshness_assessment(
+            context.get(
+                "data_freshness",
+                {},
+            )
+            or self._build_data_freshness_assessment(
                 context.get(
                     "context_warnings",
                     [],

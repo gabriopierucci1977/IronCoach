@@ -70,17 +70,15 @@ class ContextBuilder:
             source="airtable",
         )
 
-        self._add_freshness_warning(
-            warnings=warnings,
-            label="Recovery",
-            value=recovery.get("date"),
-            max_age_days=3,
+        data_freshness = self._build_data_freshness(
+            recovery_date=recovery.get("date"),
+            training_date=training.get("date"),
         )
-        self._add_freshness_warning(
-            warnings=warnings,
-            label="Allenamento",
-            value=training.get("date"),
-            max_age_days=7,
+        warnings.extend(
+            data_freshness.get(
+                "reasons",
+                [],
+            )
         )
 
         airtable_sessions = self._load_airtable_training(warnings)
@@ -138,6 +136,7 @@ class ContextBuilder:
                 "training_garmin": len(garmin_sessions),
                 "garmin_enabled": self.include_garmin,
             },
+            "data_freshness": data_freshness,
             "context_warnings": warnings,
         }
 
@@ -412,33 +411,110 @@ class ContextBuilder:
             )
 
     @classmethod
-    def _add_freshness_warning(
+    def _build_data_freshness(
         cls,
-        warnings: List[str],
+        recovery_date: Any,
+        training_date: Any,
+    ) -> Dict[str, Any]:
+        recovery = cls._assess_data_freshness(
+            label="Recovery",
+            value=recovery_date,
+            max_age_days=3,
+            stale_level="HIGH",
+        )
+        training = cls._assess_data_freshness(
+            label="Allenamento",
+            value=training_date,
+            max_age_days=7,
+            stale_level="MODERATE",
+        )
+
+        reasons = [
+            item["reason"]
+            for item in (
+                recovery,
+                training,
+            )
+            if item.get("reason")
+        ]
+
+        levels = {
+            recovery.get("level"),
+            training.get("level"),
+        }
+
+        if "HIGH" in levels:
+            level = "HIGH"
+        elif "MODERATE" in levels:
+            level = "MODERATE"
+        else:
+            level = "LOW"
+
+        return {
+            "level": level,
+            "reasons": reasons,
+            "recovery": recovery,
+            "training": training,
+        }
+
+    @classmethod
+    def _assess_data_freshness(
+        cls,
         label: str,
         value: Any,
         max_age_days: int,
-    ) -> None:
+        stale_level: str,
+    ) -> Dict[str, Any]:
         parsed = cls._parse_datetime(value)
 
         if parsed is None:
-            return
+            return {
+                "status": "UNKNOWN",
+                "level": "LOW",
+                "date": None,
+                "age_days": None,
+                "max_age_days": max_age_days,
+                "reason": None,
+            }
 
+        date_text = parsed.date().isoformat()
         now = datetime.now(timezone.utc)
         age_days = (now.date() - parsed.date()).days
 
         if age_days < 0:
-            warnings.append(
-                f"{label}: data futura ({parsed.date().isoformat()})"
-            )
-            return
+            return {
+                "status": "FUTURE",
+                "level": stale_level,
+                "date": date_text,
+                "age_days": age_days,
+                "max_age_days": max_age_days,
+                "reason": (
+                    f"{label}: data futura ({date_text})"
+                ),
+            }
 
         if age_days > max_age_days:
-            warnings.append(
-                f"{label}: dato obsoleto di {age_days} giorni "
-                f"(data {parsed.date().isoformat()}, "
-                f"soglia {max_age_days} giorni)"
-            )
+            return {
+                "status": "STALE",
+                "level": stale_level,
+                "date": date_text,
+                "age_days": age_days,
+                "max_age_days": max_age_days,
+                "reason": (
+                    f"{label}: dato obsoleto di {age_days} giorni "
+                    f"(data {date_text}, "
+                    f"soglia {max_age_days} giorni)"
+                ),
+            }
+
+        return {
+            "status": "CURRENT",
+            "level": "LOW",
+            "date": date_text,
+            "age_days": age_days,
+            "max_age_days": max_age_days,
+            "reason": None,
+        }
 
     @staticmethod
     def _seconds_to_minutes(value: Any) -> float:
