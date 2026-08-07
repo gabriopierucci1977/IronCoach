@@ -2,12 +2,15 @@
 Test di orchestrazione del CoachEngine.
 
 Verifica che:
+
 - recovery, load e performance vengano analizzati prima dell'adattamento;
 - AdaptationAnalyzer riceva athlete_profile, load_analysis,
   performance_analysis e recovery_analysis;
 - gli assessment finali contengano gli stessi risultati;
 - evaluate non richieda servizi esterni o scritture;
-- la performance intelligence venga mantenuta nella decisione finale.
+- la performance intelligence venga mantenuta nella decisione finale;
+- la freschezza strutturata abbia priorità sui warning testuali;
+- i warning testuali restino disponibili come fallback compatibile.
 """
 
 from backend.coach_engine import CoachEngine
@@ -385,3 +388,99 @@ def test_analyzer_inputs_use_context_histories() -> None:
                 "recovery_history"
             ],
     }
+
+
+def test_structured_data_freshness_has_priority_over_warnings() -> None:
+    engine, _ = _build_engine()
+    context = _context()
+
+    structured_freshness = {
+        "level": "MODERATE",
+        "reasons": [
+            "Allenamento: dato obsoleto di 8 giorni",
+        ],
+        "recovery": {
+            "status": "CURRENT",
+            "level": "LOW",
+        },
+        "training": {
+            "status": "STALE",
+            "level": "MODERATE",
+        },
+    }
+
+    context["data_freshness"] = structured_freshness
+    context["context_warnings"] = [
+        "Recovery: dato obsoleto di 20 giorni",
+    ]
+
+    decision = engine.evaluate(
+        context
+    )
+
+    assessments = (
+        engine
+        .decision_engine
+        .assessments
+    )
+
+    assert assessments[
+        "data_freshness"
+    ] is structured_freshness
+
+    assert decision[
+        "intelligence"
+    ][
+        "data_freshness"
+    ] is structured_freshness
+
+
+def test_context_warnings_remain_a_compatible_fallback() -> None:
+    engine, _ = _build_engine()
+    context = _context()
+
+    context["context_warnings"] = [
+        (
+            "Recovery: dato obsoleto di 12 giorni "
+            "(data 2026-07-25, soglia 3 giorni)"
+        ),
+        (
+            "Allenamento: dato obsoleto di 13 giorni "
+            "(data 2026-07-24, soglia 7 giorni)"
+        ),
+        "Archivio Garmin non disponibile",
+    ]
+
+    decision = engine.evaluate(
+        context
+    )
+
+    assessments = (
+        engine
+        .decision_engine
+        .assessments
+    )
+
+    assert assessments[
+        "data_freshness"
+    ] == {
+        "level": "HIGH",
+        "reasons": [
+            (
+                "Recovery: dato obsoleto di 12 giorni "
+                "(data 2026-07-25, soglia 3 giorni)"
+            ),
+            (
+                "Allenamento: dato obsoleto di 13 giorni "
+                "(data 2026-07-24, soglia 7 giorni)"
+            ),
+        ],
+    }
+
+    assert decision[
+        "intelligence"
+    ][
+        "data_freshness"
+    ] == assessments[
+        "data_freshness"
+    ]
