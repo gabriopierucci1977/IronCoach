@@ -489,7 +489,9 @@ valori minori di 0 o maggiori di 100: usa i default;
 
 valori compresi tra 0 e 100: validi.
 
-La configurazione viene caricata tramite RuntimeConfig all'avvio della pipeline.
+La configurazione viene caricata una sola volta all'avvio tramite RuntimeConfig.
+
+La stessa istanza viene iniettata nel ContextBuilder e nel CoachEngine; il CoachEngine la passa al DecisionEngine.
 
 Le soglie temporali possono anche essere passate direttamente al ContextBuilder; i parametri espliciti hanno priorità sul RuntimeConfig.
 
@@ -515,7 +517,7 @@ CoachEngine;
 
 flusso applicativo principale;
 
-configurazione runtime;
+iniezione condivisa della configurazione runtime;
 
 passaggio end-to-end della freschezza dati;
 
@@ -577,7 +579,7 @@ pytest -q
 
 Risultato:
 
-371 passed
+372 passed
 
 Avvio applicazione
 
