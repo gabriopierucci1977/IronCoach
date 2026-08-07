@@ -18,7 +18,7 @@ from backend.workout_adapter import WorkoutAdapter
 
 
 APP_NAME = "IRONCOACH"
-APP_VERSION = "BETA 0.2"
+APP_VERSION = "BETA 0.3"
 
 T = TypeVar("T")
 

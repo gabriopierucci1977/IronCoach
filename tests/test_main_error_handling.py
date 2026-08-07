@@ -20,7 +20,7 @@ def test_main_returns_zero_on_success(
     output = capsys.readouterr().out
 
     assert exit_code == 0
-    assert "IRONCOACH BETA 0.2" in output
+    assert "IRONCOACH BETA 0.3" in output
     assert "REPORT TEST" in output
     assert "IRONCOACH NON COMPLETATO" not in output
 

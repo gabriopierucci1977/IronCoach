@@ -164,5 +164,5 @@ def test_main_attaches_priority_aware_modified_workout(
     ]
 
     output = capsys.readouterr().out
-    assert "IRONCOACH BETA 0.2" in output
+    assert "IRONCOACH BETA 0.3" in output
     assert "REPORT TEST" in output
