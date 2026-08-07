@@ -45,13 +45,21 @@ def test_main_attaches_priority_aware_modified_workout(
         ):
             captured["context_client"] = client
             captured[
-                "runtime_config"
+                "context_runtime_config"
             ] = runtime_config
 
         def build(self):
             return context
 
     class FakeCoachEngine:
+        def __init__(
+            self,
+            runtime_config=None,
+        ):
+            captured[
+                "coach_runtime_config"
+            ] = runtime_config
+
         def evaluate(
             self,
             received_context,
@@ -133,7 +141,10 @@ def test_main_attaches_priority_aware_modified_workout(
     ]
 
     assert captured[
-        "runtime_config"
+        "context_runtime_config"
+    ] is runtime_config
+    assert captured[
+        "coach_runtime_config"
     ] is runtime_config
     assert captured[
         "coach_context"

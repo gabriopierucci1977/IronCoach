@@ -109,7 +109,9 @@ def run_pipeline() -> str:
 
     coach = _execute_phase(
         "inizializzazione Coach Engine",
-        CoachEngine,
+        lambda: CoachEngine(
+            runtime_config=runtime_config,
+        ),
     )
 
     decision = _execute_phase(
