@@ -14,10 +14,12 @@ Verifica:
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import List
 
 import pytest
 
+import backend.context_builder as context_builder_module
 from backend.context_builder import ContextBuilder
 from backend.importers.garmin_activity_archive import (
     GarminActivityArchiveError,
@@ -31,10 +33,14 @@ class FakeClient:
         training_history=None,
         recovery_history=None,
         performance_history=None,
+        latest_recovery=None,
+        latest_training=None,
     ):
         self._training_history = training_history or []
         self._recovery_history = recovery_history or []
         self._performance_history = performance_history or []
+        self._latest_recovery = latest_recovery or {}
+        self._latest_training = latest_training or {}
         self.calls: List[str] = []
 
     def _record(self, name):
@@ -46,11 +52,11 @@ class FakeClient:
 
     def get_latest_recovery(self):
         self._record("get_latest_recovery")
-        return {}
+        return self._latest_recovery
 
     def get_latest_training(self):
         self._record("get_latest_training")
-        return {}
+        return self._latest_training
 
     def get_latest_nutrition(self):
         self._record("get_latest_nutrition")
@@ -519,3 +525,180 @@ def test_similar_sessions_are_not_merged_without_metric_match() -> None:
     assert len(
         context["training_history"]
     ) == 2
+
+
+class _FixedDateTime(datetime):
+    @classmethod
+    def now(cls, tz=None):
+        value = cls(
+            2026,
+            8,
+            7,
+            12,
+            0,
+            0,
+            tzinfo=timezone.utc,
+        )
+
+        if tz is None:
+            return value.replace(
+                tzinfo=None
+            )
+
+        return value.astimezone(tz)
+
+
+@pytest.fixture
+def fixed_context_time(monkeypatch):
+    monkeypatch.setattr(
+        context_builder_module,
+        "datetime",
+        _FixedDateTime,
+    )
+
+
+def test_data_freshness_is_low_when_dates_are_current(
+    fixed_context_time,
+) -> None:
+    context = ContextBuilder(
+        FakeClient(
+            latest_recovery={
+                "Data": "2026-08-06",
+            },
+            latest_training={
+                "Data allenamento": "2026-08-03",
+                "Sport": "Corsa",
+            },
+        ),
+        garmin_archive=FakeArchive(),
+    ).build()
+
+    freshness = context["data_freshness"]
+
+    assert freshness["level"] == "LOW"
+    assert freshness["reasons"] == []
+    assert freshness["recovery"] == {
+        "status": "CURRENT",
+        "level": "LOW",
+        "date": "2026-08-06",
+        "age_days": 1,
+        "max_age_days": 3,
+        "reason": None,
+    }
+    assert freshness["training"] == {
+        "status": "CURRENT",
+        "level": "LOW",
+        "date": "2026-08-03",
+        "age_days": 4,
+        "max_age_days": 7,
+        "reason": None,
+    }
+    assert context["context_warnings"] == []
+
+
+def test_stale_training_sets_moderate_data_freshness(
+    fixed_context_time,
+) -> None:
+    context = ContextBuilder(
+        FakeClient(
+            latest_recovery={
+                "Data": "2026-08-06",
+            },
+            latest_training={
+                "Data allenamento": "2026-07-30",
+                "Sport": "Corsa",
+            },
+        ),
+        garmin_archive=FakeArchive(),
+    ).build()
+
+    freshness = context["data_freshness"]
+
+    assert freshness["level"] == "MODERATE"
+    assert freshness["training"]["status"] == "STALE"
+    assert freshness["training"]["age_days"] == 8
+    assert freshness["recovery"]["status"] == "CURRENT"
+    assert freshness["reasons"] == [
+        (
+            "Allenamento: dato obsoleto di 8 giorni "
+            "(data 2026-07-30, soglia 7 giorni)"
+        )
+    ]
+    assert context["context_warnings"] == freshness["reasons"]
+
+
+def test_stale_recovery_sets_high_data_freshness(
+    fixed_context_time,
+) -> None:
+    context = ContextBuilder(
+        FakeClient(
+            latest_recovery={
+                "Data": "2026-08-03",
+            },
+            latest_training={
+                "Data allenamento": "2026-08-03",
+                "Sport": "Corsa",
+            },
+        ),
+        garmin_archive=FakeArchive(),
+    ).build()
+
+    freshness = context["data_freshness"]
+
+    assert freshness["level"] == "HIGH"
+    assert freshness["recovery"]["status"] == "STALE"
+    assert freshness["recovery"]["age_days"] == 4
+    assert freshness["training"]["status"] == "CURRENT"
+    assert freshness["reasons"] == [
+        (
+            "Recovery: dato obsoleto di 4 giorni "
+            "(data 2026-08-03, soglia 3 giorni)"
+        )
+    ]
+
+
+def test_future_dates_are_structured_and_reported(
+    fixed_context_time,
+) -> None:
+    context = ContextBuilder(
+        FakeClient(
+            latest_recovery={
+                "Data": "2026-08-08",
+            },
+            latest_training={
+                "Data allenamento": "2026-08-09",
+                "Sport": "Corsa",
+            },
+        ),
+        garmin_archive=FakeArchive(),
+    ).build()
+
+    freshness = context["data_freshness"]
+
+    assert freshness["level"] == "HIGH"
+    assert freshness["recovery"]["status"] == "FUTURE"
+    assert freshness["recovery"]["age_days"] == -1
+    assert freshness["training"]["status"] == "FUTURE"
+    assert freshness["training"]["age_days"] == -2
+    assert freshness["reasons"] == [
+        "Recovery: data futura (2026-08-08)",
+        "Allenamento: data futura (2026-08-09)",
+    ]
+    assert context["context_warnings"] == freshness["reasons"]
+
+
+def test_missing_dates_keep_unknown_details_without_warning(
+    fixed_context_time,
+) -> None:
+    context = ContextBuilder(
+        FakeClient(),
+        garmin_archive=FakeArchive(),
+    ).build()
+
+    freshness = context["data_freshness"]
+
+    assert freshness["level"] == "LOW"
+    assert freshness["reasons"] == []
+    assert freshness["recovery"]["status"] == "UNKNOWN"
+    assert freshness["training"]["status"] == "UNKNOWN"
+    assert context["context_warnings"] == []
