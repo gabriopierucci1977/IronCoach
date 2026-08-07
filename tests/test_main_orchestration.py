@@ -16,18 +16,35 @@ Non usa servizi esterni.
 import backend.main as main_module
 
 
+class FakeRuntimeConfig:
+    recovery_max_age_days = 3
+    training_max_age_days = 7
+
+
+FAKE_RUNTIME_CONFIG = FakeRuntimeConfig()
+
+
+def fake_get_runtime_config():
+    return FAKE_RUNTIME_CONFIG
+
+
 class FakeClient:
     pass
 
 
 class FakeContextBuilder:
     built_context = None
+    received_runtime_config = None
 
     def __init__(
         self,
         client,
+        runtime_config=None,
     ):
         self.client = client
+        FakeContextBuilder.received_runtime_config = (
+            runtime_config
+        )
 
     def build(
         self,
@@ -172,6 +189,7 @@ class FakeDecisionWriter:
 
 def _reset_fakes() -> None:
     FakeContextBuilder.built_context = None
+    FakeContextBuilder.received_runtime_config = None
     FakeCoachEngine.received_context = None
     FakeWorkoutAdapter.received_context = None
     FakeWorkoutAdapter.received_decision = None
@@ -183,6 +201,12 @@ def _reset_fakes() -> None:
 def _patch_main_dependencies(
     monkeypatch,
 ) -> None:
+    monkeypatch.setattr(
+        main_module,
+        "get_runtime_config",
+        fake_get_runtime_config,
+    )
+
     monkeypatch.setattr(
         main_module,
         "AirtableClient",
@@ -354,4 +378,21 @@ def test_main_passes_enriched_decision_to_report_and_writer(
             "level"
         ]
         == "HIGH"
+    )
+
+
+def test_main_injects_single_runtime_config_into_context_builder(
+    monkeypatch,
+) -> None:
+    _reset_fakes()
+    _patch_main_dependencies(
+        monkeypatch
+    )
+
+    main_module.main()
+
+    assert (
+        FakeContextBuilder
+        .received_runtime_config
+        is FAKE_RUNTIME_CONFIG
     )
