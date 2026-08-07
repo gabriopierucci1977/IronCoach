@@ -10,6 +10,10 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
+from backend.config import (
+    get_recovery_max_age_days,
+    get_training_max_age_days,
+)
 from backend.history.performance_history import PerformanceHistory
 from backend.history.recovery_history import RecoveryHistory
 from backend.history.training_history import TrainingHistory
@@ -27,18 +31,25 @@ from backend.intelligence.athlete_profile_engine import (
 
 
 class ContextBuilder:
-    RECOVERY_MAX_AGE_DAYS = 3
-    TRAINING_MAX_AGE_DAYS = 7
-
     def __init__(
         self,
         airtable_client,
         include_garmin: bool = True,
         garmin_archive: Optional[GarminActivityArchive] = None,
+        recovery_max_age_days: Optional[int] = None,
+        training_max_age_days: Optional[int] = None,
     ):
         self.client = airtable_client
         self.include_garmin = bool(include_garmin)
         self.garmin_archive = garmin_archive or GarminActivityArchive()
+        self.recovery_max_age_days = self._resolve_max_age_days(
+            recovery_max_age_days,
+            get_recovery_max_age_days(),
+        )
+        self.training_max_age_days = self._resolve_max_age_days(
+            training_max_age_days,
+            get_training_max_age_days(),
+        )
         self.activity_normalizer = ActivityNormalizer()
         self.recovery_normalizer = RecoveryNormalizer()
         self.athlete_normalizer = AthleteNormalizer()
@@ -76,6 +87,8 @@ class ContextBuilder:
         data_freshness = self._build_data_freshness(
             recovery_date=recovery.get("date"),
             training_date=training.get("date"),
+            recovery_max_age_days=self.recovery_max_age_days,
+            training_max_age_days=self.training_max_age_days,
         )
         warnings.extend(
             data_freshness.get(
@@ -418,17 +431,19 @@ class ContextBuilder:
         cls,
         recovery_date: Any,
         training_date: Any,
+        recovery_max_age_days: int,
+        training_max_age_days: int,
     ) -> Dict[str, Any]:
         recovery = cls._assess_data_freshness(
             label="Recovery",
             value=recovery_date,
-            max_age_days=cls.RECOVERY_MAX_AGE_DAYS,
+            max_age_days=recovery_max_age_days,
             stale_level="HIGH",
         )
         training = cls._assess_data_freshness(
             label="Allenamento",
             value=training_date,
-            max_age_days=cls.TRAINING_MAX_AGE_DAYS,
+            max_age_days=training_max_age_days,
             stale_level="MODERATE",
         )
 
@@ -518,6 +533,24 @@ class ContextBuilder:
             "max_age_days": max_age_days,
             "reason": None,
         }
+
+    @staticmethod
+    def _resolve_max_age_days(
+        value: Optional[int],
+        default: int,
+    ) -> int:
+        if value is None:
+            return default
+
+        try:
+            resolved = int(value)
+        except (TypeError, ValueError):
+            return default
+
+        if resolved < 0:
+            return default
+
+        return resolved
 
     @staticmethod
     def _seconds_to_minutes(value: Any) -> float:
