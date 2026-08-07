@@ -16,6 +16,7 @@ La logica decisionale rimane nel DecisionEngine.
 """
 
 
+from backend.config import get_runtime_config
 from backend.engines.decision_engine import DecisionEngine
 
 from backend.analyzers.recovery_analyzer import RecoveryAnalyzer
@@ -36,7 +37,15 @@ class CoachEngine:
 
 
 
-    def __init__(self):
+    def __init__(
+        self,
+        runtime_config=None,
+    ):
+
+        self.runtime_config = (
+            runtime_config
+            or get_runtime_config()
+        )
 
         self.recovery_analyzer = RecoveryAnalyzer()
 
@@ -56,7 +65,9 @@ class CoachEngine:
 
         self.performance_analyzer = PerformanceAnalyzer()
 
-        self.decision_engine = DecisionEngine()
+        self.decision_engine = DecisionEngine(
+            runtime_config=self.runtime_config,
+        )
 
 
 

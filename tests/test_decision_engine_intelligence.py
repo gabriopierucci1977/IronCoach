@@ -5,6 +5,7 @@ Verifica che le informazioni già prodotte dagli analyzer incidano
 realmente sulla decisione finale e sul reasoning.
 """
 
+from backend.config import RuntimeConfig
 from backend.engines.decision_engine import DecisionEngine
 
 
@@ -18,6 +19,7 @@ def _assessment(
     recovery_trend="STABLE",
     adaptation_level="GOOD",
     performance_trend="STABLE",
+    data_freshness_level="LOW",
 ):
     return {
         "recovery": {
@@ -50,6 +52,10 @@ def _assessment(
         },
         "performance": {
             "trend": performance_trend,
+            "reasons": [],
+        },
+        "data_freshness": {
+            "level": data_freshness_level,
             "reasons": [],
         },
     }
@@ -181,3 +187,79 @@ def test_high_risk_combination_has_priority_over_moderate_adaptation() -> None:
     assert result["strategy"] == "RECOVERY"
     assert result["risk_level"] == "HIGH_ALERT"
     assert result["confidence"] == 96
+
+
+def test_default_high_freshness_cap_is_applied() -> None:
+    result = DecisionEngine().decide(
+        _assessment(
+            injury_level="CRITICAL",
+            data_freshness_level="HIGH",
+        )
+    )
+
+    assert result["confidence"] == 75
+
+
+def test_default_moderate_freshness_cap_is_applied() -> None:
+    result = DecisionEngine().decide(
+        _assessment(
+            injury_level="CRITICAL",
+            data_freshness_level="MODERATE",
+        )
+    )
+
+    assert result["confidence"] == 85
+
+
+def test_runtime_config_customizes_high_freshness_cap() -> None:
+    config = RuntimeConfig(
+        freshness_high_confidence_cap=68,
+        freshness_moderate_confidence_cap=82,
+    )
+
+    result = DecisionEngine(
+        runtime_config=config,
+    ).decide(
+        _assessment(
+            injury_level="CRITICAL",
+            data_freshness_level="HIGH",
+        )
+    )
+
+    assert result["confidence"] == 68
+
+
+def test_runtime_config_customizes_moderate_freshness_cap() -> None:
+    config = RuntimeConfig(
+        freshness_high_confidence_cap=68,
+        freshness_moderate_confidence_cap=82,
+    )
+
+    result = DecisionEngine(
+        runtime_config=config,
+    ).decide(
+        _assessment(
+            injury_level="CRITICAL",
+            data_freshness_level="MODERATE",
+        )
+    )
+
+    assert result["confidence"] == 82
+
+
+def test_freshness_cap_never_increases_confidence() -> None:
+    config = RuntimeConfig(
+        freshness_high_confidence_cap=90,
+        freshness_moderate_confidence_cap=95,
+    )
+
+    result = DecisionEngine(
+        runtime_config=config,
+    ).decide(
+        _assessment(
+            recovery_level="UNKNOWN",
+            data_freshness_level="HIGH",
+        )
+    )
+
+    assert result["confidence"] == 72

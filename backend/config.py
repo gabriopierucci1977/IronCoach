@@ -1,12 +1,15 @@
 """
 Configurazione runtime di IronCoach.
 
-Le soglie di freschezza possono essere personalizzate tramite:
+Le soglie di freschezza e i limiti di confidenza possono essere
+personalizzati tramite:
 
 - IRONCOACH_RECOVERY_MAX_AGE_DAYS
 - IRONCOACH_TRAINING_MAX_AGE_DAYS
+- IRONCOACH_FRESHNESS_HIGH_CONFIDENCE_CAP
+- IRONCOACH_FRESHNESS_MODERATE_CONFIDENCE_CAP
 
-Valori assenti, non interi o negativi ricadono sui default.
+Valori assenti, non interi o fuori intervallo ricadono sui default.
 """
 
 from __future__ import annotations
@@ -17,11 +20,15 @@ from dataclasses import dataclass
 
 DEFAULT_RECOVERY_MAX_AGE_DAYS = 3
 DEFAULT_TRAINING_MAX_AGE_DAYS = 7
+DEFAULT_FRESHNESS_HIGH_CONFIDENCE_CAP = 75
+DEFAULT_FRESHNESS_MODERATE_CONFIDENCE_CAP = 85
 
 
-def _non_negative_int_from_env(
+def _bounded_int_from_env(
     name: str,
     default: int,
+    minimum: int,
+    maximum: int,
 ) -> int:
     raw_value = os.getenv(
         name,
@@ -36,10 +43,22 @@ def _non_negative_int_from_env(
     except ValueError:
         return default
 
-    if value < 0:
+    if value < minimum or value > maximum:
         return default
 
     return value
+
+
+def _non_negative_int_from_env(
+    name: str,
+    default: int,
+) -> int:
+    return _bounded_int_from_env(
+        name=name,
+        default=default,
+        minimum=0,
+        maximum=2_147_483_647,
+    )
 
 
 @dataclass(frozen=True)
@@ -49,6 +68,12 @@ class RuntimeConfig:
     )
     training_max_age_days: int = (
         DEFAULT_TRAINING_MAX_AGE_DAYS
+    )
+    freshness_high_confidence_cap: int = (
+        DEFAULT_FRESHNESS_HIGH_CONFIDENCE_CAP
+    )
+    freshness_moderate_confidence_cap: int = (
+        DEFAULT_FRESHNESS_MODERATE_CONFIDENCE_CAP
     )
 
     @classmethod
@@ -64,6 +89,22 @@ class RuntimeConfig:
                 _non_negative_int_from_env(
                     "IRONCOACH_TRAINING_MAX_AGE_DAYS",
                     DEFAULT_TRAINING_MAX_AGE_DAYS,
+                )
+            ),
+            freshness_high_confidence_cap=(
+                _bounded_int_from_env(
+                    "IRONCOACH_FRESHNESS_HIGH_CONFIDENCE_CAP",
+                    DEFAULT_FRESHNESS_HIGH_CONFIDENCE_CAP,
+                    minimum=0,
+                    maximum=100,
+                )
+            ),
+            freshness_moderate_confidence_cap=(
+                _bounded_int_from_env(
+                    "IRONCOACH_FRESHNESS_MODERATE_CONFIDENCE_CAP",
+                    DEFAULT_FRESHNESS_MODERATE_CONFIDENCE_CAP,
+                    minimum=0,
+                    maximum=100,
                 )
             ),
         )

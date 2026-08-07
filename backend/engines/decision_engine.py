@@ -11,12 +11,23 @@ Responsabilità:
 """
 
 
+from backend.config import RuntimeConfig, get_runtime_config
 from backend.decision import Decision
 
 
 
 
 class DecisionEngine:
+
+
+    def __init__(
+        self,
+        runtime_config=None,
+    ):
+        self.runtime_config = (
+            runtime_config
+            or get_runtime_config()
+        )
 
 
     LEVEL_LOW = "LOW"
@@ -1455,10 +1466,16 @@ class DecisionEngine:
             resolved = 0
 
         if level == self.LEVEL_HIGH:
-            return min(resolved, 75)
+            return min(
+                resolved,
+                self.runtime_config.freshness_high_confidence_cap,
+            )
 
         if level == self.LEVEL_MODERATE:
-            return min(resolved, 85)
+            return min(
+                resolved,
+                self.runtime_config.freshness_moderate_confidence_cap,
+            )
 
         return resolved
 
