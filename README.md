@@ -1,131 +1,188 @@
-# IronCoach
+IronCoach
 
-Sistema di coaching intelligente per analisi atleta, valutazione stato fisico e adattamento del piano di allenamento.
+Sistema di coaching intelligente per analisi atleta, valutazione dello stato fisico e adattamento del piano di allenamento.
 
-Versione corrente: **Beta 0.3**
+Versione corrente: Beta 0.3
 
----
-
-# Architettura
+Architettura
 
 IronCoach utilizza una pipeline modulare:
+
 Airtable / Input atleta
-|
-v
+          |
+          v
+   Context Builder
+          |
+          v
+     Coach Engine
+          |
+   +------+------+
+   |             |
+   v             v
+Recovery      Performance
+Analyzer       Analyzer
+   |             |
+   v             v
+Load        Recovery Trend
+Analyzer       Analyzer
+   |             |
+   +------+------+
+          |
+          v
+ Adaptation Analyzer
+          |
+          v
+  Decision Engine
+          |
+          v
+  Decision Model
+          |
+   +------+------+
+   |             |
+   v             v
+Report       Decision
+Builder       Writer
+   |             |
+   v             v
+Coach Report  Airtable Decision Log
+
+Componenti principali
+
 Context Builder
-|
-v
-Coach Engine
-|
-+----------------+
-| |
-v v
-Recovery Analyzer Performance Analyzer
-| |
-v v
-Load Analyzer Recovery Trend Analyzer
-| |
-+--------+-------+
-|
-v
-Adaptation Analyzer
-|
-v
-Decision Engine
-|
-v
-Decision Model
-|
-+--------+--------+
-| |
-v v
-Report Builder Decision Writer
-| |
-v v
-Coach Report Airtable Decision Log
-
----
-
-# Componenti principali
-
-## Context Builder
 
 Costruisce il contesto completo dell'atleta.
 
 Include:
 
-- profilo atleta;
-- recovery corrente;
-- storico recovery;
-- storico training load;
-- storico performance;
-- ultima decisione registrata.
+profilo atleta;
 
----
+recovery corrente;
 
-# Analyzer
+training corrente;
 
-## Recovery Analyzer
+nutrition corrente;
+
+storico recovery;
+
+storico training load;
+
+storico performance;
+
+ultima decisione registrata;
+
+freschezza strutturata dei dati;
+
+warning di contesto.
+
+La freschezza dei dati distingue tra:
+
+CURRENT;
+
+STALE;
+
+FUTURE;
+
+UNKNOWN.
+
+Output semplificato:
+
+{
+  "data_freshness": {
+    "level": "HIGH",
+    "reasons": [
+      "Recovery: dato obsoleto di 12 giorni"
+    ],
+    "recovery": {
+      "status": "STALE",
+      "level": "HIGH",
+      "age_days": 12,
+      "max_age_days": 3
+    },
+    "training": {
+      "status": "CURRENT",
+      "level": "LOW",
+      "age_days": 2,
+      "max_age_days": 7
+    }
+  }
+}
+
+Recovery Analyzer
 
 Valuta:
 
-- recovery score;
-- stato recovery;
-- qualità sonno;
-- segnali di recupero.
+recovery score;
 
-Esempio output:
+stato recovery;
 
-```json
+qualità del sonno;
+
+segnali di recupero.
+
+Esempio:
+
 {
   "state": "GIALLO",
   "score": 55
 }
+
 Load Analyzer
 
 Analizza il carico allenante:
 
 carico recente;
+
 carico cronico;
+
 rapporto acuto/cronico;
+
 distribuzione delle sedute.
 
 Esempio:
+
 {
   "level": "HIGH",
   "acute_chronic_ratio": 1.4
 }
+
 Performance Analyzer
 
 Analizza l'evoluzione prestativa dell'atleta.
 
-Supporta:
+Supporta il formato verticale:
 
-Formato verticale
 {
   "date": "2026-01-01",
   "metric": "ftp",
   "value": 280
 }
-Formato storico largo
+
+e il formato storico largo:
+
 {
   "date": "2026-01-01",
   "ftp": 280
 }
+
 Metriche supportate:
 
 FTP;
+
 CSS;
+
 VO2max corsa;
+
 VO2max bici.
 
-Output esempio:
+Esempio:
+
 {
   "trend": "DECLINING",
   "metrics": {
     "ftp": -5.4
   }
 }
+
 Recovery Trend Analyzer
 
 Analizza l'evoluzione della recovery nel tempo.
@@ -133,82 +190,106 @@ Analizza l'evoluzione della recovery nel tempo.
 Valuta:
 
 miglioramento;
+
 stabilità;
+
 peggioramento.
+
 Adaptation Analyzer
 
 Valuta come l'atleta risponde al carico.
 
 Livelli:
-GOOD
-MODERATE
-LIMITED
-UNKNOWN
+
+GOOD;
+
+MODERATE;
+
+LIMITED;
+
+UNKNOWN.
+
 Considera:
 
 carico;
+
 performance;
+
 recovery;
+
 trend.
+
 Decision Engine
 
 Il Decision Engine produce la decisione finale.
 
 Decisioni disponibili:
-CONFERMA
-ADATTA
-RECUPERA
+
+CONFERMA;
+
+ADATTA;
+
+RECUPERA.
+
 Scenario CONFERMA
 
 Quando:
 
 recovery favorevole;
+
 adattamento positivo;
+
 performance stabile o in crescita.
 
 Output:
-Decisione:
-CONFERMA
 
-Strategy:
-KEEP_PLAN
+Decisione: CONFERMA
+Strategy: KEEP_PLAN
+
 Scenario ADATTA
 
 Quando:
 
 recovery compromessa ma gestibile;
+
 performance in calo;
+
 adattamento moderato.
 
 Output:
-Decisione:
-ADATTA
 
-Strategy:
-ADAPT
+Decisione: ADATTA
+Strategy: ADAPT
+Risk: CAUTION
 
-Risk:
-CAUTION
 Scenario RECUPERA
 
 Quando:
 
 rischio elevato;
+
 recovery critica;
+
 segnali di sovraccarico.
 
 Output:
-Decisione:
-RECUPERA
 
-Strategy:
-RECOVERY
+Decisione: RECUPERA
+Strategy: RECOVERY
+Risk: HIGH_ALERT
 
-Risk:
-HIGH_ALERT
+La freschezza dei dati influenza la confidenza della decisione:
+
+dati correnti: confidenza invariata;
+
+training obsoleto: tetto massimo 85;
+
+recovery obsoleta o futura: tetto massimo 75.
+
 Decision Model
 
 La decisione ufficiale mantiene:
+
 {
   "decision": "ADATTA",
   "reason": "...",
@@ -219,6 +300,7 @@ La decisione ufficiale mantiene:
   "reasoning": [],
   "intelligence": {}
 }
+
 L'intelligence viene mantenuta lungo tutta la pipeline.
 
 Report Builder
@@ -228,24 +310,41 @@ Genera il report leggibile del Coach.
 Include:
 
 profilo atleta;
+
 recovery;
+
 training;
+
 nutrition;
+
+warning dati;
+
 sintesi coach;
+
 intelligence atleta;
+
 ultima decisione;
-nuova decisione.
+
+nuova decisione;
+
+allenamento modificato.
 
 Sezioni intelligence:
-PROFILO ATLETA
 
-CARICO RECENTE
+PROFILO ATLETA;
 
-ADATTAMENTO AL CARICO
+CARICO RECENTE;
 
-TREND RECOVERY
+ADATTAMENTO AL CARICO;
 
-TREND PERFORMANCE
+TREND RECOVERY;
+
+TREND PERFORMANCE;
+
+FRESCHEZZA DATI.
+
+I warning strutturati e legacy vengono uniti senza duplicati.
+
 Decision Writer
 
 Gestisce il salvataggio della decisione.
@@ -253,52 +352,128 @@ Gestisce il salvataggio della decisione.
 Mantiene:
 
 decisione;
+
 motivazione;
+
 confidenza;
+
 strategia;
+
 rischio;
+
 reasoning;
+
 intelligence;
+
 workout modificato.
 
 Destinazione:
+
 Airtable Decision Log
+
+Il salvataggio evita duplicati quando la decisione corrente è già presente.
+
+Configurazione
+
+Copia .env.example in .env e valorizza le variabili richieste.
+
+Variabili principali:
+
+AIRTABLE_API_KEY
+AIRTABLE_BASE_ID
+OPENAI_API_KEY
+
+Soglie opzionali di freschezza:
+
+IRONCOACH_RECOVERY_MAX_AGE_DAYS=3
+IRONCOACH_TRAINING_MAX_AGE_DAYS=7
+
+Comportamento:
+
+valori assenti: usa i default;
+
+valori non interi: usa i default;
+
+valori negativi: usa i default;
+
+0: valore valido.
+
+Le soglie possono anche essere passate direttamente al ContextBuilder; i parametri espliciti hanno priorità sulle variabili d'ambiente.
+
 Test Coverage
 
 La pipeline è protetta da test su:
 
 Analyzer
-Recovery Analyzer
-Load Analyzer
-Performance Analyzer
-Adaptation Analyzer
+
+Recovery Analyzer;
+
+Load Analyzer;
+
+Performance Analyzer;
+
+Adaptation Analyzer;
+
+Recovery Trend Analyzer.
+
 Orchestrazione
-CoachEngine
-Main application flow
-Decision flow
+
+CoachEngine;
+
+flusso applicativo principale;
+
+passaggio end-to-end della freschezza dati;
+
+adattamento workout;
+
+report finale.
+
 Persistenza
-Decision Model
-Decision Writer
+
+Decision Model;
+
+Decision Writer;
+
+anti-duplicato Airtable.
+
 Scenari atleta
 
 Coperti:
 
-ADATTA
-Recovery compromessa
-Performance negativa
-Adattamento moderato
-RECUPERA
-Recovery critica
-Rischio elevato
-Stato progetto
+CONFERMA;
+
+ADATTA;
+
+RECUPERA;
+
+recovery compromessa;
+
+recovery critica;
+
+performance negativa;
+
+adattamento moderato;
+
+rischio elevato;
+
+dati obsoleti;
+
+date future;
+
+soglie configurabili.
 
 Ultima verifica:
 
 pytest -q
 
-169 passed
+Risultato:
+
+343 passed
+
 Avvio applicazione
+
 python -m backend.main
+
 Filosofia
 
 IronCoach separa:
