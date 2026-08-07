@@ -702,3 +702,65 @@ def test_missing_dates_keep_unknown_details_without_warning(
     assert freshness["recovery"]["status"] == "UNKNOWN"
     assert freshness["training"]["status"] == "UNKNOWN"
     assert context["context_warnings"] == []
+
+
+def test_freshness_threshold_days_are_still_current(
+    fixed_context_time,
+) -> None:
+    context = ContextBuilder(
+        FakeClient(
+            latest_recovery={
+                "Data": "2026-08-04",
+            },
+            latest_training={
+                "Data allenamento": "2026-07-31",
+                "Sport": "Corsa",
+            },
+        ),
+        garmin_archive=FakeArchive(),
+    ).build()
+
+    freshness = context["data_freshness"]
+
+    assert freshness["level"] == "LOW"
+    assert freshness["recovery"]["status"] == "CURRENT"
+    assert freshness["recovery"]["age_days"] == 3
+    assert freshness["training"]["status"] == "CURRENT"
+    assert freshness["training"]["age_days"] == 7
+    assert freshness["reasons"] == []
+    assert context["context_warnings"] == []
+
+
+def test_freshness_one_day_over_threshold_is_stale(
+    fixed_context_time,
+) -> None:
+    context = ContextBuilder(
+        FakeClient(
+            latest_recovery={
+                "Data": "2026-08-03",
+            },
+            latest_training={
+                "Data allenamento": "2026-07-30",
+                "Sport": "Corsa",
+            },
+        ),
+        garmin_archive=FakeArchive(),
+    ).build()
+
+    freshness = context["data_freshness"]
+
+    assert freshness["level"] == "HIGH"
+    assert freshness["recovery"]["status"] == "STALE"
+    assert freshness["recovery"]["age_days"] == 4
+    assert freshness["training"]["status"] == "STALE"
+    assert freshness["training"]["age_days"] == 8
+    assert freshness["reasons"] == [
+        (
+            "Recovery: dato obsoleto di 4 giorni "
+            "(data 2026-08-03, soglia 3 giorni)"
+        ),
+        (
+            "Allenamento: dato obsoleto di 8 giorni "
+            "(data 2026-07-30, soglia 7 giorni)"
+        ),
+    ]

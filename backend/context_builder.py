@@ -27,6 +27,9 @@ from backend.intelligence.athlete_profile_engine import (
 
 
 class ContextBuilder:
+    RECOVERY_MAX_AGE_DAYS = 3
+    TRAINING_MAX_AGE_DAYS = 7
+
     def __init__(
         self,
         airtable_client,
@@ -419,13 +422,13 @@ class ContextBuilder:
         recovery = cls._assess_data_freshness(
             label="Recovery",
             value=recovery_date,
-            max_age_days=3,
+            max_age_days=cls.RECOVERY_MAX_AGE_DAYS,
             stale_level="HIGH",
         )
         training = cls._assess_data_freshness(
             label="Allenamento",
             value=training_date,
-            max_age_days=7,
+            max_age_days=cls.TRAINING_MAX_AGE_DAYS,
             stale_level="MODERATE",
         )
 
