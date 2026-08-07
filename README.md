@@ -32,10 +32,10 @@ Analyzer       Analyzer
  Adaptation Analyzer
           |
           v
-  Decision Engine
+ Decision Engine
           |
           v
-  Decision Model
+ Decision Model
           |
    +------+------+
    |             |
@@ -369,6 +369,86 @@ Airtable Decision Log
 
 Il salvataggio evita duplicati quando la decisione corrente è già presente.
 
+Archivio storico Garmin
+
+IronCoach può usare un archivio persistente delle attività Garmin già fuse tra riepiloghi JSON e file grezzi FIT, TCX o GPX.
+
+File principali:
+
+data/garmin/garmin_activities_merged.jsonl.gz
+data/garmin/garmin_activities_merged.jsonl.gz.manifest.json
+data/garmin/garmin_activity_export_report.json
+
+L'archivio:
+
+contiene una attività per riga;
+
+supporta la compressione gzip;
+
+conserva i segmenti multisport;
+
+valida dimensione e SHA-256 tramite manifest;
+
+non scrive nel database.
+
+Aggiornamento incrementale Garmin
+
+Per aggiornare un archivio già esistente aggiungendo soltanto le nuove attività:
+
+python -m backend.importers.garmin_activity_export_cli --incremental
+
+Il comando:
+
+valida archivio e manifest esistenti;
+
+legge i source_id già presenti;
+
+esclude le attività già archiviate prima del parsing FIT, TCX o GPX;
+
+aggiunge soltanto le attività nuove;
+
+ordina cronologicamente l'archivio risultante;
+
+aggiorna manifest e report;
+
+non riscrive l'archivio quando non ci sono nuove attività;
+
+non scrive nel database.
+
+Esito con nuove attività:
+
+{
+  "status": "UPDATED",
+  "incremental": true,
+  "existing_count": 3858,
+  "added_count": 1,
+  "activity_count": 3859,
+  "excluded_existing": 3858,
+  "merge": {
+    "total": 1,
+    "json_only": 1,
+    "merged": 0,
+    "parse_errors": 0
+  }
+}
+
+Seconda esecuzione sugli stessi dati:
+
+{
+  "status": "ALREADY_CURRENT",
+  "incremental": true,
+  "existing_count": 3859,
+  "added_count": 0,
+  "activity_count": 3859,
+  "excluded_existing": 3859
+}
+
+Le opzioni --incremental e --force non possono essere usate insieme.
+
+Per visualizzare tutte le opzioni:
+
+python -m backend.importers.garmin_activity_export_cli --help
+
 Configurazione
 
 Copia .env.example in .env e valorizza le variabili richieste.
@@ -409,7 +489,7 @@ valori minori di 0 o maggiori di 100: usa i default;
 
 valori compresi tra 0 e 100: validi.
 
-La configurazione viene caricata una sola volta all'avvio tramite RuntimeConfig e iniettata nel ContextBuilder, nel CoachEngine e nel DecisionEngine.
+La configurazione viene caricata tramite RuntimeConfig all'avvio della pipeline.
 
 Le soglie temporali possono anche essere passate direttamente al ContextBuilder; i parametri espliciti hanno priorità sul RuntimeConfig.
 
@@ -435,7 +515,7 @@ CoachEngine;
 
 flusso applicativo principale;
 
-iniezione della configurazione runtime;
+configurazione runtime;
 
 passaggio end-to-end della freschezza dati;
 
@@ -449,7 +529,17 @@ Decision Model;
 
 Decision Writer;
 
-anti-duplicato Airtable.
+anti-duplicato Airtable;
+
+archivio Garmin;
+
+export incrementale Garmin;
+
+filtro incrementale prima del parsing raw;
+
+idempotenza dell'aggiornamento Garmin;
+
+conflitti su activity_id e source_id.
 
 Scenari atleta
 
@@ -487,7 +577,7 @@ pytest -q
 
 Risultato:
 
-353 passed
+371 passed
 
 Avvio applicazione
 
