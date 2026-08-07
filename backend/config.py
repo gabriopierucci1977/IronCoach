@@ -71,17 +71,3 @@ class RuntimeConfig:
 
 def get_runtime_config() -> RuntimeConfig:
     return RuntimeConfig.from_env()
-
-
-def get_recovery_max_age_days() -> int:
-    return (
-        get_runtime_config()
-        .recovery_max_age_days
-    )
-
-
-def get_training_max_age_days() -> int:
-    return (
-        get_runtime_config()
-        .training_max_age_days
-    )

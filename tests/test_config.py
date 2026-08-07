@@ -8,7 +8,6 @@ Verifica che:
 - valori vuoti, non interi o negativi ricadano sui default;
 - il valore zero sia accettato;
 - RuntimeConfig raccolga la configurazione in un oggetto immutabile;
-- i getter legacy restino compatibili;
 - i parametri espliciti del ContextBuilder abbiano priorità
   sulla configurazione d'ambiente.
 """
@@ -21,9 +20,7 @@ from backend.config import (
     DEFAULT_RECOVERY_MAX_AGE_DAYS,
     DEFAULT_TRAINING_MAX_AGE_DAYS,
     RuntimeConfig,
-    get_recovery_max_age_days,
     get_runtime_config,
-    get_training_max_age_days,
 )
 from backend.context_builder import ContextBuilder
 
@@ -92,25 +89,6 @@ def test_runtime_config_uses_defaults(
     )
 
 
-def test_freshness_threshold_getters_use_defaults(
-    monkeypatch,
-) -> None:
-    _clear_threshold_environment(
-        monkeypatch
-    )
-
-    assert (
-        get_recovery_max_age_days()
-        == DEFAULT_RECOVERY_MAX_AGE_DAYS
-        == 3
-    )
-    assert (
-        get_training_max_age_days()
-        == DEFAULT_TRAINING_MAX_AGE_DAYS
-        == 7
-    )
-
-
 def test_environment_overrides_runtime_config(
     monkeypatch,
 ) -> None:
@@ -127,22 +105,6 @@ def test_environment_overrides_runtime_config(
 
     assert config.recovery_max_age_days == 5
     assert config.training_max_age_days == 10
-
-
-def test_legacy_getters_follow_runtime_config(
-    monkeypatch,
-) -> None:
-    monkeypatch.setenv(
-        "IRONCOACH_RECOVERY_MAX_AGE_DAYS",
-        "5",
-    )
-    monkeypatch.setenv(
-        "IRONCOACH_TRAINING_MAX_AGE_DAYS",
-        "10",
-    )
-
-    assert get_recovery_max_age_days() == 5
-    assert get_training_max_age_days() == 10
 
 
 def test_invalid_environment_values_use_defaults(
