@@ -717,22 +717,27 @@ class ReportBuilder:
             else []
         )
 
-        structured_reasons = [
-            str(item).strip()
-            for item in (
-                structured_reasons
-                or []
-            )
-            if str(item).strip()
-        ]
-
-        if structured_reasons:
-            return structured_reasons
-
-        return context.get(
+        legacy_warnings = context.get(
             "context_warnings",
             [],
         )
+
+        merged = []
+        seen = set()
+
+        for item in [
+            *(structured_reasons or []),
+            *(legacy_warnings or []),
+        ]:
+            warning = str(item).strip()
+
+            if not warning or warning in seen:
+                continue
+
+            seen.add(warning)
+            merged.append(warning)
+
+        return merged
 
     def _append_context_warnings(
         self,

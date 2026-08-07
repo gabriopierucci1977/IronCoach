@@ -250,19 +250,22 @@ def test_report_contains_improving_performance_details() -> None:
     assert "End: 265" in report
 
 
-def test_structured_freshness_reasons_have_priority() -> None:
+def test_structured_and_legacy_warnings_are_merged() -> None:
+    freshness_warning = (
+        "Allenamento: dato obsoleto di 8 giorni "
+        "(data 2026-07-30, soglia 7 giorni)"
+    )
+
     context = _context()
     context["data_freshness"] = {
         "level": "MODERATE",
         "reasons": [
-            (
-                "Allenamento: dato obsoleto di 8 giorni "
-                "(data 2026-07-30, soglia 7 giorni)"
-            ),
+            freshness_warning,
         ],
     }
     context["context_warnings"] = [
-        "Recovery: warning legacy da ignorare",
+        freshness_warning,
+        "Archivio Garmin non disponibile",
     ]
 
     report = ReportBuilder().build(
@@ -271,11 +274,14 @@ def test_structured_freshness_reasons_have_priority() -> None:
     )
 
     assert "ATTENZIONE DATI" in report
+    assert f"• {freshness_warning}" in report
+    assert report.count(
+        freshness_warning
+    ) == 1
     assert (
-        "• Allenamento: dato obsoleto di 8 giorni "
-        "(data 2026-07-30, soglia 7 giorni)"
-    ) in report
-    assert "warning legacy da ignorare" not in report
+        "• Archivio Garmin non disponibile"
+        in report
+    )
 
 
 def test_context_warnings_are_used_as_fallback() -> None:
