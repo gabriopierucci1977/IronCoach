@@ -50,6 +50,22 @@ class GarminActivityExportResult:
     compressed: bool
 
 
+@dataclass(frozen=True)
+class GarminActivityIncrementalExportResult:
+    """Riepilogo dell'aggiornamento incrementale."""
+
+    output_path: str
+    manifest_path: str
+    activity_count: int
+    segment_count: int
+    byte_count: int
+    sha256: str
+    compressed: bool
+    existing_count: int
+    added_count: int
+    skipped_existing: int
+
+
 class GarminActivityExporter:
     """Esporta e ricarica IronCoachActivity in formato JSON Lines."""
 
@@ -181,6 +197,122 @@ class GarminActivityExporter:
             temporary_output.unlink(missing_ok=True)
             temporary_manifest.unlink(missing_ok=True)
             raise
+
+    def export_incremental(
+        self,
+        activities: Iterable[IronCoachActivity],
+    ) -> GarminActivityIncrementalExportResult:
+        """
+        Aggiunge attività nuove a un export esistente validato.
+
+        Le attività con la stessa coppia activity_id/source_id già presente
+        vengono ignorate. I conflitti di identità interrompono l'operazione
+        senza riscrivere archivio o manifest.
+        """
+
+        existing = self.load(validate_manifest=True)
+        existing_by_activity_id = {
+            str(activity.activity_id).strip(): activity
+            for activity in existing
+        }
+        existing_by_source_id = {
+            str(activity.source_id).strip(): activity
+            for activity in existing
+        }
+
+        pending: List[IronCoachActivity] = []
+        pending_by_activity_id: Dict[str, IronCoachActivity] = {}
+        pending_by_source_id: Dict[str, IronCoachActivity] = {}
+        skipped_existing = 0
+
+        for activity in activities:
+            self._validate_incremental_activity(activity)
+
+            activity_id = str(activity.activity_id).strip()
+            source_id = str(activity.source_id).strip()
+
+            existing_activity = existing_by_activity_id.get(activity_id)
+            existing_source = existing_by_source_id.get(source_id)
+
+            if existing_activity is not None:
+                if str(existing_activity.source_id).strip() != source_id:
+                    raise GarminActivityExportError(
+                        "activity_id in conflitto con un source_id diverso: "
+                        f"{activity_id}"
+                    )
+
+                skipped_existing += 1
+                continue
+
+            if existing_source is not None:
+                if str(existing_source.activity_id).strip() != activity_id:
+                    raise GarminActivityExportError(
+                        "source_id in conflitto con un activity_id diverso: "
+                        f"{source_id}"
+                    )
+
+                skipped_existing += 1
+                continue
+
+            pending_activity = pending_by_activity_id.get(activity_id)
+            if pending_activity is not None:
+                if str(pending_activity.source_id).strip() != source_id:
+                    raise GarminActivityExportError(
+                        "activity_id in conflitto tra le nuove attività: "
+                        f"{activity_id}"
+                    )
+
+                skipped_existing += 1
+                continue
+
+            pending_source = pending_by_source_id.get(source_id)
+            if pending_source is not None:
+                if str(pending_source.activity_id).strip() != activity_id:
+                    raise GarminActivityExportError(
+                        "source_id in conflitto tra le nuove attività: "
+                        f"{source_id}"
+                    )
+
+                skipped_existing += 1
+                continue
+
+            pending.append(activity)
+            pending_by_activity_id[activity_id] = activity
+            pending_by_source_id[source_id] = activity
+
+        if not pending:
+            manifest = self.validate_manifest()
+
+            return GarminActivityIncrementalExportResult(
+                output_path=str(self.output_path),
+                manifest_path=str(self.manifest_path),
+                activity_count=int(manifest["activity_count"]),
+                segment_count=int(manifest["segment_count"]),
+                byte_count=int(manifest["byte_count"]),
+                sha256=str(manifest["sha256"]),
+                compressed=bool(manifest["compressed"]),
+                existing_count=len(existing),
+                added_count=0,
+                skipped_existing=skipped_existing,
+            )
+
+        combined = existing + pending
+        combined.sort(key=self._activity_sort_key)
+
+        export_result = self.export(combined)
+
+        return GarminActivityIncrementalExportResult(
+            output_path=export_result.output_path,
+            manifest_path=export_result.manifest_path,
+            activity_count=export_result.activity_count,
+            segment_count=export_result.segment_count,
+            byte_count=export_result.byte_count,
+            sha256=export_result.sha256,
+            compressed=export_result.compressed,
+            existing_count=len(existing),
+            added_count=len(pending),
+            skipped_existing=skipped_existing,
+        )
 
     def load(
         self,
@@ -412,6 +544,40 @@ class GarminActivityExporter:
             raise GarminActivityExportError(
                 "Record IronCoachActivitySegment incompleto o non valido."
             ) from exc
+
+    @staticmethod
+    def _validate_incremental_activity(
+        activity: IronCoachActivity,
+    ) -> None:
+        GarminActivityExporter._validate_activity(
+            activity=activity,
+            seen_activity_ids=set(),
+            seen_source_ids=set(),
+        )
+
+    @staticmethod
+    def _activity_sort_key(
+        activity: IronCoachActivity,
+    ) -> tuple:
+        start_time = str(activity.start_time or "").strip()
+
+        if start_time.endswith("Z"):
+            start_time = start_time[:-1] + "+00:00"
+
+        try:
+            parsed = datetime.fromisoformat(start_time)
+        except ValueError:
+            parsed = datetime.min.replace(tzinfo=timezone.utc)
+
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        else:
+            parsed = parsed.astimezone(timezone.utc)
+
+        return (
+            parsed,
+            str(activity.source_id or ""),
+        )
 
     @staticmethod
     def _validate_activity(
