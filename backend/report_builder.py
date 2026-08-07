@@ -130,9 +130,8 @@ class ReportBuilder:
 
         self._append_context_warnings(
             report,
-            context.get(
-                "context_warnings",
-                [],
+            self._resolve_context_warnings(
+                context
             ),
         )
 
@@ -694,6 +693,46 @@ class ReportBuilder:
     # ==================================================
     # CONTEXT WARNINGS
     # ==================================================
+
+    def _resolve_context_warnings(
+        self,
+        context,
+    ):
+        context = context or {}
+
+        data_freshness = context.get(
+            "data_freshness",
+            {},
+        ) or {}
+
+        structured_reasons = (
+            data_freshness.get(
+                "reasons",
+                [],
+            )
+            if isinstance(
+                data_freshness,
+                dict,
+            )
+            else []
+        )
+
+        structured_reasons = [
+            str(item).strip()
+            for item in (
+                structured_reasons
+                or []
+            )
+            if str(item).strip()
+        ]
+
+        if structured_reasons:
+            return structured_reasons
+
+        return context.get(
+            "context_warnings",
+            [],
+        )
 
     def _append_context_warnings(
         self,
