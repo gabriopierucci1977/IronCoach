@@ -10,6 +10,10 @@ personalizzati tramite:
 - IRONCOACH_FRESHNESS_MODERATE_CONFIDENCE_CAP
 
 Valori assenti, non interi o fuori intervallo ricadono sui default.
+
+I cap di confidenza rispettano sempre la relazione:
+
+0 <= HIGH <= MODERATE <= 100
 """
 
 from __future__ import annotations
@@ -61,6 +65,21 @@ def _non_negative_int_from_env(
     )
 
 
+def _normalize_confidence_cap(
+    value: int,
+    default: int,
+) -> int:
+    try:
+        resolved = int(value)
+    except (TypeError, ValueError):
+        return default
+
+    if resolved < 0 or resolved > 100:
+        return default
+
+    return resolved
+
+
 @dataclass(frozen=True)
 class RuntimeConfig:
     recovery_max_age_days: int = (
@@ -75,6 +94,32 @@ class RuntimeConfig:
     freshness_moderate_confidence_cap: int = (
         DEFAULT_FRESHNESS_MODERATE_CONFIDENCE_CAP
     )
+
+    def __post_init__(self) -> None:
+        high_cap = _normalize_confidence_cap(
+            self.freshness_high_confidence_cap,
+            DEFAULT_FRESHNESS_HIGH_CONFIDENCE_CAP,
+        )
+        moderate_cap = _normalize_confidence_cap(
+            self.freshness_moderate_confidence_cap,
+            DEFAULT_FRESHNESS_MODERATE_CONFIDENCE_CAP,
+        )
+
+        high_cap = min(
+            high_cap,
+            moderate_cap,
+        )
+
+        object.__setattr__(
+            self,
+            "freshness_high_confidence_cap",
+            high_cap,
+        )
+        object.__setattr__(
+            self,
+            "freshness_moderate_confidence_cap",
+            moderate_cap,
+        )
 
     @classmethod
     def from_env(cls) -> "RuntimeConfig":

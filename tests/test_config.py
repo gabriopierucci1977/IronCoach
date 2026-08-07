@@ -7,6 +7,7 @@ Verifica che:
 - le variabili d'ambiente sovrascrivano i default;
 - valori vuoti, non interi o negativi ricadano sui default;
 - il valore zero sia accettato;
+- i cap di confidenza rispettino sempre HIGH <= MODERATE;
 - RuntimeConfig raccolga la configurazione in un oggetto immutabile;
 - i parametri espliciti del ContextBuilder abbiano priorità
   sulla configurazione d'ambiente.
@@ -17,6 +18,8 @@ from dataclasses import FrozenInstanceError
 import pytest
 
 from backend.config import (
+    DEFAULT_FRESHNESS_HIGH_CONFIDENCE_CAP,
+    DEFAULT_FRESHNESS_MODERATE_CONFIDENCE_CAP,
     DEFAULT_RECOVERY_MAX_AGE_DAYS,
     DEFAULT_TRAINING_MAX_AGE_DAYS,
     RuntimeConfig,
@@ -61,23 +64,25 @@ class FakeArchive:
         return iter([])
 
 
-def _clear_threshold_environment(
+def _clear_runtime_environment(
     monkeypatch,
 ) -> None:
-    monkeypatch.delenv(
+    for name in (
         "IRONCOACH_RECOVERY_MAX_AGE_DAYS",
-        raising=False,
-    )
-    monkeypatch.delenv(
         "IRONCOACH_TRAINING_MAX_AGE_DAYS",
-        raising=False,
-    )
+        "IRONCOACH_FRESHNESS_HIGH_CONFIDENCE_CAP",
+        "IRONCOACH_FRESHNESS_MODERATE_CONFIDENCE_CAP",
+    ):
+        monkeypatch.delenv(
+            name,
+            raising=False,
+        )
 
 
 def test_runtime_config_uses_defaults(
     monkeypatch,
 ) -> None:
-    _clear_threshold_environment(
+    _clear_runtime_environment(
         monkeypatch
     )
 
@@ -86,6 +91,8 @@ def test_runtime_config_uses_defaults(
     assert config == RuntimeConfig(
         recovery_max_age_days=3,
         training_max_age_days=7,
+        freshness_high_confidence_cap=75,
+        freshness_moderate_confidence_cap=85,
     )
 
 
@@ -100,11 +107,21 @@ def test_environment_overrides_runtime_config(
         "IRONCOACH_TRAINING_MAX_AGE_DAYS",
         "10",
     )
+    monkeypatch.setenv(
+        "IRONCOACH_FRESHNESS_HIGH_CONFIDENCE_CAP",
+        "70",
+    )
+    monkeypatch.setenv(
+        "IRONCOACH_FRESHNESS_MODERATE_CONFIDENCE_CAP",
+        "80",
+    )
 
     config = get_runtime_config()
 
     assert config.recovery_max_age_days == 5
     assert config.training_max_age_days == 10
+    assert config.freshness_high_confidence_cap == 70
+    assert config.freshness_moderate_confidence_cap == 80
 
 
 def test_invalid_environment_values_use_defaults(
@@ -118,6 +135,14 @@ def test_invalid_environment_values_use_defaults(
         "IRONCOACH_TRAINING_MAX_AGE_DAYS",
         "-1",
     )
+    monkeypatch.setenv(
+        "IRONCOACH_FRESHNESS_HIGH_CONFIDENCE_CAP",
+        "101",
+    )
+    monkeypatch.setenv(
+        "IRONCOACH_FRESHNESS_MODERATE_CONFIDENCE_CAP",
+        "non-numerico",
+    )
 
     config = get_runtime_config()
 
@@ -128,6 +153,14 @@ def test_invalid_environment_values_use_defaults(
     assert (
         config.training_max_age_days
         == DEFAULT_TRAINING_MAX_AGE_DAYS
+    )
+    assert (
+        config.freshness_high_confidence_cap
+        == DEFAULT_FRESHNESS_HIGH_CONFIDENCE_CAP
+    )
+    assert (
+        config.freshness_moderate_confidence_cap
+        == DEFAULT_FRESHNESS_MODERATE_CONFIDENCE_CAP
     )
 
 
@@ -142,6 +175,14 @@ def test_empty_environment_values_use_defaults(
         "IRONCOACH_TRAINING_MAX_AGE_DAYS",
         "",
     )
+    monkeypatch.setenv(
+        "IRONCOACH_FRESHNESS_HIGH_CONFIDENCE_CAP",
+        "",
+    )
+    monkeypatch.setenv(
+        "IRONCOACH_FRESHNESS_MODERATE_CONFIDENCE_CAP",
+        "   ",
+    )
 
     config = get_runtime_config()
 
@@ -153,9 +194,17 @@ def test_empty_environment_values_use_defaults(
         config.training_max_age_days
         == DEFAULT_TRAINING_MAX_AGE_DAYS
     )
+    assert (
+        config.freshness_high_confidence_cap
+        == DEFAULT_FRESHNESS_HIGH_CONFIDENCE_CAP
+    )
+    assert (
+        config.freshness_moderate_confidence_cap
+        == DEFAULT_FRESHNESS_MODERATE_CONFIDENCE_CAP
+    )
 
 
-def test_zero_is_a_valid_threshold(
+def test_zero_is_a_valid_threshold_and_cap(
     monkeypatch,
 ) -> None:
     monkeypatch.setenv(
@@ -166,11 +215,65 @@ def test_zero_is_a_valid_threshold(
         "IRONCOACH_TRAINING_MAX_AGE_DAYS",
         "0",
     )
+    monkeypatch.setenv(
+        "IRONCOACH_FRESHNESS_HIGH_CONFIDENCE_CAP",
+        "0",
+    )
+    monkeypatch.setenv(
+        "IRONCOACH_FRESHNESS_MODERATE_CONFIDENCE_CAP",
+        "0",
+    )
 
     config = get_runtime_config()
 
     assert config.recovery_max_age_days == 0
     assert config.training_max_age_days == 0
+    assert config.freshness_high_confidence_cap == 0
+    assert config.freshness_moderate_confidence_cap == 0
+
+
+def test_incoherent_environment_caps_are_normalized(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv(
+        "IRONCOACH_FRESHNESS_HIGH_CONFIDENCE_CAP",
+        "90",
+    )
+    monkeypatch.setenv(
+        "IRONCOACH_FRESHNESS_MODERATE_CONFIDENCE_CAP",
+        "70",
+    )
+
+    config = get_runtime_config()
+
+    assert config.freshness_high_confidence_cap == 70
+    assert config.freshness_moderate_confidence_cap == 70
+
+
+def test_incoherent_direct_caps_are_normalized() -> None:
+    config = RuntimeConfig(
+        freshness_high_confidence_cap=95,
+        freshness_moderate_confidence_cap=80,
+    )
+
+    assert config.freshness_high_confidence_cap == 80
+    assert config.freshness_moderate_confidence_cap == 80
+
+
+def test_invalid_direct_caps_use_defaults() -> None:
+    config = RuntimeConfig(
+        freshness_high_confidence_cap="non-numerico",
+        freshness_moderate_confidence_cap=101,
+    )
+
+    assert (
+        config.freshness_high_confidence_cap
+        == DEFAULT_FRESHNESS_HIGH_CONFIDENCE_CAP
+    )
+    assert (
+        config.freshness_moderate_confidence_cap
+        == DEFAULT_FRESHNESS_MODERATE_CONFIDENCE_CAP
+    )
 
 
 def test_runtime_config_is_immutable() -> None:
