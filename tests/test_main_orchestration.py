@@ -7,7 +7,8 @@ Verifica che il flusso principale:
 - valuti la decisione;
 - applichi l'adattamento workout;
 - generi il report;
-- salvi la decisione finale;
+- salvi la decisione finale in modalità normale;
+- non scriva su Airtable in modalità dry-run;
 - mantenga la freschezza dati strutturata lungo tutto il flusso;
 - inietti la stessa configurazione runtime nei componenti principali.
 
@@ -178,6 +179,7 @@ class FakeReportBuilder:
 
 
 class FakeDecisionWriter:
+    initialized = False
     saved = None
 
     def __init__(
@@ -185,6 +187,7 @@ class FakeDecisionWriter:
         client,
     ):
         self.client = client
+        FakeDecisionWriter.initialized = True
 
     def save(
         self,
@@ -202,6 +205,7 @@ def _reset_fakes() -> None:
     FakeWorkoutAdapter.received_decision = None
     FakeReportBuilder.received_context = None
     FakeReportBuilder.received_decision = None
+    FakeDecisionWriter.initialized = False
     FakeDecisionWriter.saved = None
 
 
@@ -260,8 +264,10 @@ def test_main_orchestration_keeps_full_flow(
         monkeypatch
     )
 
-    main_module.main()
+    exit_code = main_module.main([])
 
+    assert exit_code == 0
+    assert FakeDecisionWriter.initialized is True
     assert FakeDecisionWriter.saved is not None
 
     assert (
@@ -285,6 +291,30 @@ def test_main_orchestration_keeps_full_flow(
     assert "REPORT TEST" in output
 
 
+def test_main_dry_run_does_not_initialize_or_call_decision_writer(
+    monkeypatch,
+    capsys,
+) -> None:
+    _reset_fakes()
+    _patch_main_dependencies(
+        monkeypatch
+    )
+
+    exit_code = main_module.main(
+        ["--dry-run"]
+    )
+
+    assert exit_code == 0
+    assert FakeDecisionWriter.initialized is False
+    assert FakeDecisionWriter.saved is None
+
+    output = capsys.readouterr().out
+
+    assert "DRY RUN" in output
+    assert "DECISIONE NON SALVATA" in output
+    assert "REPORT TEST" in output
+
+
 def test_main_preserves_structured_freshness_end_to_end(
     monkeypatch,
 ) -> None:
@@ -293,7 +323,7 @@ def test_main_preserves_structured_freshness_end_to_end(
         monkeypatch
     )
 
-    main_module.main()
+    main_module.main([])
 
     context = FakeContextBuilder.built_context
     saved = FakeDecisionWriter.saved
@@ -355,7 +385,7 @@ def test_main_passes_enriched_decision_to_report_and_writer(
         monkeypatch
     )
 
-    main_module.main()
+    main_module.main([])
 
     report_decision = (
         FakeReportBuilder
@@ -396,7 +426,7 @@ def test_main_injects_single_runtime_config_into_context_builder(
         monkeypatch
     )
 
-    main_module.main()
+    main_module.main([])
 
     assert (
         FakeContextBuilder
@@ -413,7 +443,7 @@ def test_main_injects_same_runtime_config_into_coach_engine(
         monkeypatch
     )
 
-    main_module.main()
+    main_module.main([])
 
     assert (
         FakeCoachEngine
