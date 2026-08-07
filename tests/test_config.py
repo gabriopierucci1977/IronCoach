@@ -7,14 +7,22 @@ Verifica che:
 - le variabili d'ambiente sovrascrivano i default;
 - valori vuoti, non interi o negativi ricadano sui default;
 - il valore zero sia accettato;
+- RuntimeConfig raccolga la configurazione in un oggetto immutabile;
+- i getter legacy restino compatibili;
 - i parametri espliciti del ContextBuilder abbiano priorità
   sulla configurazione d'ambiente.
 """
 
+from dataclasses import FrozenInstanceError
+
+import pytest
+
 from backend.config import (
     DEFAULT_RECOVERY_MAX_AGE_DAYS,
     DEFAULT_TRAINING_MAX_AGE_DAYS,
+    RuntimeConfig,
     get_recovery_max_age_days,
+    get_runtime_config,
     get_training_max_age_days,
 )
 from backend.context_builder import ContextBuilder
@@ -56,7 +64,7 @@ class FakeArchive:
         return iter([])
 
 
-def test_freshness_thresholds_use_defaults(
+def _clear_threshold_environment(
     monkeypatch,
 ) -> None:
     monkeypatch.delenv(
@@ -66,6 +74,29 @@ def test_freshness_thresholds_use_defaults(
     monkeypatch.delenv(
         "IRONCOACH_TRAINING_MAX_AGE_DAYS",
         raising=False,
+    )
+
+
+def test_runtime_config_uses_defaults(
+    monkeypatch,
+) -> None:
+    _clear_threshold_environment(
+        monkeypatch
+    )
+
+    config = get_runtime_config()
+
+    assert config == RuntimeConfig(
+        recovery_max_age_days=3,
+        training_max_age_days=7,
+    )
+
+
+def test_freshness_threshold_getters_use_defaults(
+    monkeypatch,
+) -> None:
+    _clear_threshold_environment(
+        monkeypatch
     )
 
     assert (
@@ -80,7 +111,25 @@ def test_freshness_thresholds_use_defaults(
     )
 
 
-def test_environment_overrides_freshness_thresholds(
+def test_environment_overrides_runtime_config(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv(
+        "IRONCOACH_RECOVERY_MAX_AGE_DAYS",
+        "5",
+    )
+    monkeypatch.setenv(
+        "IRONCOACH_TRAINING_MAX_AGE_DAYS",
+        "10",
+    )
+
+    config = get_runtime_config()
+
+    assert config.recovery_max_age_days == 5
+    assert config.training_max_age_days == 10
+
+
+def test_legacy_getters_follow_runtime_config(
     monkeypatch,
 ) -> None:
     monkeypatch.setenv(
@@ -108,12 +157,14 @@ def test_invalid_environment_values_use_defaults(
         "-1",
     )
 
+    config = get_runtime_config()
+
     assert (
-        get_recovery_max_age_days()
+        config.recovery_max_age_days
         == DEFAULT_RECOVERY_MAX_AGE_DAYS
     )
     assert (
-        get_training_max_age_days()
+        config.training_max_age_days
         == DEFAULT_TRAINING_MAX_AGE_DAYS
     )
 
@@ -130,12 +181,14 @@ def test_empty_environment_values_use_defaults(
         "",
     )
 
+    config = get_runtime_config()
+
     assert (
-        get_recovery_max_age_days()
+        config.recovery_max_age_days
         == DEFAULT_RECOVERY_MAX_AGE_DAYS
     )
     assert (
-        get_training_max_age_days()
+        config.training_max_age_days
         == DEFAULT_TRAINING_MAX_AGE_DAYS
     )
 
@@ -152,8 +205,19 @@ def test_zero_is_a_valid_threshold(
         "0",
     )
 
-    assert get_recovery_max_age_days() == 0
-    assert get_training_max_age_days() == 0
+    config = get_runtime_config()
+
+    assert config.recovery_max_age_days == 0
+    assert config.training_max_age_days == 0
+
+
+def test_runtime_config_is_immutable() -> None:
+    config = RuntimeConfig()
+
+    with pytest.raises(
+        FrozenInstanceError
+    ):
+        config.recovery_max_age_days = 4
 
 
 def test_context_builder_reads_environment_thresholds(
