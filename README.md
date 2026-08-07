@@ -241,8 +241,6 @@ adattamento positivo;
 
 performance stabile o in crescita.
 
-Output:
-
 Decisione: CONFERMA
 Strategy: KEEP_PLAN
 
@@ -255,8 +253,6 @@ recovery compromessa ma gestibile;
 performance in calo;
 
 adattamento moderato.
-
-Output:
 
 Decisione: ADATTA
 Strategy: ADAPT
@@ -272,8 +268,6 @@ recovery critica;
 
 segnali di sovraccarico.
 
-Output:
-
 Decisione: RECUPERA
 Strategy: RECOVERY
 Risk: HIGH_ALERT
@@ -282,9 +276,11 @@ La freschezza dei dati influenza la confidenza della decisione:
 
 dati correnti: confidenza invariata;
 
-training obsoleto: tetto massimo 85;
+training obsoleto: tetto massimo configurabile, default 85;
 
-recovery obsoleta o futura: tetto massimo 75.
+recovery obsoleta o futura: tetto massimo configurabile, default 75.
+
+Il cap riduce soltanto la confidenza: non può aumentare un valore già inferiore.
 
 Decision Model
 
@@ -388,7 +384,12 @@ Soglie opzionali di freschezza:
 IRONCOACH_RECOVERY_MAX_AGE_DAYS=3
 IRONCOACH_TRAINING_MAX_AGE_DAYS=7
 
-Comportamento:
+Cap opzionali della confidenza:
+
+IRONCOACH_FRESHNESS_HIGH_CONFIDENCE_CAP=75
+IRONCOACH_FRESHNESS_MODERATE_CONFIDENCE_CAP=85
+
+Comportamento delle soglie temporali:
 
 valori assenti: usa i default;
 
@@ -398,7 +399,19 @@ valori negativi: usa i default;
 
 0: valore valido.
 
-Le soglie possono anche essere passate direttamente al ContextBuilder; i parametri espliciti hanno priorità sulle variabili d'ambiente.
+Comportamento dei cap di confidenza:
+
+valori assenti: usa i default;
+
+valori non interi: usa i default;
+
+valori minori di 0 o maggiori di 100: usa i default;
+
+valori compresi tra 0 e 100: validi.
+
+La configurazione viene caricata una sola volta all'avvio tramite RuntimeConfig e iniettata nel ContextBuilder, nel CoachEngine e nel DecisionEngine.
+
+Le soglie temporali possono anche essere passate direttamente al ContextBuilder; i parametri espliciti hanno priorità sul RuntimeConfig.
 
 Test Coverage
 
@@ -422,6 +435,8 @@ CoachEngine;
 
 flusso applicativo principale;
 
+iniezione della configurazione runtime;
+
 passaggio end-to-end della freschezza dati;
 
 adattamento workout;
@@ -438,7 +453,7 @@ anti-duplicato Airtable.
 
 Scenari atleta
 
-Coperti:
+Sono coperti:
 
 CONFERMA;
 
@@ -460,7 +475,11 @@ dati obsoleti;
 
 date future;
 
-soglie configurabili.
+soglie configurabili;
+
+confidence cap configurabili;
+
+garanzia che un confidence cap non aumenti la confidenza.
 
 Ultima verifica:
 
@@ -468,15 +487,13 @@ pytest -q
 
 Risultato:
 
-343 passed
+353 passed
 
 Avvio applicazione
 
 python -m backend.main
 
 Filosofia
-
-IronCoach separa:
 
 ANALISI
    |
