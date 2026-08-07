@@ -11,8 +11,8 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 from backend.config import (
-    get_recovery_max_age_days,
-    get_training_max_age_days,
+    RuntimeConfig,
+    get_runtime_config,
 )
 from backend.history.performance_history import PerformanceHistory
 from backend.history.recovery_history import RecoveryHistory
@@ -36,19 +36,26 @@ class ContextBuilder:
         airtable_client,
         include_garmin: bool = True,
         garmin_archive: Optional[GarminActivityArchive] = None,
+        runtime_config: Optional[RuntimeConfig] = None,
         recovery_max_age_days: Optional[int] = None,
         training_max_age_days: Optional[int] = None,
     ):
         self.client = airtable_client
         self.include_garmin = bool(include_garmin)
         self.garmin_archive = garmin_archive or GarminActivityArchive()
+
+        self.runtime_config = (
+            runtime_config
+            or get_runtime_config()
+        )
+
         self.recovery_max_age_days = self._resolve_max_age_days(
             recovery_max_age_days,
-            get_recovery_max_age_days(),
+            self.runtime_config.recovery_max_age_days,
         )
         self.training_max_age_days = self._resolve_max_age_days(
             training_max_age_days,
-            get_training_max_age_days(),
+            self.runtime_config.training_max_age_days,
         )
         self.activity_normalizer = ActivityNormalizer()
         self.recovery_normalizer = RecoveryNormalizer()

@@ -285,3 +285,68 @@ def test_invalid_explicit_thresholds_use_environment(
 
     assert builder.recovery_max_age_days == 4
     assert builder.training_max_age_days == 9
+
+
+def test_context_builder_uses_explicit_runtime_config(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv(
+        "IRONCOACH_RECOVERY_MAX_AGE_DAYS",
+        "20",
+    )
+    monkeypatch.setenv(
+        "IRONCOACH_TRAINING_MAX_AGE_DAYS",
+        "30",
+    )
+
+    runtime_config = RuntimeConfig(
+        recovery_max_age_days=4,
+        training_max_age_days=9,
+    )
+
+    builder = ContextBuilder(
+        FakeClient(),
+        garmin_archive=FakeArchive(),
+        runtime_config=runtime_config,
+    )
+
+    assert builder.runtime_config is runtime_config
+    assert builder.recovery_max_age_days == 4
+    assert builder.training_max_age_days == 9
+
+
+def test_explicit_thresholds_override_runtime_config() -> None:
+    runtime_config = RuntimeConfig(
+        recovery_max_age_days=4,
+        training_max_age_days=9,
+    )
+
+    builder = ContextBuilder(
+        FakeClient(),
+        garmin_archive=FakeArchive(),
+        runtime_config=runtime_config,
+        recovery_max_age_days=2,
+        training_max_age_days=6,
+    )
+
+    assert builder.runtime_config is runtime_config
+    assert builder.recovery_max_age_days == 2
+    assert builder.training_max_age_days == 6
+
+
+def test_invalid_explicit_thresholds_use_runtime_config() -> None:
+    runtime_config = RuntimeConfig(
+        recovery_max_age_days=4,
+        training_max_age_days=9,
+    )
+
+    builder = ContextBuilder(
+        FakeClient(),
+        garmin_archive=FakeArchive(),
+        runtime_config=runtime_config,
+        recovery_max_age_days=-1,
+        training_max_age_days="non-numerico",
+    )
+
+    assert builder.recovery_max_age_days == 4
+    assert builder.training_max_age_days == 9
