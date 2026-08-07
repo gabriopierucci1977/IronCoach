@@ -2,13 +2,17 @@
 Test ReportBuilder per intelligence e decisione finale.
 
 Verifica che il report esponga senza perdere informazioni:
+
 - carico recente;
 - adattamento;
 - trend recovery;
 - trend performance;
 - dettagli metriche performance;
 - reasoning decisionale;
-- rischio e azione consigliata.
+- rischio e azione consigliata;
+- warning di freschezza strutturati con priorità;
+- fallback ai warning legacy;
+- assenza della sezione warning quando non necessaria.
 """
 
 from backend.report_builder import ReportBuilder
@@ -244,3 +248,62 @@ def test_report_contains_improving_performance_details() -> None:
     assert "Performance in crescita" in report
     assert "Start: 255" in report
     assert "End: 265" in report
+
+
+def test_structured_freshness_reasons_have_priority() -> None:
+    context = _context()
+    context["data_freshness"] = {
+        "level": "MODERATE",
+        "reasons": [
+            (
+                "Allenamento: dato obsoleto di 8 giorni "
+                "(data 2026-07-30, soglia 7 giorni)"
+            ),
+        ],
+    }
+    context["context_warnings"] = [
+        "Recovery: warning legacy da ignorare",
+    ]
+
+    report = ReportBuilder().build(
+        context,
+        _decision(),
+    )
+
+    assert "ATTENZIONE DATI" in report
+    assert (
+        "• Allenamento: dato obsoleto di 8 giorni "
+        "(data 2026-07-30, soglia 7 giorni)"
+    ) in report
+    assert "warning legacy da ignorare" not in report
+
+
+def test_context_warnings_are_used_as_fallback() -> None:
+    context = _context()
+    context["context_warnings"] = [
+        "Archivio Garmin non disponibile",
+    ]
+
+    report = ReportBuilder().build(
+        context,
+        _decision(),
+    )
+
+    assert "ATTENZIONE DATI" in report
+    assert "• Archivio Garmin non disponibile" in report
+
+
+def test_report_omits_warning_section_without_reasons() -> None:
+    context = _context()
+    context["data_freshness"] = {
+        "level": "LOW",
+        "reasons": [],
+    }
+    context["context_warnings"] = []
+
+    report = ReportBuilder().build(
+        context,
+        _decision(),
+    )
+
+    assert "ATTENZIONE DATI" not in report
