@@ -152,6 +152,15 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
 
+    parser.add_argument(
+        "--incremental",
+        action="store_true",
+        help=(
+            "Aggiorna un export esistente aggiungendo soltanto "
+            "le attività Garmin non ancora archiviate."
+        ),
+    )
+
     return parser
 
 
@@ -265,6 +274,127 @@ def _existing_export_report(
     return report
 
 
+def _run_incremental_export(
+    *,
+    args: argparse.Namespace,
+    exporter: GarminActivityExporter,
+    summary_source: Path,
+    raw_matches_csv: Path,
+    extracted_directory: Path,
+    report_path: Path,
+) -> Dict[str, Any]:
+    """
+    Aggiorna l'archivio esistente senza ripetere il parsing
+    delle attività già identificate tramite source_id.
+    """
+
+    print(
+        "Avvio aggiornamento incrementale Garmin.",
+        flush=True,
+    )
+
+    started_at = time.monotonic()
+
+    existing_activities = exporter.load(
+        validate_manifest=True
+    )
+
+    existing_source_ids = {
+        str(activity.source_id).strip()
+        for activity in existing_activities
+        if str(activity.source_id or "").strip()
+    }
+
+    merger = GarminActivityMerger(
+        summary_source=str(summary_source),
+        raw_matches_csv=str(raw_matches_csv),
+        extracted_directory=str(extracted_directory),
+        include_review=bool(args.include_review),
+        strict=bool(args.strict),
+        excluded_source_ids=existing_source_ids,
+    )
+
+    merge_result = merger.merge_all()
+
+    merge_elapsed_seconds = round(
+        time.monotonic() - started_at,
+        3,
+    )
+
+    export_started_at = time.monotonic()
+
+    export_result = exporter.export_incremental(
+        merge_result.activities
+    )
+
+    export_elapsed_seconds = round(
+        time.monotonic() - export_started_at,
+        3,
+    )
+
+    total_elapsed_seconds = round(
+        time.monotonic() - started_at,
+        3,
+    )
+
+    report = {
+        "status": (
+            "UPDATED"
+            if export_result.added_count > 0
+            else "ALREADY_CURRENT"
+        ),
+        "incremental": True,
+        "existing_count": export_result.existing_count,
+        "added_count": export_result.added_count,
+        "skipped_existing": export_result.skipped_existing,
+        "excluded_existing": merge_result.excluded_existing,
+        "activity_count": export_result.activity_count,
+        "segment_count": export_result.segment_count,
+        "byte_count": export_result.byte_count,
+        "sha256": export_result.sha256,
+        "compressed": export_result.compressed,
+        "output_path": export_result.output_path,
+        "manifest_path": export_result.manifest_path,
+        "report_path": str(report_path),
+        "merge_elapsed_seconds": merge_elapsed_seconds,
+        "export_elapsed_seconds": export_elapsed_seconds,
+        "total_elapsed_seconds": total_elapsed_seconds,
+        "merge": {
+            "total": merge_result.total,
+            "merged": merge_result.merged,
+            "json_only": merge_result.json_only,
+            "skipped_review": merge_result.skipped_review,
+            "missing_raw_files": merge_result.missing_raw_files,
+            "parse_errors": merge_result.parse_errors,
+            "excluded_existing": merge_result.excluded_existing,
+        },
+        "inputs": {
+            "summary_source": str(summary_source),
+            "raw_matches_csv": str(raw_matches_csv),
+            "extracted_directory": str(extracted_directory),
+            "include_review": bool(args.include_review),
+            "strict": bool(args.strict),
+        },
+    }
+
+    _write_json_atomic(
+        report_path,
+        report,
+    )
+
+    print(
+        json.dumps(
+            report,
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+        ),
+        flush=True,
+    )
+
+    return report
+
+
 def run_export(
     args: argparse.Namespace,
 ) -> Dict[str, Any]:
@@ -296,6 +426,27 @@ def run_export(
         args.report
     )
 
+    incremental = bool(
+        getattr(
+            args,
+            "incremental",
+            False,
+        )
+    )
+    force = bool(
+        getattr(
+            args,
+            "force",
+            False,
+        )
+    )
+
+    if incremental and force:
+        raise GarminActivityExportCliError(
+            "Le opzioni --incremental e --force "
+            "non possono essere usate insieme."
+        )
+
     _validate_inputs(
         summary_source=summary_source,
         raw_matches_csv=raw_matches_csv,
@@ -315,8 +466,18 @@ def run_export(
         ),
     )
 
+    if incremental:
+        return _run_incremental_export(
+            args=args,
+            exporter=exporter,
+            summary_source=summary_source,
+            raw_matches_csv=raw_matches_csv,
+            extracted_directory=extracted_directory,
+            report_path=report_path,
+        )
+
     if (
-        not args.force
+        not force
         and exporter.output_path.exists()
         and exporter.manifest_path.exists()
     ):
