@@ -97,6 +97,20 @@ def _decision():
                     "Performance in calo",
                 ],
             },
+            "data_freshness": {
+                "level": "MODERATE",
+                "reasons": [
+                    "Allenamento: dato obsoleto di 8 giorni",
+                ],
+                "recovery": {
+                    "status": "CURRENT",
+                    "level": "LOW",
+                },
+                "training": {
+                    "status": "STALE",
+                    "level": "MODERATE",
+                },
+            },
         },
     }
 
@@ -112,6 +126,7 @@ def test_report_contains_all_intelligence_sections() -> None:
     assert "ADATTAMENTO AL CARICO" in report
     assert "TREND RECOVERY" in report
     assert "TREND PERFORMANCE" in report
+    assert "FRESCHEZZA DATI" in report
 
 
 def test_report_contains_recent_load_metrics() -> None:
@@ -313,3 +328,19 @@ def test_report_omits_warning_section_without_reasons() -> None:
     )
 
     assert "ATTENZIONE DATI" not in report
+
+
+def test_report_contains_structured_data_freshness_details() -> None:
+    report = ReportBuilder().build(
+        _context(),
+        _decision(),
+    )
+
+    assert "FRESCHEZZA DATI" in report
+    assert "Level: MODERATE" in report
+    assert (
+        "Allenamento: dato obsoleto di 8 giorni"
+        in report
+    )
+    assert "Status: CURRENT" in report
+    assert "Status: STALE" in report

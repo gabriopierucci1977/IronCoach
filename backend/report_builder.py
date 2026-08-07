@@ -405,6 +405,15 @@ class ReportBuilder:
             ),
         )
 
+        self._append_block(
+            report,
+            "FRESCHEZZA DATI",
+            intelligence.get(
+                "data_freshness",
+                {},
+            ),
+        )
+
 
 
 
