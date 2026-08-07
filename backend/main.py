@@ -6,6 +6,9 @@ Programma principale.
 
 from __future__ import annotations
 
+import argparse
+import sys
+from collections.abc import Sequence
 from typing import Callable, TypeVar
 
 from backend.airtable_client import AirtableClient
@@ -43,6 +46,28 @@ class IronCoachExecutionError(RuntimeError):
         )
 
 
+def _build_argument_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="python -m backend.main",
+        description=(
+            "Esegue la pipeline IronCoach. "
+            "La modalità dry-run produce il report "
+            "senza salvare la decisione su Airtable."
+        ),
+    )
+
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help=(
+            "Esegue l'intera pipeline senza inizializzare "
+            "DecisionWriter e senza salvare la decisione."
+        ),
+    )
+
+    return parser
+
+
 def _execute_phase(
     phase: str,
     operation: Callable[[], T],
@@ -60,6 +85,13 @@ def _print_banner() -> None:
     print("\n")
     print("=" * 60)
     print(f"{APP_NAME} {APP_VERSION}")
+    print("=" * 60)
+
+
+def _print_dry_run_notice() -> None:
+    print("\n")
+    print("=" * 60)
+    print("🧪 DRY RUN — DECISIONE NON SALVATA")
     print("=" * 60)
 
 
@@ -83,7 +115,10 @@ def _print_error(
     print("=" * 60)
 
 
-def run_pipeline() -> str:
+def run_pipeline(
+    *,
+    dry_run: bool = False,
+) -> str:
     runtime_config = _execute_phase(
         "caricamento configurazione runtime",
         get_runtime_config,
@@ -145,27 +180,43 @@ def run_pipeline() -> str:
         ),
     )
 
-    writer = _execute_phase(
-        "inizializzazione Decision Writer",
-        lambda: DecisionWriter(client),
-    )
+    if not dry_run:
+        writer = _execute_phase(
+            "inizializzazione Decision Writer",
+            lambda: DecisionWriter(client),
+        )
 
-    _execute_phase(
-        "salvataggio decisione",
-        lambda: writer.save(decision),
-    )
+        _execute_phase(
+            "salvataggio decisione",
+            lambda: writer.save(decision),
+        )
 
     return report
 
 
-def main() -> int:
+def main(
+    argv: Sequence[str] | None = None,
+) -> int:
+    parser = _build_argument_parser()
+    args = parser.parse_args(
+        list(argv) if argv is not None else []
+    )
+
     _print_banner()
 
     try:
-        report = run_pipeline()
+        if args.dry_run:
+            report = run_pipeline(
+                dry_run=True,
+            )
+        else:
+            report = run_pipeline()
     except IronCoachExecutionError as exc:
         _print_error(exc)
         return 1
+
+    if args.dry_run:
+        _print_dry_run_notice()
 
     print("\n")
     print(report)
@@ -173,4 +224,6 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(
+        main(sys.argv[1:])
+    )
