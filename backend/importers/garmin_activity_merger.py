@@ -62,6 +62,7 @@ class GarminActivityMergeResult:
     skipped_review: int
     missing_raw_files: int
     parse_errors: int
+    excluded_existing: int
 
 
 class GarminActivityMerger:
@@ -99,12 +100,18 @@ class GarminActivityMerger:
         extracted_directory: str,
         include_review: bool = False,
         strict: bool = False,
+        excluded_source_ids: Optional[Iterable[str]] = None,
     ):
         self.summary_source = Path(summary_source)
         self.raw_matches_csv = Path(raw_matches_csv)
         self.extracted_directory = Path(extracted_directory)
         self.include_review = include_review
         self.strict = strict
+        self.excluded_source_ids = {
+            str(source_id).strip()
+            for source_id in (excluded_source_ids or ())
+            if str(source_id).strip()
+        }
 
     def merge_all(
         self,
@@ -127,9 +134,18 @@ class GarminActivityMerger:
             "skipped_review": 0,
             "missing_raw_files": 0,
             "parse_errors": 0,
+            "excluded_existing": 0,
         }
 
         for activity in historical:
+            source_id = str(
+                activity.source_id or ""
+            ).strip()
+
+            if source_id in self.excluded_source_ids:
+                counters["excluded_existing"] += 1
+                continue
+
             status = GarminHistoricalImporter.import_status(
                 activity
             )
@@ -222,6 +238,7 @@ class GarminActivityMerger:
             skipped_review=counters["skipped_review"],
             missing_raw_files=counters["missing_raw_files"],
             parse_errors=counters["parse_errors"],
+            excluded_existing=counters["excluded_existing"],
         )
 
     def merge_activity(
