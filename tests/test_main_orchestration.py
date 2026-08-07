@@ -8,7 +8,8 @@ Verifica che il flusso principale:
 - applichi l'adattamento workout;
 - generi il report;
 - salvi la decisione finale;
-- mantenga la freschezza dati strutturata lungo tutto il flusso.
+- mantenga la freschezza dati strutturata lungo tutto il flusso;
+- inietti la stessa configurazione runtime nei componenti principali.
 
 Non usa servizi esterni.
 """
@@ -42,9 +43,7 @@ class FakeContextBuilder:
         runtime_config=None,
     ):
         self.client = client
-        FakeContextBuilder.received_runtime_config = (
-            runtime_config
-        )
+        FakeContextBuilder.received_runtime_config = runtime_config
 
     def build(
         self,
@@ -91,7 +90,14 @@ class FakeContextBuilder:
 
 
 class FakeCoachEngine:
+    received_runtime_config = None
     received_context = None
+
+    def __init__(
+        self,
+        runtime_config=None,
+    ):
+        FakeCoachEngine.received_runtime_config = runtime_config
 
     def evaluate(
         self,
@@ -190,6 +196,7 @@ class FakeDecisionWriter:
 def _reset_fakes() -> None:
     FakeContextBuilder.built_context = None
     FakeContextBuilder.received_runtime_config = None
+    FakeCoachEngine.received_runtime_config = None
     FakeCoachEngine.received_context = None
     FakeWorkoutAdapter.received_context = None
     FakeWorkoutAdapter.received_decision = None
@@ -393,6 +400,23 @@ def test_main_injects_single_runtime_config_into_context_builder(
 
     assert (
         FakeContextBuilder
+        .received_runtime_config
+        is FAKE_RUNTIME_CONFIG
+    )
+
+
+def test_main_injects_same_runtime_config_into_coach_engine(
+    monkeypatch,
+) -> None:
+    _reset_fakes()
+    _patch_main_dependencies(
+        monkeypatch
+    )
+
+    main_module.main()
+
+    assert (
+        FakeCoachEngine
         .received_runtime_config
         is FAKE_RUNTIME_CONFIG
     )
