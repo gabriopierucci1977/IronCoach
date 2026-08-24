@@ -3,15 +3,22 @@ Tests for Garmin FIT importer.
 """
 
 from backend.importers.garmin_fit_importer import GarminFitImporter
+from tests.support.garmin_fixtures import require_garmin_fixture
 
 
-TEST_FILE = "data/garmin_raw/4872731416_ACTIVITY.fit"
+TEST_FILE_NAME = "4872731416_ACTIVITY.fit"
+
+
+def _test_file():
+    return require_garmin_fixture(
+        TEST_FILE_NAME
+    )
 
 
 def test_import_garmin_bike_activity():
 
     activity = GarminFitImporter(
-        TEST_FILE
+        _test_file()
     ).import_activity()
 
     assert activity.source == "garmin"
@@ -32,7 +39,7 @@ def test_import_garmin_bike_activity():
 def test_metadata_creation():
 
     activity = GarminFitImporter(
-        TEST_FILE
+        _test_file()
     ).import_activity()
 
     assert "garmin" in activity.metadata

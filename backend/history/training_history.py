@@ -120,7 +120,7 @@ class TrainingHistory:
                 "Carico interno",
                 "Carico",
             ],
-            0,
+            None,
         )
 
 
@@ -207,7 +207,7 @@ class TrainingHistory:
 
             "load":
 
-                self._to_float(
+                self._to_optional_float(
                     training_load
                 ),
 
@@ -217,7 +217,7 @@ class TrainingHistory:
 
             "training_load":
 
-                self._to_float(
+                self._to_optional_float(
                     training_load
                 ),
 
@@ -419,6 +419,46 @@ class TrainingHistory:
         return default
 
 
+
+
+    def _to_optional_float(
+        self,
+        value,
+    ):
+        """Convert an observed numeric value while preserving missingness."""
+
+        if value in (
+            None,
+            "",
+        ):
+            return None
+
+        if isinstance(
+            value,
+            str,
+        ):
+            value = (
+                value
+                .strip()
+                .replace(
+                    ",",
+                    ".",
+                )
+            )
+
+            if not value:
+                return None
+
+        try:
+            return float(
+                value
+            )
+
+        except (
+            TypeError,
+            ValueError,
+        ):
+            return None
 
 
     def _to_float(

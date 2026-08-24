@@ -3,17 +3,22 @@ Tests for Garmin multisport FIT import.
 """
 
 from backend.importers.garmin_fit_importer import GarminFitImporter
+from tests.support.garmin_fixtures import require_garmin_fixture
 
 
-TEST_TRIATHLON_FILE = (
-    "data/garmin_raw/14891176843_ACTIVITY.fit"
-)
+TEST_TRIATHLON_FILE_NAME = "14891176843_ACTIVITY.fit"
+
+
+def _test_file():
+    return require_garmin_fixture(
+        TEST_TRIATHLON_FILE_NAME
+    )
 
 
 def test_garmin_triathlon_import():
 
     activity = GarminFitImporter(
-        TEST_TRIATHLON_FILE
+        _test_file()
     ).import_activity()
 
 
@@ -39,7 +44,7 @@ def test_garmin_triathlon_import():
 def test_garmin_triathlon_distances():
 
     activity = GarminFitImporter(
-        TEST_TRIATHLON_FILE
+        _test_file()
     ).import_activity()
 
 
@@ -52,7 +57,7 @@ def test_garmin_triathlon_distances():
 def test_garmin_triathlon_duration():
 
     activity = GarminFitImporter(
-        TEST_TRIATHLON_FILE
+        _test_file()
     ).import_activity()
 
 

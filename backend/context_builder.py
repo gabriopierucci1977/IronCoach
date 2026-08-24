@@ -75,13 +75,6 @@ class ContextBuilder:
             raw_athlete,
             source="airtable",
         )
-        athlete_profile_intelligence = (
-    self.athlete_profile_engine.analyze(
-        {
-            "athlete": athlete,
-        }
-    )
-)
         recovery = self.recovery_normalizer.normalize(
             raw_recovery,
             source="airtable",
@@ -126,11 +119,23 @@ class ContextBuilder:
             warnings,
         )
 
+        athlete_profile_intelligence = (
+            self.athlete_profile_engine.analyze(
+                {
+                    "athlete": athlete,
+                    "training_history": list(
+                        training_history.sessions
+                    ),
+                }
+            )
+        )
+
         return {
             "athlete": athlete,
             "athlete_profile": athlete,
-            "athlete_profile_intelligence":
-    athlete_profile_intelligence,
+            "athlete_profile_intelligence": (
+                athlete_profile_intelligence
+            ),
             "recovery": recovery,
             "training": training,
             "nutrition": nutrition,

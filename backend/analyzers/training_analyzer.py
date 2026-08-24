@@ -51,30 +51,70 @@ class TrainingAnalyzer:
 
         training = training or {}
 
+        # Prefer the canonical ActivityNormalizer contract.  ``raw`` is only
+        # a backwards-compatible fallback for contexts created before the
+        # canonical coaching fields were promoted by the normalizer.
         rpe = self._number(
-            training.get("RPE percepito")
-            or training.get("RPE")
-            or training.get("rpe")
+            self._value_with_raw_fallback(
+                training,
+                (
+                    "rpe",
+                    "RPE percepito",
+                    "RPE",
+                    "perceived_exertion",
+                ),
+            )
         )
 
         session_type = self._normalized_text(
-            training.get("Tipo seduta")
-            or training.get("tipo_seduta")
+            self._value_with_raw_fallback(
+                training,
+                (
+                    "session_type",
+                    "Tipo seduta",
+                    "tipo_seduta",
+                    "workout_type",
+                ),
+            )
         ).lower()
 
         planned_zone = self._normalized_text(
-            training.get("Zona prevista")
-            or training.get("zona_prevista")
+            self._value_with_raw_fallback(
+                training,
+                (
+                    "intensity",
+                    "planned_zone",
+                    "Zona prevista",
+                    "zona_prevista",
+                    "zone",
+                ),
+            )
         ).lower()
 
         duration_minutes = self._number(
-            training.get("Durata minuti")
-            or training.get("durata_minuti")
+            self._value_with_raw_fallback(
+                training,
+                (
+                    "duration_minutes",
+                    "Durata minuti",
+                    "durata_minuti",
+                    "duration",
+                ),
+            )
         )
 
         internal_load = self._number(
-            training.get("Carico interno")
-            or training.get("carico_interno")
+            self._value_with_raw_fallback(
+                training,
+                (
+                    "training_load",
+                    "Carico interno",
+                    "carico_interno",
+                    "load",
+                    "tss",
+                    "icu_training_load",
+                ),
+            )
         )
 
         reasons = []
@@ -225,6 +265,36 @@ class TrainingAnalyzer:
             "internal_load": internal_load,
             "reasons": reasons,
         }
+
+    def _value_with_raw_fallback(
+        self,
+        training,
+        keys,
+    ):
+        """Return the first present value, preferring canonical fields."""
+
+        for data in (
+            training,
+            training.get("raw", {})
+            if isinstance(training, dict)
+            else {},
+        ):
+            if not isinstance(data, dict):
+                continue
+
+            for key in keys:
+                if key not in data:
+                    continue
+
+                value = data.get(key)
+
+                if value not in (
+                    None,
+                    "",
+                ):
+                    return value
+
+        return None
 
     def _number(self, value):
         """

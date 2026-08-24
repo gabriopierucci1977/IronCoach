@@ -3,6 +3,13 @@ IronCoach Decision Writer
 
 Converte una decisione del Coach Engine
 nei campi presenti nella tabella Airtable Decision Log.
+
+Il Decision Model contiene anche ``risk_level``, ``reasoning`` e
+``intelligence``.  Questi campi rimangono disponibili nel report/runtime ma
+non vengono inviati ad Airtable finché la tabella Decision Log non espone
+colonne dedicate.  Inviare campi non presenti nello schema Airtable rende il
+salvataggio fragile, quindi il writer mantiene intenzionalmente un contratto
+esplicito e conservativo.
 """
 
 from datetime import datetime
@@ -13,6 +20,24 @@ class DecisionWriter:
     Gestisce la preparazione e il salvataggio
     delle decisioni generate da IronCoach.
     """
+
+    AIRTABLE_FIELDS = (
+        "Data",
+        "Decisione IronCoach",
+        "Motivazione",
+        "Confidenza",
+        "Azione consigliata",
+        "Allenamento modificato",
+        "Priorità",
+        "Priorità allenante",
+        "Strategia",
+    )
+
+    RICH_RUNTIME_FIELDS = (
+        "risk_level",
+        "reasoning",
+        "intelligence",
+    )
 
     def __init__(
         self,

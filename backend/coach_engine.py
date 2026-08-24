@@ -1153,9 +1153,7 @@ class CoachEngine:
 
             "athlete_profile":
 
-                self._build_athlete_intelligence(
-                    athlete_profile
-                ),
+                athlete_profile_intelligence,
 
 
 

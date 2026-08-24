@@ -1,5 +1,5 @@
 """
-IronCoach Athlete Profile Engine v0.2
+IronCoach Athlete Profile Engine v0.3
 
 Costruisce il profilo intelligente dell'atleta
 utilizzando i dati anagrafici, sportivi e storici
@@ -8,8 +8,21 @@ già disponibili nel contesto.
 Non prende decisioni allenanti.
 """
 
+from __future__ import annotations
+
+from datetime import datetime, timedelta, timezone
+from statistics import median
+
 
 class AthleteProfileEngine:
+
+    LOAD_TOLERANCE_WINDOW_DAYS = 56
+    LOAD_TOLERANCE_MAX_WEEKS = 8
+
+    # Coerenti con le soglie 28d del LoadAnalyzer, espresse come
+    # baseline settimanale osservata.
+    LOAD_TOLERANCE_LOW_WEEKLY = 125.0
+    LOAD_TOLERANCE_HIGH_WEEKLY = 500.0
 
     def analyze(
         self,
@@ -36,7 +49,9 @@ class AthleteProfileEngine:
             "training_preferences": self._preferences(
                 athlete
             ),
-            "load_tolerance": self._load_tolerance(),
+            "load_tolerance": self._load_tolerance(
+                context
+            ),
             "injury_patterns": self._injury_patterns(
                 athlete
             ),
@@ -378,15 +393,452 @@ class AthleteProfileEngine:
             preferences
         )
 
-    def _load_tolerance(self):
+    def _load_tolerance(
+        self,
+        context,
+    ):
+        """Estimate the athlete's observed training-load baseline.
+
+        This is deliberately descriptive rather than prescriptive: it does
+        not declare a physiological safe limit.  It summarizes the load the
+        athlete has actually sustained in the available normalized history.
+
+        The estimate uses up to eight rolling seven-day buckets ending on the
+        most recent valid activity date.  The median weekly load is used as a
+        robust baseline so one peak week does not dominate the estimate.
+        """
+
+        sessions = self._training_sessions(
+            context
+        )
+
+        observations = []
+        sources = set()
+
+        for session in sessions:
+
+            if not isinstance(
+                session,
+                dict,
+            ):
+                continue
+
+            session_date = self._session_datetime(
+                session
+            )
+
+            training_load = self._session_training_load(
+                session
+            )
+
+            if (
+                session_date is None
+                or training_load is None
+                or training_load < 0
+            ):
+                continue
+
+            observations.append(
+                (
+                    session_date,
+                    training_load,
+                )
+            )
+
+            source = self._session_source(
+                session
+            )
+
+            if source:
+                sources.add(
+                    source
+                )
+
+        if not observations:
+            return {
+                "status": "DA STIMARE",
+                "level": "UNKNOWN",
+                "confidence": "NONE",
+                "source": "Storico training con carico non disponibile",
+                "sessions_analyzed": 0,
+                "weeks_analyzed": 0,
+                "baseline_weekly_load": None,
+                "mean_weekly_load": None,
+                "peak_weekly_load": None,
+                "latest_7d_load": None,
+                "data_span_days": 0,
+            }
+
+        observations.sort(
+            key=lambda item: item[0]
+        )
+
+        latest_date = observations[-1][0]
+        window_start = latest_date - timedelta(
+            days=self.LOAD_TOLERANCE_WINDOW_DAYS - 1
+        )
+
+        recent = [
+            item
+            for item in observations
+            if item[0] >= window_start
+        ]
+
+        earliest_date = recent[0][0]
+        data_span_days = max(
+            1,
+            (
+                latest_date.date()
+                - earliest_date.date()
+            ).days
+            + 1,
+        )
+
+        weeks_analyzed = min(
+            self.LOAD_TOLERANCE_MAX_WEEKS,
+            max(
+                1,
+                (
+                    data_span_days
+                    + 6
+                )
+                // 7,
+            ),
+        )
+
+        weekly_loads = [
+            0.0
+            for _ in range(
+                weeks_analyzed
+            )
+        ]
+
+        for session_date, training_load in recent:
+
+            days_ago = (
+                latest_date.date()
+                - session_date.date()
+            ).days
+
+            week_index = (
+                days_ago
+                // 7
+            )
+
+            if week_index >= weeks_analyzed:
+                continue
+
+            weekly_loads[
+                week_index
+            ] += training_load
+
+        baseline_weekly_load = float(
+            median(
+                weekly_loads
+            )
+        )
+
+        mean_weekly_load = (
+            sum(
+                weekly_loads
+            )
+            / len(
+                weekly_loads
+            )
+        )
+
+        peak_weekly_load = max(
+            weekly_loads
+        )
+
+        latest_7d_load = weekly_loads[0]
+
+        sufficient_for_estimate = (
+            len(recent) >= 4
+            and data_span_days >= 7
+        )
+
+        if sufficient_for_estimate:
+            status = "STIMATA"
+            level = self._classify_load_tolerance(
+                baseline_weekly_load
+            )
+        else:
+            status = "DATI INSUFFICIENTI"
+            level = "UNKNOWN"
+
+        confidence = self._load_tolerance_confidence(
+            sessions=len(recent),
+            data_span_days=data_span_days,
+            sufficient=sufficient_for_estimate,
+        )
 
         return {
-            "status": "DA STIMARE",
-            "source": (
-                "Storico Garmin/Strava "
-                "non ancora disponibile"
+            "status": status,
+            "level": level,
+            "confidence": confidence,
+            "source": self._load_tolerance_source(
+                sources
             ),
+            "sessions_analyzed": len(
+                recent
+            ),
+            "weeks_analyzed": weeks_analyzed,
+            "baseline_weekly_load": round(
+                baseline_weekly_load,
+                2,
+            ),
+            "mean_weekly_load": round(
+                mean_weekly_load,
+                2,
+            ),
+            "peak_weekly_load": round(
+                peak_weekly_load,
+                2,
+            ),
+            "latest_7d_load": round(
+                latest_7d_load,
+                2,
+            ),
+            "data_span_days": data_span_days,
         }
+
+    def _training_sessions(
+        self,
+        context,
+    ):
+
+        context = context or {}
+
+        sessions = context.get(
+            "training_history"
+        )
+
+        if isinstance(
+            sessions,
+            list,
+        ):
+            return sessions
+
+        history = context.get(
+            "history",
+            {},
+        ) or {}
+
+        training_history = history.get(
+            "training"
+        )
+
+        if hasattr(
+            training_history,
+            "sessions",
+        ):
+            return list(
+                training_history.sessions
+            )
+
+        return []
+
+    def _session_training_load(
+        self,
+        session,
+    ):
+
+        value = self._find_session_value(
+            session,
+            (
+                "training_load",
+                "load",
+                "Load",
+                "Carico interno",
+                "Carico",
+                "tss",
+                "icu_training_load",
+            ),
+        )
+
+        number = self._number(
+            value
+        )
+
+        if number is None:
+            return None
+
+        return number
+
+    def _session_datetime(
+        self,
+        session,
+    ):
+
+        value = self._find_session_value(
+            session,
+            (
+                "date",
+                "Date",
+                "Data allenamento",
+                "start_date",
+                "start_time",
+                "timestamp",
+            ),
+        )
+
+        text = str(
+            value or ""
+        ).strip()
+
+        if not text:
+            return None
+
+        if text.endswith(
+            "Z"
+        ):
+            text = (
+                text[:-1]
+                + "+00:00"
+            )
+
+        try:
+            parsed = datetime.fromisoformat(
+                text
+            )
+        except ValueError:
+            return None
+
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(
+                tzinfo=timezone.utc
+            )
+
+        return parsed.astimezone(
+            timezone.utc
+        )
+
+    def _session_source(
+        self,
+        session,
+    ):
+
+        value = self._find_session_value(
+            session,
+            (
+                "source",
+            ),
+        )
+
+        return str(
+            value or ""
+        ).strip().lower()
+
+    def _find_session_value(
+        self,
+        session,
+        keys,
+        depth=0,
+    ):
+
+        if (
+            not isinstance(
+                session,
+                dict,
+            )
+            or depth > 2
+        ):
+            return None
+
+        for key in keys:
+            if key not in session:
+                continue
+
+            value = session.get(
+                key
+            )
+
+            if value not in (
+                None,
+                "",
+            ):
+                return value
+
+        raw = session.get(
+            "raw"
+        )
+
+        if isinstance(
+            raw,
+            dict,
+        ):
+            return self._find_session_value(
+                raw,
+                keys,
+                depth=depth + 1,
+            )
+
+        return None
+
+    def _classify_load_tolerance(
+        self,
+        baseline_weekly_load,
+    ):
+
+        if (
+            baseline_weekly_load
+            < self.LOAD_TOLERANCE_LOW_WEEKLY
+        ):
+            return "LOW"
+
+        if (
+            baseline_weekly_load
+            >= self.LOAD_TOLERANCE_HIGH_WEEKLY
+        ):
+            return "HIGH"
+
+        return "NORMAL"
+
+    def _load_tolerance_confidence(
+        self,
+        sessions,
+        data_span_days,
+        sufficient,
+    ):
+
+        if not sufficient:
+            return "LOW"
+
+        if (
+            sessions >= 12
+            and data_span_days >= 28
+        ):
+            return "HIGH"
+
+        if (
+            sessions >= 6
+            and data_span_days >= 14
+        ):
+            return "MODERATE"
+
+        return "LOW"
+
+    def _load_tolerance_source(
+        self,
+        sources,
+    ):
+
+        clean_sources = sorted(
+            source
+            for source in sources
+            if source
+        )
+
+        if not clean_sources:
+            return "Storico training normalizzato"
+
+        return (
+            "Storico training normalizzato: "
+            + " + ".join(
+                clean_sources
+            )
+        )
 
     def _goal_profile(
         self,
