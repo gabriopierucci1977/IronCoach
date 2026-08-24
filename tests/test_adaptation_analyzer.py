@@ -9,9 +9,14 @@ Il risultato combina:
 - trend prestativo;
 - recupero, quando disponibile.
 
-Il formato resta compatibile con l'output storico:
+Beta 0.4 aggiunge risk_codes come rappresentazione
+machine-readable dei fattori di rischio, mantenendo
+risk_factors e reasons per compatibilità e leggibilità.
+
+Il formato atteso è:
 {
     "adaptation_level": "",
+    "risk_codes": [],
     "risk_factors": [],
     "positive_factors": [],
     "reasons": [],
@@ -42,6 +47,7 @@ def test_unknown_without_meaningful_data() -> None:
     )
 
     assert result["adaptation_level"] == "UNKNOWN"
+    assert result["risk_codes"] == []
     assert result["risk_factors"] == []
     assert result["positive_factors"] == []
     assert result["reasons"] == [
@@ -68,6 +74,7 @@ def test_good_with_normal_load_and_improving_performance() -> None:
     )
 
     assert result["adaptation_level"] == "GOOD"
+    assert result["risk_codes"] == []
     assert "Performance in crescita" in result[
         "positive_factors"
     ]
@@ -90,6 +97,9 @@ def test_high_load_alone_is_moderate_not_limited() -> None:
     )
 
     assert result["adaptation_level"] == "MODERATE"
+    assert result["risk_codes"] == [
+        "HIGH_LOAD",
+    ]
     assert "Carico recente elevato" in result[
         "risk_factors"
     ]
@@ -113,6 +123,10 @@ def test_high_load_with_limitations_is_limited() -> None:
     )
 
     assert result["adaptation_level"] == "LIMITED"
+    assert result["risk_codes"] == [
+        "PHYSICAL_LIMITATION",
+        "HIGH_LOAD",
+    ]
     assert "Dolore al ginocchio" in result[
         "risk_factors"
     ]
@@ -134,6 +148,9 @@ def test_high_acute_chronic_ratio_is_risk_factor() -> None:
     )
 
     assert result["adaptation_level"] == "MODERATE"
+    assert result["risk_codes"] == [
+        "HIGH_ACUTE_CHRONIC_RATIO",
+    ]
     assert "Rapporto acuto/cronico elevato" in result[
         "risk_factors"
     ]
@@ -155,6 +172,9 @@ def test_declining_performance_reduces_adaptation() -> None:
     )
 
     assert result["adaptation_level"] == "MODERATE"
+    assert result["risk_codes"] == [
+        "PERFORMANCE_DECLINING",
+    ]
     assert "Performance in calo" in result[
         "risk_factors"
     ]
@@ -177,7 +197,36 @@ def test_poor_recovery_with_high_load_is_limited() -> None:
     )
 
     assert result["adaptation_level"] == "LIMITED"
+    assert result["risk_codes"] == [
+        "HIGH_LOAD",
+        "POOR_RECOVERY",
+    ]
     assert "Recupero insufficiente" in result[
+        "risk_factors"
+    ]
+
+
+def test_moderate_recovery_is_machine_readable_risk() -> None:
+    result = AdaptationAnalyzer().analyze(
+        _context(
+            load={
+                "level": "NORMAL",
+                "total_load": 800,
+                "acute_chronic_ratio": 1.0,
+                "sessions_with_load": 10,
+            },
+            recovery={
+                "state": "GIALLO",
+                "level": "MODERATE",
+            },
+        )
+    )
+
+    assert result["adaptation_level"] == "MODERATE"
+    assert result["risk_codes"] == [
+        "MODERATE_RECOVERY",
+    ]
+    assert "Recupero da monitorare" in result[
         "risk_factors"
     ]
 
@@ -199,6 +248,7 @@ def test_good_recovery_is_positive_factor() -> None:
     )
 
     assert result["adaptation_level"] == "GOOD"
+    assert result["risk_codes"] == []
     assert "Recupero adeguato" in result[
         "positive_factors"
     ]
@@ -218,6 +268,9 @@ def test_string_limitation_is_not_split_into_characters() -> None:
         )
     )
 
+    assert result["risk_codes"] == [
+        "PHYSICAL_LIMITATION",
+    ]
     assert "Tendinopatia" in result[
         "risk_factors"
     ]
@@ -242,6 +295,7 @@ def test_numeric_strings_are_supported() -> None:
     )
 
     assert result["adaptation_level"] == "GOOD"
+    assert result["risk_codes"] == []
 
 
 def test_unknown_load_does_not_become_good_from_zero_default() -> None:
@@ -259,6 +313,7 @@ def test_unknown_load_does_not_become_good_from_zero_default() -> None:
     )
 
     assert result["adaptation_level"] == "UNKNOWN"
+    assert result["risk_codes"] == []
 
 
 def test_preserves_output_contract() -> None:
@@ -268,6 +323,7 @@ def test_preserves_output_contract() -> None:
 
     assert set(result) == {
         "adaptation_level",
+        "risk_codes",
         "risk_factors",
         "positive_factors",
         "reasons",

@@ -247,6 +247,12 @@ class DecisionEngine:
 
                 risk_level="HIGH_ALERT",
 
+            rule_id="INJURY_CRITICAL",
+
+            primary_intent="PROTECT_INJURY",
+
+            supporting_intents=[],
+
             )
 
 
@@ -287,6 +293,12 @@ class DecisionEngine:
                 reasoning=reasoning,
 
                 risk_level="HIGH_ALERT",
+
+            rule_id="RECOVERY_CRITICAL",
+
+            primary_intent="RESTORE_RECOVERY",
+
+            supporting_intents=[],
 
             )
 
@@ -339,6 +351,14 @@ class DecisionEngine:
 
                 risk_level="HIGH_ALERT",
 
+            rule_id="RECOVERY_MODERATE_HIGH_LOAD_DECLINING",
+
+            primary_intent="RESTORE_RECOVERY",
+
+            supporting_intents=[
+                "REDUCE_LOAD",
+            ],
+
             )
 
 
@@ -385,6 +405,14 @@ class DecisionEngine:
                 reasoning=reasoning,
 
                 risk_level="HIGH_ALERT",
+
+            rule_id="RECOVERY_MODERATE_INJURY_HIGH",
+
+            primary_intent="PROTECT_INJURY",
+
+            supporting_intents=[
+                "RESTORE_RECOVERY",
+            ],
 
             )
 
@@ -436,6 +464,15 @@ class DecisionEngine:
 
                 risk_level="HIGH_ALERT",
 
+            rule_id="RECOVERY_MODERATE_TRAINING_HIGH_NUTRITION_HIGH",
+
+            primary_intent="RESTORE_FUELING",
+
+            supporting_intents=[
+                "RESTORE_RECOVERY",
+                "REDUCE_LOAD",
+            ],
+
             )
 
         # ======================================================
@@ -481,6 +518,14 @@ class DecisionEngine:
                 reasoning=reasoning,
 
                 risk_level="CAUTION",
+
+            rule_id="RECOVERY_FAVORABLE_TRAINING_HIGH_LOAD_HIGH",
+
+            primary_intent="REDUCE_LOAD",
+
+            supporting_intents=[
+                "PROTECT_PERFORMANCE",
+            ],
 
             )
 
@@ -529,6 +574,12 @@ class DecisionEngine:
 
                 risk_level="CAUTION",
 
+            rule_id="RECOVERY_FAVORABLE_NUTRITION_HIGH",
+
+            primary_intent="RESTORE_FUELING",
+
+            supporting_intents=[],
+
             )
 
 
@@ -540,6 +591,14 @@ class DecisionEngine:
 
 
         if adaptation_level == "LIMITED":
+
+
+            (
+                primary_intent,
+                supporting_intents,
+            ) = self._resolve_adaptation_intents(
+                adaptation
+            )
 
 
             return self._decision(
@@ -571,6 +630,12 @@ class DecisionEngine:
 
                 risk_level="HIGH_ALERT",
 
+                rule_id="ADAPTATION_LIMITED",
+
+                primary_intent=primary_intent,
+
+                supporting_intents=supporting_intents,
+
             )
 
 
@@ -582,6 +647,14 @@ class DecisionEngine:
 
 
         if adaptation_level == "MODERATE":
+
+
+            (
+                primary_intent,
+                supporting_intents,
+            ) = self._resolve_adaptation_intents(
+                adaptation
+            )
 
 
             return self._decision(
@@ -612,6 +685,12 @@ class DecisionEngine:
                 reasoning=reasoning,
 
                 risk_level="CAUTION",
+
+                rule_id="ADAPTATION_MODERATE",
+
+                primary_intent=primary_intent,
+
+                supporting_intents=supporting_intents,
 
             )
 
@@ -660,6 +739,14 @@ class DecisionEngine:
                 reasoning=reasoning,
 
                 risk_level="CAUTION",
+
+            rule_id="PERFORMANCE_DECLINING_LOAD_HIGH",
+
+            primary_intent="PROTECT_PERFORMANCE",
+
+            supporting_intents=[
+                "REDUCE_LOAD",
+            ],
 
             )
 
@@ -719,6 +806,18 @@ class DecisionEngine:
 
                     risk_level="CAUTION",
 
+            rule_id="RECOVERY_UNKNOWN_WITH_STRESS",
+
+                    primary_intent="MANAGE_UNCERTAINTY",
+
+                    supporting_intents=(
+                        self._build_uncertainty_supporting_intents(
+                            injury_level=injury_level,
+                            training_level=training_level,
+                            nutrition_level=nutrition_level,
+                        )
+                    ),
+
                 )
 
 
@@ -750,6 +849,12 @@ class DecisionEngine:
                 reasoning=reasoning,
 
                 risk_level="CAUTION",
+
+            rule_id="RECOVERY_UNKNOWN",
+
+            primary_intent="MANAGE_UNCERTAINTY",
+
+            supporting_intents=[],
 
             )
 
@@ -786,6 +891,16 @@ class DecisionEngine:
         if moderate_factors >= 2:
 
 
+            (
+                primary_intent,
+                supporting_intents,
+            ) = self._resolve_multiple_moderate_intents(
+                training_level=training_level,
+                injury_level=injury_level,
+                nutrition_level=nutrition_level,
+            )
+
+
             return self._decision(
 
                 decision=self.DECISION_ADAPT,
@@ -813,6 +928,12 @@ class DecisionEngine:
                 reasoning=reasoning,
 
                 risk_level="CAUTION",
+
+                rule_id="MULTIPLE_MODERATE_FACTORS",
+
+                primary_intent=primary_intent,
+
+                supporting_intents=supporting_intents,
 
             )
 
@@ -856,6 +977,12 @@ class DecisionEngine:
 
                 risk_level="CAUTION",
 
+            rule_id="WELLBEING_HIGH_STRESS",
+
+            primary_intent="REDUCE_LOAD",
+
+            supporting_intents=[],
+
             )
 
 
@@ -886,6 +1013,12 @@ class DecisionEngine:
             reasoning=reasoning,
 
             risk_level="NORMAL",
+
+            rule_id="DEFAULT_CONFIRM",
+
+            primary_intent="MAINTAIN_PLAN",
+
+            supporting_intents=[],
 
         )
 
@@ -1365,6 +1498,9 @@ class DecisionEngine:
         recommended_action,
         reasoning,
         risk_level,
+        rule_id=None,
+        primary_intent=None,
+        supporting_intents=None,
     ):
 
 
@@ -1412,6 +1548,12 @@ class DecisionEngine:
             reasoning=reasoning,
 
             risk_level=risk_level,
+
+            rule_id=rule_id,
+
+            primary_intent=primary_intent,
+
+            supporting_intents=supporting_intents,
 
             intelligence=getattr(
                 self,
@@ -1872,6 +2014,189 @@ class DecisionEngine:
     # ======================================================
     # UTILITY
     # ======================================================
+
+
+    def _resolve_adaptation_intents(
+        self,
+        adaptation,
+    ):
+
+
+        adaptation = adaptation or {}
+
+        risk_codes = adaptation.get(
+            "risk_codes",
+            [],
+        ) or []
+
+
+        code_to_intent = {
+            "PHYSICAL_LIMITATION": "PROTECT_INJURY",
+            "POOR_RECOVERY": "RESTORE_RECOVERY",
+            "MODERATE_RECOVERY": "RESTORE_RECOVERY",
+            "HIGH_LOAD": "REDUCE_LOAD",
+            "HIGH_ACUTE_CHRONIC_RATIO": "REDUCE_LOAD",
+            "PERFORMANCE_DECLINING": "PROTECT_PERFORMANCE",
+        }
+
+
+        intents = []
+
+        for risk_code in risk_codes:
+
+            intent = code_to_intent.get(
+                risk_code
+            )
+
+            if (
+                intent
+                and intent not in intents
+            ):
+
+                intents.append(
+                    intent
+                )
+
+
+        return self._split_intents_by_priority(
+            intents
+        )
+
+
+    def _resolve_multiple_moderate_intents(
+        self,
+        training_level,
+        injury_level,
+        nutrition_level,
+    ):
+
+
+        intents = []
+
+
+        if injury_level == self.LEVEL_MODERATE:
+
+            intents.append(
+                "PROTECT_INJURY"
+            )
+
+
+        if nutrition_level == self.LEVEL_MODERATE:
+
+            intents.append(
+                "RESTORE_FUELING"
+            )
+
+
+        if training_level == self.LEVEL_MODERATE:
+
+            intents.append(
+                "REDUCE_LOAD"
+            )
+
+
+        return self._split_intents_by_priority(
+            intents
+        )
+
+
+    def _split_intents_by_priority(
+        self,
+        intents,
+    ):
+
+
+        priority = (
+            "PROTECT_INJURY",
+            "RESTORE_RECOVERY",
+            "RESTORE_FUELING",
+            "REDUCE_LOAD",
+            "PROTECT_PERFORMANCE",
+            "MANAGE_UNCERTAINTY",
+            "MAINTAIN_PLAN",
+        )
+
+
+        unique_intents = []
+
+        for intent in intents or []:
+
+            if (
+                intent
+                and intent not in unique_intents
+            ):
+
+                unique_intents.append(
+                    intent
+                )
+
+
+        ordered_intents = [
+            intent
+            for intent in priority
+            if intent in unique_intents
+        ]
+
+
+        for intent in unique_intents:
+
+            if intent not in ordered_intents:
+
+                ordered_intents.append(
+                    intent
+                )
+
+
+        if not ordered_intents:
+
+            return (
+                None,
+                [],
+            )
+
+
+        return (
+            ordered_intents[0],
+            ordered_intents[1:],
+        )
+
+
+    def _build_uncertainty_supporting_intents(
+        self,
+        injury_level,
+        training_level,
+        nutrition_level,
+    ):
+
+
+        supporting_intents = []
+
+
+        if injury_level in (
+            self.LEVEL_HIGH,
+            self.LEVEL_CRITICAL,
+        ):
+
+            supporting_intents.append(
+                "PROTECT_INJURY"
+            )
+
+
+        if nutrition_level == self.LEVEL_HIGH:
+
+            supporting_intents.append(
+                "RESTORE_FUELING"
+            )
+
+
+        if training_level == self.LEVEL_HIGH:
+
+            supporting_intents.append(
+                "REDUCE_LOAD"
+            )
+
+
+        return supporting_intents
 
 
     def _count_levels(

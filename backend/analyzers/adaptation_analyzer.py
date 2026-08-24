@@ -28,6 +28,13 @@ class AdaptationAnalyzer:
 
     HIGH_ACUTE_CHRONIC_RATIO = 1.5
 
+    RISK_PHYSICAL_LIMITATION = "PHYSICAL_LIMITATION"
+    RISK_HIGH_LOAD = "HIGH_LOAD"
+    RISK_HIGH_ACUTE_CHRONIC_RATIO = "HIGH_ACUTE_CHRONIC_RATIO"
+    RISK_PERFORMANCE_DECLINING = "PERFORMANCE_DECLINING"
+    RISK_POOR_RECOVERY = "POOR_RECOVERY"
+    RISK_MODERATE_RECOVERY = "MODERATE_RECOVERY"
+
     def analyze(
         self,
         context,
@@ -113,6 +120,7 @@ class AdaptationAnalyzer:
             )
         ).upper()
 
+        risk_codes: List[str] = []
         risk_factors: List[str] = []
         positive_factors: List[str] = []
         reasons: List[str] = []
@@ -154,6 +162,7 @@ class AdaptationAnalyzer:
         if not has_meaningful_data:
             return {
                 "adaptation_level": self.LEVEL_UNKNOWN,
+                "risk_codes": [],
                 "risk_factors": [],
                 "positive_factors": [],
                 "reasons": [
@@ -164,6 +173,12 @@ class AdaptationAnalyzer:
         if profile:
             positive_factors.append(
                 "Profilo atleta disponibile"
+            )
+
+        if limitations:
+            self._append_unique(
+                risk_codes,
+                self.RISK_PHYSICAL_LIMITATION,
             )
 
         for limitation in limitations:
@@ -178,6 +193,10 @@ class AdaptationAnalyzer:
             )
 
         if load_level == "HIGH":
+            self._append_unique(
+                risk_codes,
+                self.RISK_HIGH_LOAD,
+            )
             self._append_unique(
                 risk_factors,
                 "Carico recente elevato",
@@ -201,6 +220,10 @@ class AdaptationAnalyzer:
 
         if high_ratio:
             self._append_unique(
+                risk_codes,
+                self.RISK_HIGH_ACUTE_CHRONIC_RATIO,
+            )
+            self._append_unique(
                 risk_factors,
                 "Rapporto acuto/cronico elevato",
             )
@@ -217,6 +240,10 @@ class AdaptationAnalyzer:
                 "Trend prestativo favorevole"
             )
         elif performance_trend == "DECLINING":
+            self._append_unique(
+                risk_codes,
+                self.RISK_PERFORMANCE_DECLINING,
+            )
             self._append_unique(
                 risk_factors,
                 "Performance in calo",
@@ -273,6 +300,10 @@ class AdaptationAnalyzer:
 
         if poor_recovery:
             self._append_unique(
+                risk_codes,
+                self.RISK_POOR_RECOVERY,
+            )
+            self._append_unique(
                 risk_factors,
                 "Recupero insufficiente",
             )
@@ -280,6 +311,10 @@ class AdaptationAnalyzer:
                 "Recupero recente insufficiente"
             )
         elif moderate_recovery:
+            self._append_unique(
+                risk_codes,
+                self.RISK_MODERATE_RECOVERY,
+            )
             self._append_unique(
                 risk_factors,
                 "Recupero da monitorare",
@@ -349,6 +384,7 @@ class AdaptationAnalyzer:
 
         return {
             "adaptation_level": level,
+            "risk_codes": risk_codes,
             "risk_factors": risk_factors,
             "positive_factors": positive_factors,
             "reasons": reasons,
