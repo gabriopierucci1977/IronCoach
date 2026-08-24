@@ -17,7 +17,7 @@ import json
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Optional, Union
+from typing import Any, Dict, List, Optional, Union
 
 from backend.decision_memory.schema import initialize_database
 from backend.models.decision_episode import DecisionEpisode
@@ -200,6 +200,53 @@ class DecisionMemoryRepository:
         return self._row_to_episode(
             row
         )
+
+    def list_pending_by_athlete(
+        self,
+        athlete_id: str,
+    ) -> List[DecisionEpisode]:
+        """
+        Restituisce gli episodi ancora da elaborare per un atleta.
+
+        Include solo gli stati OPEN, WAITING_FOR_ACTIVITY e
+        WAITING_FOR_OUTCOME, ordinati dal più vecchio al più recente.
+        """
+
+        connection = sqlite3.connect(
+            self.database_path
+        )
+
+        connection.row_factory = sqlite3.Row
+
+        try:
+            rows = connection.execute(
+                """
+                SELECT *
+                FROM decision_episodes
+                WHERE athlete_id = ?
+                  AND status IN (
+                      'OPEN',
+                      'WAITING_FOR_ACTIVITY',
+                      'WAITING_FOR_OUTCOME'
+                  )
+                ORDER BY
+                    decision_timestamp ASC,
+                    episode_id ASC
+                """,
+                (
+                    athlete_id,
+                ),
+            ).fetchall()
+
+        finally:
+            connection.close()
+
+        return [
+            self._row_to_episode(
+                row
+            )
+            for row in rows
+        ]
 
     def update(
         self,
