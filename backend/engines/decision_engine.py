@@ -11,6 +11,8 @@ Responsabilità:
 """
 
 
+from uuid import uuid4
+
 from backend.config import RuntimeConfig, get_runtime_config
 from backend.decision import Decision
 
@@ -1548,6 +1550,10 @@ class DecisionEngine:
             reasoning=reasoning,
 
             risk_level=risk_level,
+
+            decision_id=str(
+                uuid4()
+            ),
 
             rule_id=rule_id,
 

@@ -9,13 +9,17 @@ from __future__ import annotations
 import argparse
 import sys
 from collections.abc import Sequence
+from copy import deepcopy
+from datetime import datetime, timezone
 from typing import Callable, TypeVar
 
 from backend.airtable_client import AirtableClient
 from backend.coach_engine import CoachEngine
 from backend.config import get_runtime_config
 from backend.context_builder import ContextBuilder
+from backend.decision_memory.repository import DecisionMemoryRepository
 from backend.decision_writer import DecisionWriter
+from backend.models.decision_episode import DecisionEpisode
 from backend.report_builder import ReportBuilder
 from backend.workout_adapter import WorkoutAdapter
 
@@ -52,7 +56,8 @@ def _build_argument_parser() -> argparse.ArgumentParser:
         description=(
             "Esegue la pipeline IronCoach. "
             "La modalità dry-run produce il report "
-            "senza salvare la decisione su Airtable."
+            "senza salvare la decisione su Airtable "
+            "o nella Decision Memory."
         ),
     )
 
@@ -61,7 +66,8 @@ def _build_argument_parser() -> argparse.ArgumentParser:
         action="store_true",
         help=(
             "Esegue l'intera pipeline senza inizializzare "
-            "DecisionWriter e senza salvare la decisione."
+            "i componenti di persistenza e senza salvare "
+            "la decisione."
         ),
     )
 
@@ -79,6 +85,227 @@ def _execute_phase(
             phase=phase,
             original_error=exc,
         ) from exc
+
+
+def _utc_now() -> str:
+    return datetime.now(
+        timezone.utc
+    ).isoformat().replace(
+        "+00:00",
+        "Z",
+    )
+
+
+def _decision_memory_identity(
+    context,
+    decision,
+):
+    athlete = (
+        context.get(
+            "athlete",
+            {},
+        )
+        or context.get(
+            "athlete_profile",
+            {},
+        )
+        or {}
+    )
+
+    athlete_id = athlete.get(
+        "source_id"
+    )
+
+    decision_id = decision.get(
+        "decision_id"
+    )
+    rule_id = decision.get(
+        "rule_id"
+    )
+    primary_intent = decision.get(
+        "primary_intent"
+    )
+    decision_action = decision.get(
+        "decision"
+    )
+
+    if not all(
+        (
+            athlete_id,
+            decision_id,
+            rule_id,
+            primary_intent,
+            decision_action,
+        )
+    ):
+        return None
+
+    return {
+        "athlete": athlete,
+        "athlete_id": athlete_id,
+        "decision_id": decision_id,
+        "rule_id": rule_id,
+        "primary_intent": primary_intent,
+        "decision_action": decision_action,
+    }
+
+
+def _build_pre_decision_state(
+    context,
+    decision,
+):
+    return {
+        "recovery": deepcopy(
+            context.get(
+                "recovery",
+                {},
+            )
+            or {}
+        ),
+        "training": deepcopy(
+            context.get(
+                "training",
+                {},
+            )
+            or {}
+        ),
+        "nutrition": deepcopy(
+            context.get(
+                "nutrition",
+                {},
+            )
+            or {}
+        ),
+        "data_freshness": deepcopy(
+            context.get(
+                "data_freshness",
+                {},
+            )
+            or {}
+        ),
+        "intelligence": deepcopy(
+            decision.get(
+                "intelligence",
+                {},
+            )
+            or {}
+        ),
+        "context_warnings": deepcopy(
+            context.get(
+                "context_warnings",
+                [],
+            )
+            or []
+        ),
+    }
+
+
+def _build_decision_episode(
+    context,
+    decision,
+    airtable_record,
+):
+    identity = _decision_memory_identity(
+        context,
+        decision,
+    )
+
+    if identity is None:
+        return None
+
+    airtable_record_id = None
+
+    if isinstance(
+        airtable_record,
+        dict,
+    ):
+        airtable_record_id = (
+            airtable_record.get(
+                "id"
+            )
+        )
+
+    return DecisionEpisode(
+        athlete_id=str(
+            identity[
+                "athlete_id"
+            ]
+        ),
+        decision_timestamp=_utc_now(),
+        decision_action=identity[
+            "decision_action"
+        ],
+        rule_id=identity[
+            "rule_id"
+        ],
+        primary_intent=identity[
+            "primary_intent"
+        ],
+        pre_decision_state=(
+            _build_pre_decision_state(
+                context,
+                decision,
+            )
+        ),
+        athlete_state=deepcopy(
+            identity[
+                "athlete"
+            ]
+        ),
+        decision_id=identity[
+            "decision_id"
+        ],
+        strategy=decision.get(
+            "strategy"
+        ),
+        decision_confidence=decision.get(
+            "confidence"
+        ),
+        supporting_intents=list(
+            decision.get(
+                "supporting_intents",
+                [],
+            )
+            or []
+        ),
+        planned_workout=deepcopy(
+            context.get(
+                "training"
+            )
+        ),
+        recommended_workout=deepcopy(
+            decision.get(
+                "modified_workout"
+            )
+        ),
+        airtable_decision_record_id=(
+            airtable_record_id
+        ),
+    )
+
+
+def _save_decision_memory(
+    runtime_config,
+    context,
+    decision,
+    airtable_record,
+) -> None:
+    episode = _build_decision_episode(
+        context,
+        decision,
+        airtable_record,
+    )
+
+    if episode is None:
+        return
+
+    repository = DecisionMemoryRepository(
+        runtime_config.decision_memory_database_path
+    )
+
+    repository.create(
+        episode
+    )
 
 
 def _print_banner() -> None:
@@ -186,9 +413,19 @@ def run_pipeline(
             lambda: DecisionWriter(client),
         )
 
-        _execute_phase(
+        airtable_record = _execute_phase(
             "salvataggio decisione",
             lambda: writer.save(decision),
+        )
+
+        _execute_phase(
+            "salvataggio Decision Memory",
+            lambda: _save_decision_memory(
+                runtime_config=runtime_config,
+                context=context,
+                decision=decision,
+                airtable_record=airtable_record,
+            ),
         )
 
     return report
