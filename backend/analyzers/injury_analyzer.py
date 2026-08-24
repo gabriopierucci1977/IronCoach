@@ -87,75 +87,54 @@ class InjuryAnalyzer:
 
 
 
+        # Safety-relevant values use the canonical normalized activity
+        # contract first.  The raw fallback keeps compatibility with legacy
+        # contexts and direct analyzer use.
         current_problem = self._normalized_text(
-
-            training.get(
-                "Dolori/problematiche"
+            self._training_value(
+                training,
+                (
+                    "current_problem",
+                    "pain_notes",
+                    "injury_notes",
+                    "Dolori/problematiche",
+                    "dolori_problematiche",
+                    "Dolori",
+                ),
             )
-
-            or training.get(
-                "dolori_problematiche"
-            )
-
-            or training.get(
-                "Dolori"
-            )
-
-            or training.get(
-                "pain_notes"
-            )
-
         ).lower()
-
-
-
 
         historical_problem = self._normalized_text(
-
             constraints.get(
                 "injury_history"
             )
-
             or athlete_profile.get(
                 "injury_history"
             )
-
         ).lower()
-
-
-
 
         physical_limitations = self._normalized_text(
-
             constraints.get(
                 "physical_limitations"
             )
-
             or athlete_profile.get(
                 "physical_limitations"
             )
-
+            or athlete_profile.get(
+                "limitations"
+            )
         ).lower()
 
-
-
-
         pain_score = self._number(
-
-            training.get(
-                "Pain Score"
+            self._training_value(
+                training,
+                (
+                    "pain_score",
+                    "Pain Score",
+                    "Dolore",
+                ),
             )
-
-            or training.get(
-                "pain_score"
-            )
-
-            or training.get(
-                "Dolore"
-            )
-
         )
-
 
 
         combined_text = " ".join(
@@ -629,6 +608,37 @@ class InjuryAnalyzer:
     # ==================================================
     # HELPERS
     # ==================================================
+
+
+    def _training_value(
+        self,
+        training,
+        keys,
+    ):
+        """Read canonical training values with a legacy ``raw`` fallback."""
+
+        for data in (
+            training,
+            training.get("raw", {})
+            if isinstance(training, dict)
+            else {},
+        ):
+            if not isinstance(data, dict):
+                continue
+
+            for key in keys:
+                if key not in data:
+                    continue
+
+                value = data.get(key)
+
+                if value not in (
+                    None,
+                    "",
+                ):
+                    return value
+
+        return None
 
 
     def _number(

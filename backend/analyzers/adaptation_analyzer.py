@@ -54,11 +54,8 @@ class AdaptationAnalyzer:
             {},
         ) or {}
 
-        limitations = self._normalize_list(
-            profile.get(
-                "limitations",
-                [],
-            )
+        limitations = self._profile_limitations(
+            profile
         )
 
         load_level = self._normalized_text(
@@ -356,6 +353,55 @@ class AdaptationAnalyzer:
             "positive_factors": positive_factors,
             "reasons": reasons,
         }
+
+    def _profile_limitations(
+        self,
+        profile,
+    ) -> List[str]:
+        """Collect limitations from canonical and legacy profile shapes."""
+
+        constraints = profile.get(
+            "constraints",
+            {},
+        ) or {}
+
+        candidates = (
+            profile.get(
+                "limitations"
+            ),
+            profile.get(
+                "physical_limitations"
+            ),
+            constraints.get(
+                "physical_limitations"
+            )
+            if isinstance(
+                constraints,
+                dict,
+            )
+            else None,
+            constraints.get(
+                "limitations"
+            )
+            if isinstance(
+                constraints,
+                dict,
+            )
+            else None,
+        )
+
+        limitations: List[str] = []
+
+        for candidate in candidates:
+            for limitation in self._normalize_list(
+                candidate
+            ):
+                self._append_unique(
+                    limitations,
+                    limitation,
+                )
+
+        return limitations
 
     def _normalize_list(
         self,

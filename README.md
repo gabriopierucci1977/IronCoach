@@ -2,7 +2,7 @@ IronCoach
 
 Sistema di coaching intelligente per analisi atleta, valutazione dello stato fisico e adattamento del piano di allenamento.
 
-Versione corrente: Beta 0.3
+Versione corrente: Beta 0.3.1 hardening candidate
 
 Architettura
 
@@ -345,7 +345,11 @@ Decision Writer
 
 Gestisce il salvataggio della decisione.
 
-Mantiene:
+Il Decision Model e il report mantengono l'intera decisione, inclusi
+`risk_level`, `reasoning` e `intelligence`.
+
+Nel Decision Log Airtable corrente il writer persiste soltanto i campi
+effettivamente presenti nello schema:
 
 decisione;
 
@@ -355,13 +359,19 @@ confidenza;
 
 strategia;
 
-rischio;
+azione consigliata;
 
-reasoning;
+priorità;
 
-intelligence;
+priorità allenante;
 
 workout modificato.
+
+`risk_level`, `reasoning` e `intelligence` non vengono inviati come colonne
+Airtable finché lo schema Decision Log non dispone di campi dedicati. Restano
+comunque disponibili nel runtime e nel Coach Report. Questo evita errori di
+scrittura dovuti a colonne inesistenti e rende esplicito il confine tra
+Decision Model e persistenza Airtable.
 
 Destinazione:
 
@@ -503,6 +513,10 @@ Analyzer
 
 Recovery Analyzer;
 
+Training Analyzer;
+
+Injury Analyzer;
+
 Load Analyzer;
 
 Performance Analyzer;
@@ -520,6 +534,10 @@ flusso applicativo principale;
 iniezione condivisa della configurazione runtime;
 
 passaggio end-to-end della freschezza dati;
+
+contratto activity normalizzata → analyzer, inclusi segnali di dolore/infortunio;
+
+distinzione tra training load mancante e training load realmente pari a zero;
 
 adattamento workout;
 
@@ -573,13 +591,15 @@ confidence cap configurabili;
 
 garanzia che un confidence cap non aumenti la confidenza.
 
-Ultima verifica:
+Ultima verifica snapshot hardening Beta 0.3.1:
 
-pytest -q
+pytest --collect-only -q
 
 Risultato:
 
-372 passed
+389 test raccolti.
+
+Nell'ambiente di ricostruzione: 384 test passati e 5 test saltati perché richiedono due fixture FIT Garmin private. I test possono usare `IRONCOACH_GARMIN_FIXTURE_DIR` per puntare a un archivio fixture esterno. La CI pubblica esegue la suite completa e tratta correttamente questi test come opzionali.
 
 Avvio applicazione
 

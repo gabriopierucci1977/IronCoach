@@ -1,5 +1,5 @@
-pyairtable
-python-dotenv
-openai
-requests
-fitparse
+pyairtable==3.4.2
+python-dotenv==1.2.2
+openai==2.53.0
+requests==2.34.2
+fitparse==1.2.0

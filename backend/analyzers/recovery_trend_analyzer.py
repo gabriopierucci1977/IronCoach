@@ -533,8 +533,19 @@ class RecoveryTrendAnalyzer:
             dict,
         ):
 
-            value = value.get(
-                "value"
+            # RecoveryHistory stores sleep as {"score": ..., "hours": ...}.
+            # Accept that canonical structure as well as older wrappers using
+            # a generic ``value`` key.
+            value = self._first_nested_value(
+                value,
+                (
+                    "score",
+                    "sleep_score",
+                    "recovery_score",
+                    "readiness_score",
+                    "readiness",
+                    "value",
+                ),
             )
 
         if isinstance(
@@ -562,6 +573,26 @@ class RecoveryTrendAnalyzer:
         ):
 
             return None
+
+    def _first_nested_value(
+        self,
+        data,
+        keys,
+    ):
+
+        for key in keys:
+            if key not in data:
+                continue
+
+            value = data.get(key)
+
+            if value not in (
+                None,
+                "",
+            ):
+                return value
+
+        return None
 
     def _format_number(
         self,
