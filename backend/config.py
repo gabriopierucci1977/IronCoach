@@ -1,15 +1,17 @@
 """
 Configurazione runtime di IronCoach.
 
-Le soglie di freschezza e i limiti di confidenza possono essere
-personalizzati tramite:
+Le soglie di freschezza, i limiti di confidenza e il path della
+Decision Memory possono essere personalizzati tramite:
 
 - IRONCOACH_RECOVERY_MAX_AGE_DAYS
 - IRONCOACH_TRAINING_MAX_AGE_DAYS
 - IRONCOACH_FRESHNESS_HIGH_CONFIDENCE_CAP
 - IRONCOACH_FRESHNESS_MODERATE_CONFIDENCE_CAP
+- IRONCOACH_DECISION_MEMORY_DATABASE_PATH
 
-Valori assenti, non interi o fuori intervallo ricadono sui default.
+Valori numerici assenti, non interi o fuori intervallo ricadono sui
+default. Un path Decision Memory assente o vuoto ricade sul default.
 
 I cap di confidenza rispettano sempre la relazione:
 
@@ -26,6 +28,9 @@ DEFAULT_RECOVERY_MAX_AGE_DAYS = 3
 DEFAULT_TRAINING_MAX_AGE_DAYS = 7
 DEFAULT_FRESHNESS_HIGH_CONFIDENCE_CAP = 75
 DEFAULT_FRESHNESS_MODERATE_CONFIDENCE_CAP = 85
+DEFAULT_DECISION_MEMORY_DATABASE_PATH = (
+    "data/ironcoach_memory.db"
+)
 
 
 def _bounded_int_from_env(
@@ -65,6 +70,18 @@ def _non_negative_int_from_env(
     )
 
 
+def _string_from_env(
+    name: str,
+    default: str,
+) -> str:
+    value = os.getenv(
+        name,
+        "",
+    ).strip()
+
+    return value or default
+
+
 def _normalize_confidence_cap(
     value: int,
     default: int,
@@ -93,6 +110,9 @@ class RuntimeConfig:
     )
     freshness_moderate_confidence_cap: int = (
         DEFAULT_FRESHNESS_MODERATE_CONFIDENCE_CAP
+    )
+    decision_memory_database_path: str = (
+        DEFAULT_DECISION_MEMORY_DATABASE_PATH
     )
 
     def __post_init__(self) -> None:
@@ -150,6 +170,12 @@ class RuntimeConfig:
                     DEFAULT_FRESHNESS_MODERATE_CONFIDENCE_CAP,
                     minimum=0,
                     maximum=100,
+                )
+            ),
+            decision_memory_database_path=(
+                _string_from_env(
+                    "IRONCOACH_DECISION_MEMORY_DATABASE_PATH",
+                    DEFAULT_DECISION_MEMORY_DATABASE_PATH,
                 )
             ),
         )

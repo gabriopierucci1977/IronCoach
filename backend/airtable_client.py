@@ -54,10 +54,25 @@ class AirtableClient:
         if not record:
             return {}
 
-        return record.get(
-            "fields",
-            {},
+        fields = dict(
+            record.get(
+                "fields",
+                {},
+            )
+            or {}
         )
+
+        record_id = record.get(
+            "id"
+        )
+
+        if record_id not in (
+            None,
+            "",
+        ):
+            fields["record_id"] = record_id
+
+        return fields
 
     def _get_latest_record(
         self,
