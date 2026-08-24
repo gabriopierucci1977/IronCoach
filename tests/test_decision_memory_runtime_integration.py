@@ -156,6 +156,8 @@ class FakeDecisionWriter:
 class FakeDecisionMemoryRepository:
     initialized_paths = []
     created_episodes = []
+    updated_episodes = []
+    events = []
 
     def __init__(
         self,
@@ -173,11 +175,48 @@ class FakeDecisionMemoryRepository:
         self.__class__.created_episodes.append(
             episode
         )
+        self.__class__.events.append(
+            (
+                "create",
+                episode.status,
+            )
+        )
+
+    def update(
+        self,
+        episode,
+    ):
+        self.__class__.updated_episodes.append(
+            episode
+        )
+        self.__class__.events.append(
+            (
+                "update",
+                episode.status,
+            )
+        )
+
+
+class FakeDecisionEpisodeLifecycle:
+    calls = []
+
+    def mark_waiting_for_activity(
+        self,
+        episode,
+    ):
+        self.__class__.calls.append(
+            episode.status
+        )
+        episode.status = "WAITING_FOR_ACTIVITY"
+        return episode
 
 
 def _reset_fakes():
     FakeDecisionMemoryRepository.initialized_paths = []
     FakeDecisionMemoryRepository.created_episodes = []
+    FakeDecisionMemoryRepository.updated_episodes = []
+    FakeDecisionMemoryRepository.events = []
+    FakeDecisionEpisodeLifecycle.calls = []
 
 
 def _patch_dependencies(
@@ -224,9 +263,15 @@ def _patch_dependencies(
         FakeDecisionMemoryRepository,
         raising=False,
     )
+    monkeypatch.setattr(
+        main_module,
+        "DecisionEpisodeLifecycle",
+        FakeDecisionEpisodeLifecycle,
+        raising=False,
+    )
 
 
-def test_run_pipeline_creates_decision_memory_episode(
+def test_run_pipeline_creates_and_advances_decision_memory_episode(
     monkeypatch,
 ):
     _reset_fakes()
@@ -294,7 +339,31 @@ def test_run_pipeline_creates_decision_memory_episode(
         "intensity": "EASY",
     }
 
-    assert episode.status == "OPEN"
+    assert FakeDecisionEpisodeLifecycle.calls == [
+        "OPEN",
+    ]
+
+    assert FakeDecisionMemoryRepository.events == [
+        (
+            "create",
+            "OPEN",
+        ),
+        (
+            "update",
+            "WAITING_FOR_ACTIVITY",
+        ),
+    ]
+
+    assert len(
+        FakeDecisionMemoryRepository.updated_episodes
+    ) == 1
+
+    assert (
+        FakeDecisionMemoryRepository.updated_episodes[0]
+        is episode
+    )
+
+    assert episode.status == "WAITING_FOR_ACTIVITY"
 
 
 def test_run_pipeline_dry_run_does_not_write_decision_memory(
@@ -320,3 +389,10 @@ def test_run_pipeline_dry_run_does_not_write_decision_memory(
         FakeDecisionMemoryRepository.created_episodes
         == []
     )
+
+    assert (
+        FakeDecisionMemoryRepository.updated_episodes
+        == []
+    )
+
+    assert FakeDecisionEpisodeLifecycle.calls == []

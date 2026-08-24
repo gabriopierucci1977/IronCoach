@@ -17,6 +17,7 @@ from backend.airtable_client import AirtableClient
 from backend.coach_engine import CoachEngine
 from backend.config import get_runtime_config
 from backend.context_builder import ContextBuilder
+from backend.decision_memory.lifecycle import DecisionEpisodeLifecycle
 from backend.decision_memory.repository import DecisionMemoryRepository
 from backend.decision_writer import DecisionWriter
 from backend.models.decision_episode import DecisionEpisode
@@ -304,6 +305,16 @@ def _save_decision_memory(
     )
 
     repository.create(
+        episode
+    )
+
+    lifecycle = DecisionEpisodeLifecycle()
+
+    lifecycle.mark_waiting_for_activity(
+        episode
+    )
+
+    repository.update(
         episode
     )
 
