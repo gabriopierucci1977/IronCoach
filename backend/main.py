@@ -17,10 +17,8 @@ from backend.airtable_client import AirtableClient
 from backend.coach_engine import CoachEngine
 from backend.config import get_runtime_config
 from backend.context_builder import ContextBuilder
-from backend.decision_memory.lifecycle import DecisionEpisodeLifecycle
-from backend.decision_memory.repository import DecisionMemoryRepository
+from backend.decision_memory.runtime_service import DecisionMemoryRuntimeService
 from backend.decision_writer import DecisionWriter
-from backend.models.decision_episode import DecisionEpisode
 from backend.report_builder import ReportBuilder
 from backend.workout_adapter import WorkoutAdapter
 
@@ -201,121 +199,20 @@ def _build_pre_decision_state(
     }
 
 
-def _build_decision_episode(
-    context,
-    decision,
-    airtable_record,
-):
-    identity = _decision_memory_identity(
-        context,
-        decision,
-    )
-
-    if identity is None:
-        return None
-
-    airtable_record_id = None
-
-    if isinstance(
-        airtable_record,
-        dict,
-    ):
-        airtable_record_id = (
-            airtable_record.get(
-                "id"
-            )
-        )
-
-    return DecisionEpisode(
-        athlete_id=str(
-            identity[
-                "athlete_id"
-            ]
-        ),
-        decision_timestamp=_utc_now(),
-        decision_action=identity[
-            "decision_action"
-        ],
-        rule_id=identity[
-            "rule_id"
-        ],
-        primary_intent=identity[
-            "primary_intent"
-        ],
-        pre_decision_state=(
-            _build_pre_decision_state(
-                context,
-                decision,
-            )
-        ),
-        athlete_state=deepcopy(
-            identity[
-                "athlete"
-            ]
-        ),
-        decision_id=identity[
-            "decision_id"
-        ],
-        strategy=decision.get(
-            "strategy"
-        ),
-        decision_confidence=decision.get(
-            "confidence"
-        ),
-        supporting_intents=list(
-            decision.get(
-                "supporting_intents",
-                [],
-            )
-            or []
-        ),
-        planned_workout=deepcopy(
-            context.get(
-                "training"
-            )
-        ),
-        recommended_workout=deepcopy(
-            decision.get(
-                "modified_workout"
-            )
-        ),
-        airtable_decision_record_id=(
-            airtable_record_id
-        ),
-    )
-
-
 def _save_decision_memory(
     runtime_config,
     context,
     decision,
     airtable_record,
 ) -> None:
-    episode = _build_decision_episode(
-        context,
-        decision,
-        airtable_record,
+    service = DecisionMemoryRuntimeService(
+        runtime_config,
     )
 
-    if episode is None:
-        return
-
-    repository = DecisionMemoryRepository(
-        runtime_config.decision_memory_database_path
-    )
-
-    repository.create(
-        episode
-    )
-
-    lifecycle = DecisionEpisodeLifecycle()
-
-    lifecycle.mark_waiting_for_activity(
-        episode
-    )
-
-    repository.update(
-        episode
+    service.save_decision_memory(
+        context=context,
+        decision=decision,
+        airtable_record=airtable_record,
     )
 
 
