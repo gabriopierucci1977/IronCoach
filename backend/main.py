@@ -20,6 +20,12 @@ from backend.context_builder import ContextBuilder
 from backend.decision_memory.factory import (
     create_decision_memory_orchestrator,
 )
+from backend.decision_memory.repository import (
+    DecisionMemoryRepository,
+)
+from backend.decision_memory.viewer import (
+    DecisionMemoryViewer,
+)
 from backend.decision_writer import DecisionWriter
 from backend.report_builder import ReportBuilder
 from backend.workout_adapter import WorkoutAdapter
@@ -69,6 +75,14 @@ def _build_argument_parser() -> argparse.ArgumentParser:
             "Esegue l'intera pipeline senza inizializzare "
             "i componenti di persistenza e senza salvare "
             "la decisione."
+        ),
+    )
+
+    parser.add_argument(
+        "--decision-memory",
+        action="store_true",
+        help=(
+            "Mostra le decisioni recenti della Decision Memory."
         ),
     )
 
@@ -343,6 +357,40 @@ def run_pipeline(
     return report
 
 
+def _run_decision_memory_viewer() -> int:
+    runtime_config = _execute_phase(
+        "caricamento configurazione Decision Memory",
+        get_runtime_config,
+    )
+
+    repository = _execute_phase(
+        "inizializzazione Decision Memory Repository",
+        lambda: DecisionMemoryRepository(
+            runtime_config.decision_memory_database_path,
+        ),
+    )
+
+    viewer = DecisionMemoryViewer(
+        repository,
+    )
+
+    episodes = viewer.latest()
+
+    print("\n")
+    print("=" * 60)
+    print("IRONCOACH DECISION MEMORY")
+    print("=" * 60)
+
+    for episode in episodes:
+        print(
+            episode
+        )
+
+    print("=" * 60)
+
+    return 0
+
+
 def main(
     argv: Sequence[str] | None = None,
 ) -> int:
@@ -352,6 +400,9 @@ def main(
     )
 
     _print_banner()
+
+    if args.decision_memory:
+        return _run_decision_memory_viewer()
 
     try:
         if args.dry_run:

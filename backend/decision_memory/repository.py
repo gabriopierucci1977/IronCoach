@@ -248,6 +248,52 @@ class DecisionMemoryRepository:
             for row in rows
         ]
 
+
+    def latest(
+        self,
+        limit: int = 10,
+    ) -> List[DecisionEpisode]:
+        """
+        Restituisce gli episodi decisionali più recenti.
+
+        Ordinamento:
+        - decision_timestamp decrescente;
+        - episode_id come stabilizzatore.
+
+        Usato dalla Decision Memory Viewer.
+        """
+
+        connection = sqlite3.connect(
+            self.database_path
+        )
+
+        connection.row_factory = sqlite3.Row
+
+        try:
+            rows = connection.execute(
+                """
+                SELECT *
+                FROM decision_episodes
+                ORDER BY
+                    decision_timestamp DESC,
+                    episode_id DESC
+                LIMIT ?
+                """,
+                (
+                    limit,
+                ),
+            ).fetchall()
+
+        finally:
+            connection.close()
+
+        return [
+            self._row_to_episode(
+                row
+            )
+            for row in rows
+        ]
+
     def update(
         self,
         episode: DecisionEpisode,
