@@ -26,6 +26,9 @@ from backend.decision_memory.repository import (
 from backend.decision_memory.viewer import (
     DecisionMemoryViewer,
 )
+from backend.decision_memory.formatter import (
+    DecisionMemoryFormatter,
+)
 from backend.decision_writer import DecisionWriter
 from backend.report_builder import ReportBuilder
 from backend.workout_adapter import WorkoutAdapter
@@ -83,6 +86,14 @@ def _build_argument_parser() -> argparse.ArgumentParser:
         action="store_true",
         help=(
             "Mostra le decisioni recenti della Decision Memory."
+        ),
+    )
+
+    parser.add_argument(
+        "--decision-memory-demo",
+        action="store_true",
+        help=(
+            "Esegue un flusso dimostrativo della Decision Memory."
         ),
     )
 
@@ -376,17 +387,122 @@ def _run_decision_memory_viewer() -> int:
 
     episodes = viewer.latest()
 
+    formatter = DecisionMemoryFormatter()
+
     print("\n")
-    print("=" * 60)
-    print("IRONCOACH DECISION MEMORY")
-    print("=" * 60)
+
+    if not episodes:
+        print(
+            "=" * 60
+        )
+        print(
+            "IRONCOACH DECISION MEMORY"
+        )
+        print(
+            "=" * 60
+        )
+        print(
+            "Nessuna decisione disponibile."
+        )
+        print(
+            "=" * 60
+        )
+        return 0
 
     for episode in episodes:
         print(
-            episode
+            formatter.format(
+                episode
+            )
         )
 
-    print("=" * 60)
+    return 0
+
+
+
+def _run_decision_memory_demo() -> int:
+    runtime_config = _execute_phase(
+        "caricamento configurazione Decision Memory",
+        get_runtime_config,
+    )
+
+    repository = _execute_phase(
+        "inizializzazione Decision Memory Repository",
+        lambda: DecisionMemoryRepository(
+            runtime_config.decision_memory_database_path,
+        ),
+    )
+
+    from backend.models.decision_episode import (
+        DecisionEpisode,
+    )
+
+    demo_episode = DecisionEpisode(
+        athlete_id="demo-athlete",
+        decision_timestamp=_utc_now(),
+        decision_action="ADATTA",
+        rule_id="DEMO_RULE",
+        primary_intent="REDUCE_LOAD",
+        pre_decision_state={},
+        athlete_state={},
+        strategy="ADAPT",
+        recommended_workout={
+            "sport": "RUN",
+            "duration_minutes": 40,
+        },
+        status="WAITING_FOR_ACTIVITY",
+    )
+
+    repository.create(
+        demo_episode,
+    )
+
+    viewer = DecisionMemoryViewer(
+        repository,
+    )
+
+    formatter = DecisionMemoryFormatter()
+
+    episodes = viewer.latest()
+
+    print("\n")
+    for episode in episodes:
+        print(
+            formatter.format(
+                {
+                    "decision_timestamp":
+                        episode.get(
+                            "decision_timestamp",
+                            "",
+                        ),
+                    "decision_action":
+                        episode.get(
+                            "decision_action",
+                            "",
+                        ),
+                    "strategy":
+                        episode.get(
+                            "strategy",
+                            "",
+                        ),
+                    "primary_intent":
+                        episode.get(
+                            "primary_intent",
+                            "",
+                        ),
+                    "status":
+                        episode.get(
+                            "status",
+                            "",
+                        ),
+                    "recommended_workout":
+                        episode.get(
+                            "recommended_workout",
+                            {},
+                        ),
+                }
+            )
+        )
 
     return 0
 
@@ -403,6 +519,9 @@ def main(
 
     if args.decision_memory:
         return _run_decision_memory_viewer()
+
+    if args.decision_memory_demo:
+        return _run_decision_memory_demo()
 
     try:
         if args.dry_run:
