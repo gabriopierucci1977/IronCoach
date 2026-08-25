@@ -17,7 +17,9 @@ from backend.airtable_client import AirtableClient
 from backend.coach_engine import CoachEngine
 from backend.config import get_runtime_config
 from backend.context_builder import ContextBuilder
-from backend.decision_memory.runtime_service import DecisionMemoryRuntimeService
+from backend.decision_memory.factory import (
+    create_decision_memory_orchestrator,
+)
 from backend.decision_writer import DecisionWriter
 from backend.report_builder import ReportBuilder
 from backend.workout_adapter import WorkoutAdapter
@@ -205,11 +207,13 @@ def _save_decision_memory(
     decision,
     airtable_record,
 ) -> None:
-    service = DecisionMemoryRuntimeService(
-        runtime_config,
+    orchestrator = (
+        create_decision_memory_orchestrator(
+            runtime_config,
+        )
     )
 
-    service.save_decision_memory(
+    orchestrator.save_decision(
         context=context,
         decision=decision,
         airtable_record=airtable_record,
