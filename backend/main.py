@@ -109,6 +109,15 @@ def _build_argument_parser() -> argparse.ArgumentParser:
         ),
     )
 
+    parser.add_argument(
+        "--evaluate-outcome",
+        action="store_true",
+        help=(
+            "Valuta l'outcome di una decisione "
+            "presente nella Decision Memory."
+        ),
+    )
+
     return parser
 
 
@@ -441,6 +450,18 @@ def create_activity_runtime(
     )
 
 
+def create_outcome_runtime(
+    runtime_config,
+):
+    from backend.decision_memory.outcome_runtime import (
+        DecisionMemoryOutcomeRuntime,
+    )
+
+    return DecisionMemoryOutcomeRuntime(
+        runtime_config,
+    )
+
+
 def _run_decision_memory_demo() -> int:
     runtime_config = _execute_phase(
         "caricamento configurazione Decision Memory",
@@ -554,6 +575,24 @@ def _run_record_activity() -> int:
     return 0
 
 
+
+def _run_evaluate_outcome() -> int:
+    runtime_config = _execute_phase(
+        "caricamento configurazione outcome runtime",
+        get_runtime_config,
+    )
+
+    runtime = create_outcome_runtime(
+        runtime_config,
+    )
+
+    runtime.evaluate_outcome(
+        "demo-episode",
+    )
+
+    return 0
+
+
 def main(
     argv: Sequence[str] | None = None,
 ) -> int:
@@ -572,6 +611,9 @@ def main(
 
     if args.record_activity:
         return _run_record_activity()
+
+    if args.evaluate_outcome:
+        return _run_evaluate_outcome()
 
     try:
         if args.dry_run:
