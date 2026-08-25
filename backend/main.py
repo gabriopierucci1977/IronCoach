@@ -29,6 +29,9 @@ from backend.decision_memory.viewer import (
 from backend.decision_memory.formatter import (
     DecisionMemoryFormatter,
 )
+from backend.decision_memory.activity_runtime import (
+    DecisionMemoryActivityRuntime,
+)
 from backend.decision_writer import DecisionWriter
 from backend.report_builder import ReportBuilder
 from backend.workout_adapter import WorkoutAdapter
@@ -94,6 +97,15 @@ def _build_argument_parser() -> argparse.ArgumentParser:
         action="store_true",
         help=(
             "Esegue un flusso dimostrativo della Decision Memory."
+        ),
+    )
+
+    parser.add_argument(
+        "--record-activity",
+        action="store_true",
+        help=(
+            "Registra una attività eseguita e aggiorna "
+            "la Decision Memory."
         ),
     )
 
@@ -420,6 +432,15 @@ def _run_decision_memory_viewer() -> int:
 
 
 
+
+def create_activity_runtime(
+    runtime_config,
+):
+    return DecisionMemoryActivityRuntime(
+        runtime_config,
+    )
+
+
 def _run_decision_memory_demo() -> int:
     runtime_config = _execute_phase(
         "caricamento configurazione Decision Memory",
@@ -507,6 +528,32 @@ def _run_decision_memory_demo() -> int:
     return 0
 
 
+
+def _run_record_activity() -> int:
+    runtime_config = _execute_phase(
+        "caricamento configurazione activity runtime",
+        get_runtime_config,
+    )
+
+    runtime = create_activity_runtime(
+        runtime_config,
+    )
+
+    runtime.record_activity(
+        {
+            "activity_id": "manual-demo-activity",
+            "sport": "RUN",
+            "duration_minutes": 45,
+            "rpe": 7,
+            "source": "manual",
+            "completed": True,
+            "completed_at": _utc_now(),
+        }
+    )
+
+    return 0
+
+
 def main(
     argv: Sequence[str] | None = None,
 ) -> int:
@@ -522,6 +569,9 @@ def main(
 
     if args.decision_memory_demo:
         return _run_decision_memory_demo()
+
+    if args.record_activity:
+        return _run_record_activity()
 
     try:
         if args.dry_run:
