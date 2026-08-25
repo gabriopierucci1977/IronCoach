@@ -20,6 +20,12 @@ from typing import Any, Dict, List, Optional
 class ActivityMatcher:
     """
     Cerca attività compatibili con un DecisionEpisode.
+
+    Un match viene accettato solo quando esiste
+    una singola attività compatibile.
+
+    Se non esistono candidate oppure il risultato
+    è ambiguo, restituisce None.
     """
 
     def find_match(
@@ -37,6 +43,8 @@ class ActivityMatcher:
         expected_sport = self._expected_sport(
             episode
         )
+
+        candidates = []
 
         for activity in activities:
             activity_time = self._parse_datetime(
@@ -62,22 +70,37 @@ class ActivityMatcher:
                 if activity_sport != expected_sport:
                     continue
 
-            return activity
+            candidates.append(
+                activity
+            )
 
-        return None
+        if len(candidates) != 1:
+            return None
+
+        return candidates[0]
 
     def _expected_sport(
         self,
         episode,
     ) -> Optional[str]:
-        workout = (
+        recommended_workout = (
             episode.recommended_workout
             or {}
         )
 
-        sport = workout.get(
+        sport = recommended_workout.get(
             "sport"
         )
+
+        if not sport:
+            planned_workout = (
+                episode.planned_workout
+                or {}
+            )
+
+            sport = planned_workout.get(
+                "sport"
+            )
 
         if not sport:
             return None
