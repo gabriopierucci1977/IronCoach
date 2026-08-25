@@ -21,6 +21,9 @@ import backend.main as main_module
 class FakeRuntimeConfig:
     recovery_max_age_days = 3
     training_max_age_days = 7
+    decision_memory_database_path = (
+        "data/test_ironcoach_memory.db"
+    )
 
 
 FAKE_RUNTIME_CONFIG = FakeRuntimeConfig()
@@ -178,6 +181,17 @@ class FakeReportBuilder:
         return "REPORT TEST"
 
 
+
+class FakeDecisionMemoryOrchestrator:
+    def save_decision(
+        self,
+        context,
+        decision,
+        airtable_record,
+    ):
+        pass
+
+
 class FakeDecisionWriter:
     initialized = False
     saved = None
@@ -252,6 +266,12 @@ def _patch_main_dependencies(
         main_module,
         "DecisionWriter",
         FakeDecisionWriter,
+    )
+
+    monkeypatch.setattr(
+        main_module,
+        "create_decision_memory_orchestrator",
+        lambda runtime_config: FakeDecisionMemoryOrchestrator(),
     )
 
 

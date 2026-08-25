@@ -153,16 +153,10 @@ class FakeDecisionWriter:
         }
 
 
-class FakeDecisionMemoryRuntimeService:
+class FakeDecisionMemoryOrchestrator:
     calls = []
 
-    def __init__(
-        self,
-        runtime_config,
-    ):
-        self.runtime_config = runtime_config
-
-    def save_decision_memory(
+    def save_decision(
         self,
         context,
         decision,
@@ -178,7 +172,7 @@ class FakeDecisionMemoryRuntimeService:
 
 
 def _reset_fakes():
-    FakeDecisionMemoryRuntimeService.calls = []
+    FakeDecisionMemoryOrchestrator.calls = []
 
 
 def _patch_dependencies(
@@ -221,9 +215,8 @@ def _patch_dependencies(
     )
     monkeypatch.setattr(
         main_module,
-        "DecisionMemoryRuntimeService",
-        FakeDecisionMemoryRuntimeService,
-        raising=False,
+        "create_decision_memory_orchestrator",
+        lambda runtime_config: FakeDecisionMemoryOrchestrator(),
     )
 
 
@@ -240,11 +233,11 @@ def test_run_pipeline_uses_decision_memory_runtime_service(
     assert report == "REPORT TEST"
 
     assert len(
-        FakeDecisionMemoryRuntimeService.calls
+        FakeDecisionMemoryOrchestrator.calls
     ) == 1
 
     call = (
-        FakeDecisionMemoryRuntimeService.calls[0]
+        FakeDecisionMemoryOrchestrator.calls[0]
     )
 
     assert (
@@ -273,6 +266,6 @@ def test_run_pipeline_dry_run_does_not_write_decision_memory(
     assert report == "REPORT TEST"
 
     assert (
-        FakeDecisionMemoryRuntimeService.calls
+        FakeDecisionMemoryOrchestrator.calls
         == []
     )

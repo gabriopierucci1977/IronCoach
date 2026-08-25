@@ -69,6 +69,15 @@ def test_main_attaches_priority_aware_modified_workout(
             ] = received_context
             return dict(decision)
 
+    class FakeDecisionMemoryOrchestrator:
+        def save_decision(
+            self,
+            context,
+            decision,
+            airtable_record,
+        ):
+            pass
+
     class FakeDecisionWriter:
         def __init__(
             self,
@@ -129,6 +138,12 @@ def test_main_attaches_priority_aware_modified_workout(
         main_module,
         "ReportBuilder",
         FakeReportBuilder,
+    )
+
+    monkeypatch.setattr(
+        main_module,
+        "create_decision_memory_orchestrator",
+        lambda runtime_config: FakeDecisionMemoryOrchestrator(),
     )
 
     main_module.main()
