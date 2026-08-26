@@ -1010,6 +1010,87 @@ class CoachEngine:
 
 
 
+        training_freshness = {}
+
+        if isinstance(
+            data_freshness_assessment,
+            dict,
+        ):
+            candidate_training_freshness = (
+                data_freshness_assessment.get(
+                    "training",
+                    {},
+                )
+                or {}
+            )
+
+            if isinstance(
+                candidate_training_freshness,
+                dict,
+            ):
+                training_freshness = (
+                    candidate_training_freshness
+                )
+
+        training_freshness_status = str(
+            training_freshness.get(
+                "status",
+                "",
+            )
+            or ""
+        ).strip().upper()
+
+        unreliable_training_history = (
+            training_freshness_status
+            in {
+                "STALE",
+                "FUTURE",
+            }
+        )
+
+        if (
+            not unreliable_training_history
+            and isinstance(
+                data_freshness_assessment,
+                dict,
+            )
+        ):
+            freshness_reasons = (
+                data_freshness_assessment.get(
+                    "reasons",
+                    [],
+                )
+                or []
+            )
+
+            unreliable_training_history = any(
+                str(reason).strip().lower().startswith(
+                    "allenamento:"
+                )
+                and (
+                    "dato obsoleto"
+                    in str(reason).lower()
+                    or "data futura"
+                    in str(reason).lower()
+                )
+                for reason in freshness_reasons
+            )
+
+        if unreliable_training_history:
+            freshness_reason = (
+                "Carico corrente non valutabile: "
+                "freschezza allenamenti insufficiente"
+            )
+
+            load_analysis = {
+                **load_analysis,
+                "level": "UNKNOWN",
+                "reasons": [
+                    freshness_reason
+                ],
+            }
+
+
         performance_analysis = (
 
             self.performance_analyzer.analyze(

@@ -414,6 +414,10 @@ def test_structured_data_freshness_has_priority_over_warnings() -> None:
         "Recovery: dato obsoleto di 20 giorni",
     ]
 
+    engine.load_analyzer.result["reasons"] = [
+        "Carico recente elevato",
+    ]
+
     decision = engine.evaluate(
         context
     )
@@ -433,6 +437,47 @@ def test_structured_data_freshness_has_priority_over_warnings() -> None:
     ][
         "data_freshness"
     ] is structured_freshness
+
+    assert assessments[
+        "load"
+    ][
+        "level"
+    ] == "UNKNOWN"
+
+    # Le metriche storiche restano disponibili.
+    assert assessments[
+        "load"
+    ][
+        "total_load"
+    ] == 900
+
+    assert assessments[
+        "load"
+    ][
+        "acute_chronic_ratio"
+    ] == 1.0
+
+    assert assessments[
+        "load"
+    ][
+        "reasons"
+    ] == [
+        (
+            "Carico corrente non valutabile: "
+            "freschezza allenamenti insufficiente"
+        )
+    ]
+
+    assert (
+        engine
+        .adaptation_analyzer
+        .inputs[0][
+            "load_analysis"
+        ][
+            "level"
+        ]
+        == "UNKNOWN"
+    )
 
 
 def test_context_warnings_remain_a_compatible_fallback() -> None:

@@ -213,7 +213,8 @@ class AdaptationAnalyzer:
             )
 
         high_ratio = (
-            acute_chronic_ratio is not None
+            has_load_data
+            and acute_chronic_ratio is not None
             and acute_chronic_ratio
             > self.HIGH_ACUTE_CHRONIC_RATIO
         )

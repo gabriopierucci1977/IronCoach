@@ -84,24 +84,39 @@ class ContextBuilder:
             source="airtable",
         )
 
-        data_freshness = self._build_data_freshness(
-            recovery_date=recovery.get("date"),
-            training_date=training.get("date"),
-            recovery_max_age_days=self.recovery_max_age_days,
-            training_max_age_days=self.training_max_age_days,
-        )
-        warnings.extend(
-            data_freshness.get(
-                "reasons",
-                [],
-            )
-        )
-
         airtable_sessions = self._load_airtable_training(warnings)
         garmin_sessions = self._load_garmin_training(warnings)
         merged_sessions = self._merge_training_sessions(
             garmin_sessions,
             airtable_sessions,
+        )
+
+        training_freshness_date = training.get(
+            "date"
+        )
+
+        if (
+            not training_freshness_date
+            and merged_sessions
+        ):
+            training_freshness_date = (
+                merged_sessions[-1].get(
+                    "date"
+                )
+            )
+
+        data_freshness = self._build_data_freshness(
+            recovery_date=recovery.get("date"),
+            training_date=training_freshness_date,
+            recovery_max_age_days=self.recovery_max_age_days,
+            training_max_age_days=self.training_max_age_days,
+        )
+
+        warnings.extend(
+            data_freshness.get(
+                "reasons",
+                [],
+            )
         )
 
         training_history = TrainingHistory()

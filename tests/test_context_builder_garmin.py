@@ -179,7 +179,15 @@ def test_context_loads_garmin_history() -> None:
         "1002",
     ]
 
-    assert context["context_warnings"] == []
+    assert len(
+        context["context_warnings"]
+    ) == 1
+
+    assert context[
+        "context_warnings"
+    ][0].startswith(
+        "Allenamento: dato obsoleto"
+    )
 
 
 def test_garmin_conversion_preserves_core_metrics() -> None:
@@ -334,7 +342,25 @@ def test_missing_garmin_archive_adds_warning_and_continues() -> None:
 
     assert len(
         context["context_warnings"]
-    ) == 1
+    ) == 2
+
+    assert any(
+        warning.startswith(
+            "Archivio Garmin non disponibile:"
+        )
+        for warning in context[
+            "context_warnings"
+        ]
+    )
+
+    assert any(
+        warning.startswith(
+            "Allenamento: dato obsoleto"
+        )
+        for warning in context[
+            "context_warnings"
+        ]
+    )
 
     assert (
         "Archivio Garmin non disponibile"
@@ -625,6 +651,55 @@ def test_stale_training_sets_moderate_data_freshness(
         )
     ]
     assert context["context_warnings"] == freshness["reasons"]
+
+
+def test_garmin_history_sets_training_freshness_without_becoming_current_training(
+    fixed_context_time,
+) -> None:
+    context = ContextBuilder(
+        FakeClient(
+            latest_recovery={
+                "Data": "2026-08-06",
+            },
+            latest_training={},
+        ),
+        garmin_archive=FakeArchive(
+            [
+                _activity(
+                    source_id="stale-garmin",
+                    start_time="2026-07-30T08:00:00Z",
+                )
+            ]
+        ),
+    ).build()
+
+    freshness = context[
+        "data_freshness"
+    ]
+
+    assert context[
+        "training"
+    ].get(
+        "date"
+    ) is None
+
+    assert freshness[
+        "training"
+    ][
+        "status"
+    ] == "STALE"
+
+    assert freshness[
+        "training"
+    ][
+        "date"
+    ] == "2026-07-30"
+
+    assert freshness[
+        "training"
+    ][
+        "age_days"
+    ] == 8
 
 
 def test_stale_recovery_sets_high_data_freshness(
