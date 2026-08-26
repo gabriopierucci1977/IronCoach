@@ -7,7 +7,8 @@ e attività realmente svolta.
 Non valuta:
 - qualità della performance;
 - miglioramento atleta;
-- correttezza della decisione.
+- correttezza della decisione;
+- outcome fisiologico a 24h, 72h o 7d.
 """
 
 from __future__ import annotations
@@ -16,6 +17,12 @@ from __future__ import annotations
 class OutcomeEvaluator:
     """
     Valuta la coerenza tra piano e attività reale.
+
+    Stati ammessi dallo schema:
+    - FOLLOWED
+    - PARTIALLY_FOLLOWED
+    - NOT_FOLLOWED
+    - UNKNOWN
     """
 
     def evaluate(
@@ -24,6 +31,7 @@ class OutcomeEvaluator:
     ):
         planned = (
             episode.planned_workout
+            or episode.recommended_workout
             or {}
         )
 
@@ -59,21 +67,22 @@ class OutcomeEvaluator:
             ),
         }
 
+        if not planned_sport or not actual_sport:
+            return {
+                "adherence_status": "UNKNOWN",
+                "evidence": evidence,
+            }
+
         if (
-            planned_sport
-            and actual_sport
-            and planned_sport == actual_sport
+            str(planned_sport).upper()
+            == str(actual_sport).upper()
         ):
             return {
-                "adherence_status": (
-                    "MATCHED"
-                ),
+                "adherence_status": "FOLLOWED",
                 "evidence": evidence,
             }
 
         return {
-            "adherence_status": (
-                "MISMATCHED"
-            ),
+            "adherence_status": "NOT_FOLLOWED",
             "evidence": evidence,
         }

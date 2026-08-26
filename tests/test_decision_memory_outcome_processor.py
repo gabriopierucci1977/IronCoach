@@ -63,7 +63,7 @@ def test_processor_updates_episode_with_outcome():
     )
 
     assert result.adherence_status == (
-        "MATCHED"
+        "FOLLOWED"
     )
 
     assert result.adherence_evidence == {

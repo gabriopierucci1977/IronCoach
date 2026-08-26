@@ -249,6 +249,96 @@ class DecisionMemoryRepository:
         ]
 
 
+    def list_waiting_for_outcome_by_athlete(
+        self,
+        athlete_id: str,
+    ) -> List[DecisionEpisode]:
+        """
+        Restituisce tutti gli episodi ancora
+        WAITING_FOR_OUTCOME per un atleta.
+
+        A differenza di list_pending_outcomes(),
+        include anche gli episodi la cui aderenza
+        è già stata valutata ma le finestre recovery
+        non sono ancora concluse.
+        """
+
+        connection = sqlite3.connect(
+            self.database_path
+        )
+
+        connection.row_factory = sqlite3.Row
+
+        try:
+            rows = connection.execute(
+                """
+                SELECT *
+                FROM decision_episodes
+                WHERE athlete_id = ?
+                  AND status = 'WAITING_FOR_OUTCOME'
+                ORDER BY
+                    decision_timestamp ASC,
+                    episode_id ASC
+                """,
+                (
+                    athlete_id,
+                ),
+            ).fetchall()
+
+        finally:
+            connection.close()
+
+        return [
+            self._row_to_episode(
+                row
+            )
+            for row in rows
+        ]
+
+
+    def list_pending_outcomes(
+        self,
+        athlete_id: str,
+    ) -> List[DecisionEpisode]:
+        """
+        Restituisce gli episodi WAITING_FOR_OUTCOME
+        la cui aderenza non è ancora stata valutata.
+        """
+
+        connection = sqlite3.connect(
+            self.database_path
+        )
+
+        connection.row_factory = sqlite3.Row
+
+        try:
+            rows = connection.execute(
+                """
+                SELECT *
+                FROM decision_episodes
+                WHERE athlete_id = ?
+                  AND status = 'WAITING_FOR_OUTCOME'
+                  AND adherence_evaluated_at IS NULL
+                ORDER BY
+                    decision_timestamp ASC,
+                    episode_id ASC
+                """,
+                (
+                    athlete_id,
+                ),
+            ).fetchall()
+
+        finally:
+            connection.close()
+
+        return [
+            self._row_to_episode(
+                row
+            )
+            for row in rows
+        ]
+
+
     def list_evaluated_by_athlete(
         self,
         athlete_id: str,

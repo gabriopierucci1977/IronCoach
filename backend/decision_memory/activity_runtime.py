@@ -119,6 +119,13 @@ class DecisionMemoryActivityRuntime:
             )
         )
 
+        episodes = [
+            episode
+            for episode in episodes
+            if episode.status
+            == "WAITING_FOR_ACTIVITY"
+        ]
+
         processed = []
 
         for episode in episodes:

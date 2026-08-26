@@ -29,6 +29,7 @@ class FakeDecisionRuntime:
                 airtable_record,
             )
         )
+
         return "episode"
 
 
@@ -50,6 +51,7 @@ class FakeActivityRuntime:
                 activities,
             )
         )
+
         return "activities"
 
 
@@ -63,10 +65,17 @@ class FakeOutcomeRuntime:
     def process_outcomes(
         self,
         athlete_id,
+        recovery_history=None,
+        as_of=None,
     ):
         self.calls.append(
-            athlete_id
+            (
+                athlete_id,
+                recovery_history,
+                as_of,
+            )
         )
+
         return "outcomes"
 
 
@@ -122,5 +131,9 @@ def test_orchestrator_delegates_to_runtime_components():
     ]
 
     assert outcome_runtime.calls == [
-        "athlete-123",
+        (
+            "athlete-123",
+            None,
+            None,
+        )
     ]

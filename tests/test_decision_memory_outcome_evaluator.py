@@ -1,8 +1,5 @@
 """
 Test OutcomeEvaluator Decision Memory.
-
-Valuta solo aderenza attività pianificata
-vs attività realmente svolta.
 """
 
 from backend.decision_memory.outcome_evaluator import (
@@ -16,16 +13,10 @@ from backend.models.decision_episode import (
 def _episode():
     return DecisionEpisode(
         athlete_id="athlete-123",
-        decision_timestamp=(
-            "2026-08-24T09:00:00Z"
-        ),
+        decision_timestamp="2026-08-24T09:00:00Z",
         decision_action="ADATTA",
-        rule_id=(
-            "PERFORMANCE_DECLINING_LOAD_HIGH"
-        ),
-        primary_intent=(
-            "PROTECT_PERFORMANCE"
-        ),
+        rule_id="PERFORMANCE_DECLINING_LOAD_HIGH",
+        primary_intent="PROTECT_PERFORMANCE",
         pre_decision_state={},
         athlete_state={},
         status="WAITING_FOR_OUTCOME",
@@ -41,22 +32,13 @@ def _episode():
 
 
 def test_outcome_evaluator_marks_matching_activity():
-    evaluator = OutcomeEvaluator()
-
-    result = evaluator.evaluate(
+    result = OutcomeEvaluator().evaluate(
         _episode()
     )
 
     assert result["adherence_status"] == (
-        "MATCHED"
+        "FOLLOWED"
     )
-
-    assert result["evidence"] == {
-        "planned_sport": "RUN",
-        "actual_sport": "RUN",
-        "planned_duration_minutes": 60,
-        "actual_duration_minutes": 55,
-    }
 
 
 def test_outcome_evaluator_marks_wrong_sport():
@@ -67,12 +49,23 @@ def test_outcome_evaluator_marks_wrong_sport():
         "duration_minutes": 55,
     }
 
-    evaluator = OutcomeEvaluator()
-
-    result = evaluator.evaluate(
+    result = OutcomeEvaluator().evaluate(
         episode
     )
 
     assert result["adherence_status"] == (
-        "MISMATCHED"
+        "NOT_FOLLOWED"
+    )
+
+
+def test_outcome_evaluator_does_not_treat_missing_data_as_failure():
+    episode = _episode()
+    episode.planned_workout = {}
+
+    result = OutcomeEvaluator().evaluate(
+        episode
+    )
+
+    assert result["adherence_status"] == (
+        "UNKNOWN"
     )

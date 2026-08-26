@@ -250,6 +250,7 @@ def _build_pre_decision_state(
 def _attach_decision_memory_learning(
     runtime_config,
     context,
+    process_pending=True,
 ):
     context = context or {}
 
@@ -278,6 +279,67 @@ def _attach_decision_memory_learning(
         )
     )
 
+    if process_pending:
+        activities = (
+            context.get(
+                "garmin_training_history",
+                [],
+            )
+            or []
+        )
+
+        if (
+            activities
+            and hasattr(
+                orchestrator,
+                "process_activity",
+            )
+        ):
+            orchestrator.process_activity(
+                athlete_id,
+                activities,
+            )
+
+        warnings = (
+            context.get(
+                "context_warnings",
+                [],
+            )
+            or []
+        )
+
+        recovery_unavailable = any(
+            (
+                "Storico recovery Airtable "
+                "non disponibile"
+            )
+            in str(warning)
+            for warning in warnings
+        )
+
+        recovery_history = (
+            None
+            if recovery_unavailable
+            else (
+                context.get(
+                    "recovery_history",
+                    [],
+                )
+                or []
+            )
+        )
+
+        if hasattr(
+            orchestrator,
+            "process_outcome",
+        ):
+            orchestrator.process_outcome(
+                athlete_id,
+                recovery_history=(
+                    recovery_history
+                ),
+            )
+
     if not hasattr(
         orchestrator,
         "build_learning_evidence",
@@ -300,7 +362,6 @@ def _attach_decision_memory_learning(
     ] = evidence
 
     return enriched_context
-
 
 def _save_decision_memory(
     runtime_config,
@@ -387,6 +448,9 @@ def run_pipeline(
         lambda: _attach_decision_memory_learning(
             runtime_config=runtime_config,
             context=context,
+            process_pending=(
+                not dry_run
+            ),
         ),
     )
 

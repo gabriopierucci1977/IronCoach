@@ -75,7 +75,6 @@ def test_waiting_for_activity_moves_to_waiting_for_outcome_with_activity():
         {
             "source": "garmin",
             "source_id": "1001",
-            "activity_id": "garmin:1001",
             "date": "2026-08-24T18:00:00Z",
             "sport": "RUN",
         },
@@ -85,14 +84,13 @@ def test_waiting_for_activity_moves_to_waiting_for_outcome_with_activity():
 
     assert episode.status == "WAITING_FOR_OUTCOME"
 
-    assert episode.actual_activity_id == "garmin:1001"
+    assert episode.actual_activity_id == "1001"
 
     assert episode.actual_activity_source == "garmin"
 
     assert episode.actual_activity == {
         "source": "garmin",
         "source_id": "1001",
-        "activity_id": "garmin:1001",
         "date": "2026-08-24T18:00:00Z",
         "sport": "RUN",
     }

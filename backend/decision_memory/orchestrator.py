@@ -90,10 +90,16 @@ class DecisionMemoryOrchestrator:
     def process_outcome(
         self,
         athlete_id,
+        recovery_history=None,
+        as_of=None,
     ):
         return (
             self.outcome_runtime
             .process_outcomes(
                 athlete_id,
+                recovery_history=(
+                    recovery_history
+                ),
+                as_of=as_of,
             )
         )

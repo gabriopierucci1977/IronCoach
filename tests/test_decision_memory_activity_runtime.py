@@ -1,8 +1,11 @@
 """
 Test Decision Memory Activity Runtime.
 
-Collega attività reali agli episodi pending.
+Collega attività reali agli episodi
+WAITING_FOR_ACTIVITY.
 """
+
+from types import SimpleNamespace
 
 from backend.decision_memory.activity_runtime import (
     DecisionMemoryActivityRuntime,
@@ -14,12 +17,17 @@ class FakeRepository:
     def __init__(self):
         self.updated = []
 
+        self.episode = SimpleNamespace(
+            episode_id="episode-1",
+            status="WAITING_FOR_ACTIVITY",
+        )
+
     def list_pending_by_athlete(
         self,
         athlete_id,
     ):
         return [
-            "episode-1",
+            self.episode,
         ]
 
     def update(
@@ -51,6 +59,7 @@ class FakeProcessor:
                 activities,
             )
         )
+
         return episode
 
 
@@ -72,5 +81,5 @@ def test_activity_runtime_processes_pending_episodes():
     )
 
     assert result == [
-        "episode-1",
+        repository.episode,
     ]

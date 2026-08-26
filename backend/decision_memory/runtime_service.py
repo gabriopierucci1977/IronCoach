@@ -127,8 +127,47 @@ class DecisionMemoryRuntimeService:
                 "primary_intent"
             ],
             pre_decision_state={
-                "context": deepcopy(
-                    context
+                "recovery": deepcopy(
+                    context.get(
+                        "recovery",
+                        {},
+                    )
+                    or {}
+                ),
+                "training": deepcopy(
+                    context.get(
+                        "training",
+                        {},
+                    )
+                    or {}
+                ),
+                "nutrition": deepcopy(
+                    context.get(
+                        "nutrition",
+                        {},
+                    )
+                    or {}
+                ),
+                "data_freshness": deepcopy(
+                    context.get(
+                        "data_freshness",
+                        {},
+                    )
+                    or {}
+                ),
+                "intelligence": deepcopy(
+                    decision.get(
+                        "intelligence",
+                        {},
+                    )
+                    or {}
+                ),
+                "context_warnings": deepcopy(
+                    context.get(
+                        "context_warnings",
+                        [],
+                    )
+                    or []
                 ),
             },
             athlete_state=deepcopy(
