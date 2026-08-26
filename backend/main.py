@@ -247,6 +247,61 @@ def _build_pre_decision_state(
     }
 
 
+def _attach_decision_memory_learning(
+    runtime_config,
+    context,
+):
+    context = context or {}
+
+    athlete = (
+        context.get(
+            "athlete",
+            {},
+        )
+        or context.get(
+            "athlete_profile",
+            {},
+        )
+        or {}
+    )
+
+    athlete_id = athlete.get(
+        "source_id"
+    )
+
+    if not athlete_id:
+        return context
+
+    orchestrator = (
+        create_decision_memory_orchestrator(
+            runtime_config,
+        )
+    )
+
+    if not hasattr(
+        orchestrator,
+        "build_learning_evidence",
+    ):
+        return context
+
+    evidence = (
+        orchestrator.build_learning_evidence(
+            athlete_id
+        )
+        or {}
+    )
+
+    enriched_context = dict(
+        context
+    )
+
+    enriched_context[
+        "decision_memory"
+    ] = evidence
+
+    return enriched_context
+
+
 def _save_decision_memory(
     runtime_config,
     context,
@@ -325,6 +380,14 @@ def run_pipeline(
     context = _execute_phase(
         "costruzione contesto atleta",
         builder.build,
+    )
+
+    context = _execute_phase(
+        "caricamento evidenza Decision Memory",
+        lambda: _attach_decision_memory_learning(
+            runtime_config=runtime_config,
+            context=context,
+        ),
     )
 
     coach = _execute_phase(

@@ -213,6 +213,11 @@ class DecisionEngine:
             assessments
         )
 
+        self._decision_memory = assessments.get(
+            "decision_memory",
+            {},
+        ) or {}
+
         # ======================================================
         # RISCHIO FISICO CRITICO
         # ======================================================
@@ -1515,6 +1520,29 @@ class DecisionEngine:
             strategy
         )
 
+        decision_memory = getattr(
+            self,
+            "_decision_memory",
+            {},
+        ) or {}
+
+        historical_evidence = (
+            decision_memory.get(
+                rule_id
+            )
+            if rule_id is not None
+            else None
+        )
+
+        (
+            confidence,
+            memory_confidence_delta,
+        ) = self._adjust_confidence_for_decision_memory(
+            confidence=confidence,
+            historical_evidence=historical_evidence,
+            risk_level=risk_level,
+        )
+
         confidence = self._adjust_confidence_for_data_freshness(
             confidence
         )
@@ -1531,6 +1559,24 @@ class DecisionEngine:
             recommended_action=recommended_action,
         )
 
+
+
+        intelligence = dict(
+            getattr(
+                self,
+                "_intelligence",
+                {},
+            ) or {}
+        )
+
+        if historical_evidence is not None:
+            intelligence["decision_memory"] = {
+                "rule_id": rule_id,
+                "evidence": historical_evidence,
+                "confidence_delta_applied": (
+                    memory_confidence_delta
+                ),
+            }
 
 
         result = Decision(
@@ -1561,11 +1607,7 @@ class DecisionEngine:
 
             supporting_intents=supporting_intents,
 
-            intelligence=getattr(
-                self,
-                "_intelligence",
-                {},
-            ),
+            intelligence=intelligence,
 
         )
 
@@ -1585,6 +1627,76 @@ class DecisionEngine:
 
 
 
+
+
+    def _adjust_confidence_for_decision_memory(
+        self,
+        confidence,
+        historical_evidence,
+        risk_level,
+    ):
+        """
+        Applica una calibrazione prudente derivata
+        dagli outcome storici della stessa rule_id.
+
+        La memoria:
+        - non modifica mai la decisione scelta;
+        - non modifica i guardrail HIGH_ALERT;
+        - richiede evidenza sufficiente;
+        - applica al massimo +/- 5 punti.
+        """
+        try:
+            resolved = int(
+                confidence
+            )
+        except (TypeError, ValueError):
+            resolved = 0
+
+        if risk_level == "HIGH_ALERT":
+            return resolved, 0
+
+        if not isinstance(
+            historical_evidence,
+            dict,
+        ):
+            return resolved, 0
+
+        if not historical_evidence.get(
+            "sufficient_evidence",
+            False,
+        ):
+            return resolved, 0
+
+        try:
+            delta = int(
+                historical_evidence.get(
+                    "confidence_delta",
+                    0,
+                )
+            )
+        except (TypeError, ValueError):
+            delta = 0
+
+        delta = max(
+            -5,
+            min(
+                5,
+                delta,
+            ),
+        )
+
+        adjusted = max(
+            0,
+            min(
+                100,
+                resolved + delta,
+            ),
+        )
+
+        return (
+            adjusted,
+            adjusted - resolved,
+        )
 
 
     def _adjust_confidence_for_data_freshness(

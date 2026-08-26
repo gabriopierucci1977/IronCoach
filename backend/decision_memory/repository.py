@@ -249,6 +249,54 @@ class DecisionMemoryRepository:
         ]
 
 
+    def list_evaluated_by_athlete(
+        self,
+        athlete_id: str,
+    ) -> List[DecisionEpisode]:
+        """
+        Restituisce gli episodi con outcome valutato
+        per uno specifico atleta.
+
+        Include anche INSUFFICIENT_DATA, perché rappresenta
+        informazione storica sulla qualità dei dati.
+
+        Esclude gli episodi il cui overall_outcome_status
+        non è ancora disponibile.
+        """
+
+        connection = sqlite3.connect(
+            self.database_path
+        )
+
+        connection.row_factory = sqlite3.Row
+
+        try:
+            rows = connection.execute(
+                """
+                SELECT *
+                FROM decision_episodes
+                WHERE athlete_id = ?
+                  AND overall_outcome_status IS NOT NULL
+                ORDER BY
+                    decision_timestamp ASC,
+                    episode_id ASC
+                """,
+                (
+                    athlete_id,
+                ),
+            ).fetchall()
+
+        finally:
+            connection.close()
+
+        return [
+            self._row_to_episode(
+                row
+            )
+            for row in rows
+        ]
+
+
     def latest(
         self,
         limit: int = 10,

@@ -16,17 +16,20 @@ from __future__ import annotations
 from backend.decision_memory.activity_runtime import (
     DecisionMemoryActivityRuntime,
 )
+from backend.decision_memory.learning_service import (
+    DecisionMemoryLearningService,
+)
 from backend.decision_memory.orchestrator import (
     DecisionMemoryOrchestrator,
 )
 from backend.decision_memory.outcome_runtime import (
     DecisionMemoryOutcomeRuntime,
 )
-from backend.decision_memory.runtime_service import (
-    DecisionMemoryRuntimeService,
-)
 from backend.decision_memory.repository import (
     DecisionMemoryRepository,
+)
+from backend.decision_memory.runtime_service import (
+    DecisionMemoryRuntimeService,
 )
 
 
@@ -52,8 +55,13 @@ def create_decision_memory_orchestrator(
         repository=repository,
     )
 
+    learning_service = DecisionMemoryLearningService(
+        repository=repository,
+    )
+
     return DecisionMemoryOrchestrator(
         decision_runtime=decision_runtime,
         activity_runtime=activity_runtime,
         outcome_runtime=outcome_runtime,
+        learning_service=learning_service,
     )

@@ -27,6 +27,7 @@ class DecisionMemoryOrchestrator:
         decision_runtime,
         activity_runtime,
         outcome_runtime,
+        learning_service=None,
     ):
         self.decision_runtime = (
             decision_runtime
@@ -38,6 +39,24 @@ class DecisionMemoryOrchestrator:
 
         self.outcome_runtime = (
             outcome_runtime
+        )
+
+        self.learning_service = (
+            learning_service
+        )
+
+    def build_learning_evidence(
+        self,
+        athlete_id,
+    ):
+        if self.learning_service is None:
+            return {}
+
+        return (
+            self.learning_service
+            .build_evidence(
+                athlete_id
+            )
         )
 
     def save_decision(

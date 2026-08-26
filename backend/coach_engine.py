@@ -1131,6 +1131,14 @@ class CoachEngine:
 
                 data_freshness_assessment,
 
+
+            "decision_memory":
+
+                context.get(
+                    "decision_memory",
+                    {},
+                ) or {},
+
         }
 
 
@@ -1147,53 +1155,45 @@ class CoachEngine:
 
 
 
-        decision["intelligence"] = {
+        decision_intelligence = dict(
+            decision.get(
+                "intelligence",
+                {},
+            )
+            or {}
+        )
 
+        decision_intelligence.update(
+            {
+                "athlete_profile":
+                    athlete_profile_intelligence,
 
+                "goal_profile":
+                    athlete_profile_intelligence.get(
+                        "goal_profile",
+                        {},
+                    ),
 
-            "athlete_profile":
+                "load":
+                    load_analysis,
 
-                athlete_profile_intelligence,
+                "adaptation":
+                    adaptation_analysis,
 
+                "recovery_trend":
+                    recovery_trend_analysis,
 
+                "performance":
+                    performance_analysis,
 
-            "goal_profile":
+                "data_freshness":
+                    data_freshness_assessment,
+            }
+        )
 
-                athlete_profile_intelligence.get(
-                    "goal_profile",
-                    {},
-                ),
-
-
-
-            "load":
-
-                load_analysis,
-
-
-
-            "adaptation":
-
-                adaptation_analysis,
-
-
-
-            "recovery_trend":
-
-                recovery_trend_analysis,
-
-
-
-            "performance":
-
-                performance_analysis,
-
-
-            "data_freshness":
-
-                data_freshness_assessment,
-
-        }
+        decision["intelligence"] = (
+            decision_intelligence
+        )
 
 
 
