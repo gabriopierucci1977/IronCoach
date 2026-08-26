@@ -137,6 +137,33 @@ class AirtableClient:
         if not records:
             return []
 
+        if date_field:
+            records.sort(
+                key=lambda item: (
+                    str(
+                        item.get(
+                            "fields",
+                            {},
+                        ).get(
+                            date_field,
+                            "",
+                        )
+                        or ""
+                    ),
+                    item.get(
+                        "createdTime",
+                        "",
+                    ),
+                )
+            )
+        else:
+            records.sort(
+                key=lambda item: item.get(
+                    "createdTime",
+                    "",
+                )
+            )
+
         data = [
             record.get(
                 "fields",
@@ -144,17 +171,6 @@ class AirtableClient:
             )
             for record in records
         ]
-
-        if date_field:
-            data.sort(
-                key=lambda item: str(
-                    item.get(
-                        date_field,
-                        "",
-                    )
-                    or ""
-                )
-            )
 
         return data[-limit:]
 
