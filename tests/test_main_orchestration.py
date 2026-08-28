@@ -46,9 +46,15 @@ class FakeContextBuilder:
         client,
         runtime_config=None,
         garmin_source_state_path=None,
+        garmin_recovery_archive=None,
+        garmin_recovery_source_state_path=None,
     ):
         self.client = client
         self.garmin_source_state_path = garmin_source_state_path
+        self.garmin_recovery_archive = garmin_recovery_archive
+        self.garmin_recovery_source_state_path = (
+            garmin_recovery_source_state_path
+        )
         FakeContextBuilder.received_runtime_config = runtime_config
 
     def build(
@@ -280,6 +286,11 @@ def _patch_main_dependencies(
         "_sync_garmin_live_best_effort",
         lambda: None,
     )
+    monkeypatch.setattr(
+        main_module,
+        "_sync_garmin_recovery_best_effort",
+        lambda: None,
+    )
 
 
 def test_main_orchestration_keeps_full_flow(
@@ -335,6 +346,11 @@ def test_main_dry_run_does_not_initialize_or_call_decision_writer(
     monkeypatch.setattr(
         main_module,
         "_sync_garmin_live_best_effort",
+        fail_if_garmin_sync_is_called,
+    )
+    monkeypatch.setattr(
+        main_module,
+        "_sync_garmin_recovery_best_effort",
         fail_if_garmin_sync_is_called,
     )
 

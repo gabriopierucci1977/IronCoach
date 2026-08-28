@@ -26,10 +26,16 @@ class FakeContextBuilder:
         client,
         runtime_config=None,
         garmin_source_state_path=None,
+        garmin_recovery_archive=None,
+        garmin_recovery_source_state_path=None,
     ):
         self.client = client
         self.runtime_config = runtime_config
         self.garmin_source_state_path = garmin_source_state_path
+        self.garmin_recovery_archive = garmin_recovery_archive
+        self.garmin_recovery_source_state_path = (
+            garmin_recovery_source_state_path
+        )
 
     def build(self):
         return {
@@ -223,6 +229,11 @@ def _patch_dependencies(
     monkeypatch.setattr(
         main_module,
         "_sync_garmin_live_best_effort",
+        lambda: None,
+    )
+    monkeypatch.setattr(
+        main_module,
+        "_sync_garmin_recovery_best_effort",
         lambda: None,
     )
 

@@ -21,6 +21,13 @@ from backend.importers.garmin_live_sync import (
     DEFAULT_SYNC_STATE_PATH,
     GarminLiveSync,
 )
+from backend.importers.garmin_recovery_archive import (
+    GarminRecoveryArchive,
+)
+from backend.importers.garmin_recovery_sync import (
+    DEFAULT_RECOVERY_SYNC_STATE_PATH,
+    GarminRecoverySync,
+)
 from backend.decision_memory.factory import (
     create_decision_memory_orchestrator,
 )
@@ -161,6 +168,25 @@ def _sync_garmin_live_best_effort():
     except Exception as exc:
         return (
             "Sincronizzazione Garmin live non disponibile: "
+            f"{type(exc).__name__}"
+        )
+
+
+def _sync_garmin_recovery_best_effort():
+    """
+    Aggiorna le osservazioni Recovery Garmin senza
+    rendere indisponibile IronCoach in caso di errore.
+
+    GarminRecoverySync aggiorna source_checked_at
+    soltanto dopo un sync completato con successo.
+    """
+
+    try:
+        return GarminRecoverySync().sync()
+    except Exception as exc:
+        return (
+            "Sincronizzazione Recovery Garmin "
+            "non disponibile: "
             f"{type(exc).__name__}"
         )
 
@@ -452,20 +478,24 @@ def run_pipeline(
         AirtableClient,
     )
 
-    garmin_sync_warning = None
+    garmin_sync_warnings = []
 
     if not dry_run:
-        garmin_sync_result = (
-            _sync_garmin_live_best_effort()
-        )
-
-        if isinstance(
-            garmin_sync_result,
-            str,
+        for sync_operation in (
+            _sync_garmin_live_best_effort,
+            _sync_garmin_recovery_best_effort,
         ):
-            garmin_sync_warning = (
-                garmin_sync_result
+            garmin_sync_result = (
+                sync_operation()
             )
+
+            if isinstance(
+                garmin_sync_result,
+                str,
+            ):
+                garmin_sync_warnings.append(
+                    garmin_sync_result
+                )
 
     builder = _execute_phase(
         "inizializzazione Context Builder",
@@ -474,6 +504,12 @@ def run_pipeline(
             runtime_config=runtime_config,
             garmin_source_state_path=str(
                 DEFAULT_SYNC_STATE_PATH
+            ),
+            garmin_recovery_archive=(
+                GarminRecoveryArchive()
+            ),
+            garmin_recovery_source_state_path=str(
+                DEFAULT_RECOVERY_SYNC_STATE_PATH
             ),
         ),
     )
@@ -484,7 +520,7 @@ def run_pipeline(
     )
 
     if (
-        garmin_sync_warning
+        garmin_sync_warnings
         and isinstance(
             context,
             dict,
@@ -494,19 +530,18 @@ def run_pipeline(
             "context_warnings"
         )
 
-        if isinstance(
+        if not isinstance(
             context_warnings,
             list,
         ):
-            context_warnings.append(
-                garmin_sync_warning
-            )
-        else:
+            context_warnings = []
             context[
                 "context_warnings"
-            ] = [
-                garmin_sync_warning
-            ]
+            ] = context_warnings
+
+        context_warnings.extend(
+            garmin_sync_warnings
+        )
 
     context = _execute_phase(
         "caricamento evidenza Decision Memory",

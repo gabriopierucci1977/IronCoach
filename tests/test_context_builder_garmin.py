@@ -98,6 +98,17 @@ class FakeArchive:
         return iter(self.activities)
 
 
+class FakeRecoveryArchive:
+    def __init__(
+        self,
+        records=None,
+    ):
+        self.records = records or []
+
+    def load(self):
+        return list(self.records)
+
+
 def _activity(
     *,
     source_id: str,
@@ -137,6 +148,112 @@ def _activity(
                 "merge_status": "MERGED",
             }
         },
+    )
+
+
+def test_garmin_recovery_is_exposed_without_replacing_evaluable_recovery(
+    tmp_path,
+) -> None:
+    state_path = (
+        tmp_path
+        / "garmin_recovery_state.json"
+    )
+
+    state_path.write_text(
+        (
+            '{"source_checked_at":'
+            '"2026-08-28T09:20:14Z",'
+            '"last_observation_date":'
+            '"2026-08-28"}\n'
+        ),
+        encoding="utf-8",
+    )
+
+    garmin_record = {
+        "source": "garmin",
+        "source_id": (
+            "garmin-recovery:2026-08-28"
+        ),
+        "date": "2026-08-28",
+        "training_readiness": None,
+        "hrv": None,
+        "resting_hr": 43.0,
+        "stress": 18.0,
+        "body_battery": 83.0,
+    }
+
+    client = FakeClient(
+        latest_recovery={
+            "Data": "2026-08-27",
+            "Recovery Score": 65,
+        },
+        recovery_history=[
+            {
+                "Data": "2026-08-27",
+                "Recovery Score": 65,
+            }
+        ],
+    )
+
+    context = ContextBuilder(
+        client,
+        garmin_archive=FakeArchive([]),
+        garmin_recovery_archive=(
+            FakeRecoveryArchive(
+                [garmin_record]
+            )
+        ),
+        garmin_recovery_source_state_path=str(
+            state_path
+        ),
+    ).build()
+
+    assert (
+        context["recovery"]["source"]
+        == "airtable"
+    )
+    assert (
+        context["recovery"]["date"]
+        == "2026-08-27"
+    )
+    assert (
+        context["recovery"]["readiness"]
+        == 65
+    )
+
+    assert (
+        context["garmin_recovery_history"]
+        == [garmin_record]
+    )
+
+    assert (
+        context["data_freshness"][
+            "recovery"
+        ]["date"]
+        == "2026-08-27"
+    )
+
+    assert len(
+        context["recovery_history"]
+    ) == 1
+
+    assert (
+        context["history_sources"][
+            "garmin_recovery_total"
+        ]
+        == 1
+    )
+    assert (
+        context["history_sources"][
+            "garmin_recovery_source_checked_at"
+        ]
+        == "2026-08-28T09:20:14Z"
+    )
+    assert (
+        context["history_sources"][
+            "garmin_recovery_last_observation_date"
+        ]
+        == "2026-08-28"
     )
 
 

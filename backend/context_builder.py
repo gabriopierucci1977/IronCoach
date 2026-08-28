@@ -23,6 +23,10 @@ from backend.importers.garmin_activity_archive import (
     GarminActivityArchive,
     GarminActivityArchiveError,
 )
+from backend.importers.garmin_recovery_archive import (
+    GarminRecoveryArchive,
+    GarminRecoveryArchiveError,
+)
 from backend.models.activity import IronCoachActivity
 from backend.normalization.activity_normalizer import ActivityNormalizer
 from backend.normalization.athlete_normalizer import AthleteNormalizer
@@ -42,6 +46,12 @@ class ContextBuilder:
         recovery_max_age_days: Optional[int] = None,
         training_max_age_days: Optional[int] = None,
         garmin_source_state_path: Optional[str] = None,
+        garmin_recovery_archive: Optional[
+            GarminRecoveryArchive
+        ] = None,
+        garmin_recovery_source_state_path: Optional[
+            str
+        ] = None,
     ):
         self.client = airtable_client
         self.include_garmin = bool(include_garmin)
@@ -49,6 +59,16 @@ class ContextBuilder:
         self.garmin_source_state_path = (
             Path(garmin_source_state_path)
             if garmin_source_state_path
+            else None
+        )
+        self.garmin_recovery_archive = (
+            garmin_recovery_archive
+        )
+        self.garmin_recovery_source_state_path = (
+            Path(
+                garmin_recovery_source_state_path
+            )
+            if garmin_recovery_source_state_path
             else None
         )
 
@@ -101,6 +121,18 @@ class ContextBuilder:
 
         garmin_source_state = (
             self._load_garmin_source_state(
+                warnings
+            )
+        )
+
+        garmin_recovery_history = (
+            self._load_garmin_recovery_history(
+                warnings
+            )
+        )
+
+        garmin_recovery_source_state = (
+            self._load_garmin_recovery_source_state(
                 warnings
             )
         )
@@ -226,6 +258,39 @@ class ContextBuilder:
                 }
             )
 
+        if (
+            self.garmin_recovery_archive
+            is not None
+            or self.garmin_recovery_source_state_path
+            is not None
+        ):
+            history_sources.update(
+                {
+                    "garmin_recovery_total": len(
+                        garmin_recovery_history
+                    ),
+                    "garmin_recovery_enabled": (
+                        self.include_garmin
+                    ),
+                }
+            )
+
+        if garmin_recovery_source_state:
+            history_sources.update(
+                {
+                    "garmin_recovery_source_checked_at": (
+                        garmin_recovery_source_state.get(
+                            "source_checked_at"
+                        )
+                    ),
+                    "garmin_recovery_last_observation_date": (
+                        garmin_recovery_source_state.get(
+                            "last_observation_date"
+                        )
+                    ),
+                }
+            )
+
         return {
             "athlete": athlete,
             "athlete_profile": athlete,
@@ -239,6 +304,9 @@ class ContextBuilder:
             "training_history": list(training_history.sessions),
             "garmin_training_history": list(garmin_sessions),
             "airtable_training_history": list(airtable_sessions),
+            "garmin_recovery_history": list(
+                garmin_recovery_history
+            ),
             "recovery_history": (
                 recovery_history.records
                 if hasattr(recovery_history, "records")
@@ -258,6 +326,84 @@ class ContextBuilder:
             "data_freshness": data_freshness,
             "context_warnings": warnings,
         }
+
+    def _load_garmin_recovery_history(
+        self,
+        warnings: List[str],
+    ) -> List[Dict[str, Any]]:
+        if (
+            not self.include_garmin
+            or self.garmin_recovery_archive
+            is None
+        ):
+            return []
+
+        try:
+            return list(
+                self.garmin_recovery_archive.load()
+                or []
+            )
+        except (
+            GarminRecoveryArchiveError,
+            FileNotFoundError,
+            OSError,
+            ValueError,
+        ) as exc:
+            warnings.append(
+                "Storico recovery Garmin "
+                "non disponibile: "
+                f"{type(exc).__name__}: {exc}"
+            )
+            return []
+
+    def _load_garmin_recovery_source_state(
+        self,
+        warnings: List[str],
+    ) -> Dict[str, Any]:
+        if (
+            not self.include_garmin
+            or self.garmin_recovery_source_state_path
+            is None
+        ):
+            return {}
+
+        path = (
+            self.garmin_recovery_source_state_path
+        )
+
+        if not path.is_file():
+            warnings.append(
+                "Stato sorgente recovery Garmin "
+                "non disponibile: "
+                f"file non trovato ({path})"
+            )
+            return {}
+
+        try:
+            payload = json.loads(
+                path.read_text(
+                    encoding="utf-8"
+                )
+            )
+        except Exception as exc:
+            warnings.append(
+                "Stato sorgente recovery Garmin "
+                "non disponibile: "
+                f"{type(exc).__name__}: {exc}"
+            )
+            return {}
+
+        if not isinstance(
+            payload,
+            dict,
+        ):
+            warnings.append(
+                "Stato sorgente recovery Garmin "
+                "non valido"
+            )
+            return {}
+
+        return payload
 
     def _load_garmin_source_state(
         self,

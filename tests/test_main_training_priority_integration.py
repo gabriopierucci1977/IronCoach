@@ -43,6 +43,8 @@ def test_main_attaches_priority_aware_modified_workout(
             client,
             runtime_config=None,
             garmin_source_state_path=None,
+            garmin_recovery_archive=None,
+            garmin_recovery_source_state_path=None,
         ):
             captured["context_client"] = client
             captured[
@@ -131,6 +133,11 @@ def test_main_attaches_priority_aware_modified_workout(
     monkeypatch.setattr(
         main_module,
         "_sync_garmin_live_best_effort",
+        lambda: None,
+    )
+    monkeypatch.setattr(
+        main_module,
+        "_sync_garmin_recovery_best_effort",
         lambda: None,
     )
     monkeypatch.setattr(
