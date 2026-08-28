@@ -121,6 +121,11 @@ def test_run_pipeline_reports_context_build_phase(
         "ContextBuilder",
         FakeBuilder,
     )
+    monkeypatch.setattr(
+        main_module,
+        "_sync_garmin_live_best_effort",
+        lambda: None,
+    )
 
     try:
         main_module.run_pipeline()

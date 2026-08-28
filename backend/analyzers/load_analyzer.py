@@ -59,11 +59,13 @@ class LoadAnalyzer:
                 ),
             )
 
-        acute_start = analysis_date - timedelta(
+        analysis_day = analysis_date.date()
+
+        acute_start_day = analysis_day - timedelta(
             days=self.ACUTE_DAYS
         )
 
-        chronic_start = analysis_date - timedelta(
+        chronic_start_day = analysis_day - timedelta(
             days=self.CHRONIC_DAYS
         )
 
@@ -90,9 +92,11 @@ class LoadAnalyzer:
             if session_date is None:
                 continue
 
+            session_day = session_date.date()
+
             if (
-                session_date < chronic_start
-                or session_date > analysis_date
+                session_day < chronic_start_day
+                or session_day > analysis_day
             ):
                 continue
 
@@ -100,7 +104,7 @@ class LoadAnalyzer:
             # anche quando il carico è assente o non utilizzabile.
             sessions_28d += 1
 
-            if session_date >= acute_start:
+            if session_day >= acute_start_day:
                 sessions_7d += 1
 
             load = self._session_load(
@@ -125,7 +129,7 @@ class LoadAnalyzer:
                 + load
             )
 
-            if session_date >= acute_start:
+            if session_day >= acute_start_day:
                 acute_load += load
 
         training_window_complete = bool(

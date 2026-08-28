@@ -101,7 +101,7 @@ def test_boundary_days_are_inclusive() -> None:
         _history(
             [
                 _session(
-                    date="2025-01-21T12:00:00Z",
+                    date="2025-01-21T08:00:00Z",
                     load=40,
                 ),
                 _session(
@@ -288,15 +288,15 @@ def test_reliable_personal_baseline_prevents_false_high_load() -> None:
     sessions = [
         _session(
             date="2025-01-07T08:00:00Z",
-            load=600,
+            load=800,
         ),
         _session(
             date="2025-01-14T08:00:00Z",
-            load=600,
+            load=800,
         ),
         _session(
             date="2025-01-21T08:00:00Z",
-            load=600,
+            load=100,
         ),
         _session(
             date="2025-01-28T08:00:00Z",
@@ -328,7 +328,7 @@ def test_reliable_personal_baseline_prevents_false_high_load() -> None:
         reliable["personal_baseline_weekly_load"]
         == 800.0
     )
-    assert reliable["acute_load_7d"] == 600.0
+    assert reliable["acute_load_7d"] == 700.0
     assert reliable["reasons"] == [
         (
             "Carico assoluto elevato ma coerente "

@@ -19,6 +19,7 @@ from backend.config import get_runtime_config
 from backend.context_builder import ContextBuilder
 from backend.importers.garmin_live_sync import (
     DEFAULT_SYNC_STATE_PATH,
+    GarminLiveSync,
 )
 from backend.decision_memory.factory import (
     create_decision_memory_orchestrator,
@@ -144,6 +145,24 @@ def _utc_now() -> str:
         "+00:00",
         "Z",
     )
+
+
+def _sync_garmin_live_best_effort():
+    """
+    Aggiorna Garmin senza rendere indisponibile IronCoach
+    quando la sorgente live non è raggiungibile.
+
+    GarminLiveSync aggiorna source_checked_at soltanto
+    dopo un sync completato con successo.
+    """
+
+    try:
+        return GarminLiveSync().sync()
+    except Exception as exc:
+        return (
+            "Sincronizzazione Garmin live non disponibile: "
+            f"{type(exc).__name__}"
+        )
 
 
 def _decision_memory_identity(
@@ -433,6 +452,21 @@ def run_pipeline(
         AirtableClient,
     )
 
+    garmin_sync_warning = None
+
+    if not dry_run:
+        garmin_sync_result = (
+            _sync_garmin_live_best_effort()
+        )
+
+        if isinstance(
+            garmin_sync_result,
+            str,
+        ):
+            garmin_sync_warning = (
+                garmin_sync_result
+            )
+
     builder = _execute_phase(
         "inizializzazione Context Builder",
         lambda: ContextBuilder(
@@ -448,6 +482,31 @@ def run_pipeline(
         "costruzione contesto atleta",
         builder.build,
     )
+
+    if (
+        garmin_sync_warning
+        and isinstance(
+            context,
+            dict,
+        )
+    ):
+        context_warnings = context.get(
+            "context_warnings"
+        )
+
+        if isinstance(
+            context_warnings,
+            list,
+        ):
+            context_warnings.append(
+                garmin_sync_warning
+            )
+        else:
+            context[
+                "context_warnings"
+            ] = [
+                garmin_sync_warning
+            ]
 
     context = _execute_phase(
         "caricamento evidenza Decision Memory",

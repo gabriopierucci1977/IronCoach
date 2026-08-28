@@ -275,6 +275,11 @@ def _patch_main_dependencies(
         "create_decision_memory_orchestrator",
         lambda runtime_config: FakeDecisionMemoryOrchestrator(),
     )
+    monkeypatch.setattr(
+        main_module,
+        "_sync_garmin_live_best_effort",
+        lambda: None,
+    )
 
 
 def test_main_orchestration_keeps_full_flow(
@@ -320,6 +325,17 @@ def test_main_dry_run_does_not_initialize_or_call_decision_writer(
     _reset_fakes()
     _patch_main_dependencies(
         monkeypatch
+    )
+
+    def fail_if_garmin_sync_is_called():
+        raise AssertionError(
+            "Il dry-run non deve sincronizzare Garmin"
+        )
+
+    monkeypatch.setattr(
+        main_module,
+        "_sync_garmin_live_best_effort",
+        fail_if_garmin_sync_is_called,
     )
 
     exit_code = main_module.main(

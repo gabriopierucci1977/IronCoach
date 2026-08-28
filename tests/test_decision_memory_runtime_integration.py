@@ -220,6 +220,11 @@ def _patch_dependencies(
         "create_decision_memory_orchestrator",
         lambda runtime_config: FakeDecisionMemoryOrchestrator(),
     )
+    monkeypatch.setattr(
+        main_module,
+        "_sync_garmin_live_best_effort",
+        lambda: None,
+    )
 
 
 def test_run_pipeline_uses_decision_memory_runtime_service(
