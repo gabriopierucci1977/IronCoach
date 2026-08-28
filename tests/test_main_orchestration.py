@@ -45,8 +45,10 @@ class FakeContextBuilder:
         self,
         client,
         runtime_config=None,
+        garmin_source_state_path=None,
     ):
         self.client = client
+        self.garmin_source_state_path = garmin_source_state_path
         FakeContextBuilder.received_runtime_config = runtime_config
 
     def build(

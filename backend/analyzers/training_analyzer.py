@@ -227,7 +227,7 @@ class TrainingAnalyzer:
             and internal_load is None
         ):
             level = self.LEVEL_UNKNOWN
-            reasons.append("Dati sul carico allenante insufficienti")
+            reasons.append("Dati sulla seduta corrente insufficienti")
 
         else:
             level = self.LEVEL_LOW

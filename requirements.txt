@@ -3,3 +3,4 @@ python-dotenv==1.2.2
 openai==2.53.0
 requests==2.34.2
 fitparse==1.2.0
+garminconnect==0.3.11

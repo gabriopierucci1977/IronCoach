@@ -17,6 +17,9 @@ from backend.airtable_client import AirtableClient
 from backend.coach_engine import CoachEngine
 from backend.config import get_runtime_config
 from backend.context_builder import ContextBuilder
+from backend.importers.garmin_live_sync import (
+    DEFAULT_SYNC_STATE_PATH,
+)
 from backend.decision_memory.factory import (
     create_decision_memory_orchestrator,
 )
@@ -435,6 +438,9 @@ def run_pipeline(
         lambda: ContextBuilder(
             client,
             runtime_config=runtime_config,
+            garmin_source_state_path=str(
+                DEFAULT_SYNC_STATE_PATH
+            ),
         ),
     )
 

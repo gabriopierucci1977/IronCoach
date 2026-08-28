@@ -839,3 +839,82 @@ def test_freshness_one_day_over_threshold_is_stale(
             "(data 2026-07-30, soglia 7 giorni)"
         ),
     ]
+
+
+
+def test_current_garmin_source_is_distinct_from_last_activity(
+    tmp_path,
+    fixed_context_time,
+) -> None:
+    state_path = (
+        tmp_path
+        / "garmin_live_sync_state.json"
+    )
+
+    state_path.write_text(
+        (
+            '{"source_checked_at": '
+            '"2026-08-07T11:00:00Z", '
+            '"last_activity_at": '
+            '"2025-01-02T08:00:00Z"}'
+        ),
+        encoding="utf-8",
+    )
+
+    archive = FakeArchive(
+        [
+            _activity(
+                source_id="1001",
+                start_time=(
+                    "2025-01-02T08:00:00Z"
+                ),
+            )
+        ]
+    )
+
+    context = ContextBuilder(
+        FakeClient(),
+        garmin_archive=archive,
+        garmin_source_state_path=str(
+            state_path
+        ),
+    ).build()
+
+    training_freshness = (
+        context["data_freshness"][
+            "training"
+        ]
+    )
+
+    assert training_freshness[
+        "status"
+    ] == "CURRENT"
+
+    assert training_freshness[
+        "basis"
+    ] == "source_checked_at"
+
+    assert training_freshness[
+        "source_checked_at"
+    ] == "2026-08-07T11:00:00Z"
+
+    assert training_freshness[
+        "last_activity_at"
+    ] == "2025-01-02T08:00:00Z"
+
+    assert training_freshness[
+        "window_complete"
+    ] is True
+
+    assert context["history_sources"][
+        "garmin_source_status"
+    ] == "CURRENT"
+
+    assert not any(
+        warning.startswith(
+            "Allenamento: dato obsoleto"
+        )
+        for warning in context[
+            "context_warnings"
+        ]
+    )

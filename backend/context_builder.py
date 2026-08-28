@@ -7,7 +7,9 @@ persistente senza interrompere il flusso Airtable se l'archivio manca.
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from backend.config import (
@@ -39,10 +41,16 @@ class ContextBuilder:
         runtime_config: Optional[RuntimeConfig] = None,
         recovery_max_age_days: Optional[int] = None,
         training_max_age_days: Optional[int] = None,
+        garmin_source_state_path: Optional[str] = None,
     ):
         self.client = airtable_client
         self.include_garmin = bool(include_garmin)
         self.garmin_archive = garmin_archive or GarminActivityArchive()
+        self.garmin_source_state_path = (
+            Path(garmin_source_state_path)
+            if garmin_source_state_path
+            else None
+        )
 
         self.runtime_config = (
             runtime_config
@@ -91,11 +99,39 @@ class ContextBuilder:
             airtable_sessions,
         )
 
+        garmin_source_state = (
+            self._load_garmin_source_state(
+                warnings
+            )
+        )
+
+        source_checked_at = (
+            garmin_source_state.get(
+                "source_checked_at"
+            )
+            if garmin_source_state
+            else None
+        )
+
+        last_activity_at = (
+            garmin_source_state.get(
+                "last_activity_at"
+            )
+            if garmin_source_state
+            else None
+        )
+
         training_freshness_date = training.get(
             "date"
         )
+        training_freshness_label = "Allenamento"
 
-        if (
+        if source_checked_at:
+            training_freshness_date = source_checked_at
+            training_freshness_label = (
+                "Fonte allenamenti"
+            )
+        elif (
             not training_freshness_date
             and merged_sessions
         ):
@@ -110,7 +146,22 @@ class ContextBuilder:
             training_date=training_freshness_date,
             recovery_max_age_days=self.recovery_max_age_days,
             training_max_age_days=self.training_max_age_days,
+            training_label=training_freshness_label,
         )
+
+        if source_checked_at:
+            data_freshness["training"] = {
+                **data_freshness["training"],
+                "basis": "source_checked_at",
+                "source_checked_at": source_checked_at,
+                "last_activity_at": last_activity_at,
+                "window_complete": (
+                    data_freshness[
+                        "training"
+                    ].get("status")
+                    == "CURRENT"
+                ),
+            }
 
         warnings.extend(
             data_freshness.get(
@@ -145,6 +196,36 @@ class ContextBuilder:
             )
         )
 
+        history_sources = {
+            "training_total": len(
+                training_history.sessions
+            ),
+            "training_airtable": len(
+                airtable_sessions
+            ),
+            "training_garmin": len(
+                garmin_sessions
+            ),
+            "garmin_enabled": self.include_garmin,
+        }
+
+        if source_checked_at:
+            history_sources.update(
+                {
+                    "garmin_source_checked_at": (
+                        source_checked_at
+                    ),
+                    "garmin_last_activity_at": (
+                        last_activity_at
+                    ),
+                    "garmin_source_status": (
+                        data_freshness[
+                            "training"
+                        ].get("status")
+                    ),
+                }
+            )
+
         return {
             "athlete": athlete,
             "athlete_profile": athlete,
@@ -173,15 +254,62 @@ class ContextBuilder:
                 "recovery": recovery_history,
                 "performance": performance_history,
             },
-            "history_sources": {
-                "training_total": len(training_history.sessions),
-                "training_airtable": len(airtable_sessions),
-                "training_garmin": len(garmin_sessions),
-                "garmin_enabled": self.include_garmin,
-            },
+            "history_sources": history_sources,
             "data_freshness": data_freshness,
             "context_warnings": warnings,
         }
+
+    def _load_garmin_source_state(
+        self,
+        warnings: List[str],
+    ) -> Dict[str, Any]:
+        if (
+            not self.include_garmin
+            or self.garmin_source_state_path
+            is None
+        ):
+            return {}
+
+        path = self.garmin_source_state_path
+
+        if not path.is_file():
+            warnings.append(
+                "Stato sorgente Garmin live non disponibile: "
+                f"file non trovato ({path})"
+            )
+            return {}
+
+        try:
+            payload = json.loads(
+                path.read_text(
+                    encoding="utf-8"
+                )
+            )
+        except Exception as exc:
+            warnings.append(
+                "Stato sorgente Garmin live non disponibile: "
+                f"{type(exc).__name__}: {exc}"
+            )
+            return {}
+
+        if not isinstance(payload, dict):
+            warnings.append(
+                "Stato sorgente Garmin live non valido"
+            )
+            return {}
+
+        source_checked_at = payload.get(
+            "source_checked_at"
+        )
+
+        if not source_checked_at:
+            warnings.append(
+                "Stato sorgente Garmin live senza "
+                "source_checked_at"
+            )
+            return {}
+
+        return payload
 
     def _load_airtable_training(
         self,
@@ -460,6 +588,7 @@ class ContextBuilder:
         training_date: Any,
         recovery_max_age_days: int,
         training_max_age_days: int,
+        training_label: str = "Allenamento",
     ) -> Dict[str, Any]:
         recovery = cls._assess_data_freshness(
             label="Recovery",
@@ -468,7 +597,7 @@ class ContextBuilder:
             stale_level="HIGH",
         )
         training = cls._assess_data_freshness(
-            label="Allenamento",
+            label=training_label,
             value=training_date,
             max_age_days=training_max_age_days,
             stale_level="MODERATE",

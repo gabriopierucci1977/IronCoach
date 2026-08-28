@@ -257,3 +257,102 @@ def test_level_uses_recent_load_not_career_total() -> None:
 
     assert result["level"] == "LOW"
     assert result["total_load"] == 80.0
+
+
+
+def test_complete_window_without_recent_activity_is_low() -> None:
+    result = LoadAnalyzer().analyze(
+        {
+            "analysis_date": "2025-02-28T12:00:00Z",
+            "training_window_complete": True,
+            "training_history": [
+                _session(
+                    date="2025-01-01T08:00:00Z",
+                    load=100,
+                )
+            ],
+        }
+    )
+
+    assert result["level"] == "LOW"
+    assert result["sessions_28d"] == 0
+    assert result["sessions_with_load"] == 0
+    assert result["total_load"] == 0.0
+    assert result["reasons"] == [
+        "Nessuna attività registrata negli ultimi 28 giorni"
+    ]
+
+
+
+def test_reliable_personal_baseline_prevents_false_high_load() -> None:
+    sessions = [
+        _session(
+            date="2025-01-07T08:00:00Z",
+            load=600,
+        ),
+        _session(
+            date="2025-01-14T08:00:00Z",
+            load=600,
+        ),
+        _session(
+            date="2025-01-21T08:00:00Z",
+            load=600,
+        ),
+        _session(
+            date="2025-01-28T08:00:00Z",
+            load=600,
+        ),
+    ]
+
+    reliable = LoadAnalyzer().analyze(
+        {
+            "analysis_date": (
+                "2025-01-28T12:00:00Z"
+            ),
+            "training_history": sessions,
+            "load_tolerance": {
+                "status": "STIMATA",
+                "confidence": "HIGH",
+                "baseline_weekly_load": 800.0,
+            },
+        }
+    )
+
+    assert reliable["absolute_level"] == "HIGH"
+    assert reliable["level"] == "NORMAL"
+    assert (
+        reliable["classification_basis"]
+        == "PERSONAL_BASELINE"
+    )
+    assert (
+        reliable["personal_baseline_weekly_load"]
+        == 800.0
+    )
+    assert reliable["acute_load_7d"] == 600.0
+    assert reliable["reasons"] == [
+        (
+            "Carico assoluto elevato ma coerente "
+            "con la baseline personale"
+        )
+    ]
+
+    unreliable = LoadAnalyzer().analyze(
+        {
+            "analysis_date": (
+                "2025-01-28T12:00:00Z"
+            ),
+            "training_history": sessions,
+            "load_tolerance": {
+                "status": "STIMATA",
+                "confidence": "LOW",
+                "baseline_weekly_load": 800.0,
+            },
+        }
+    )
+
+    assert unreliable["absolute_level"] == "HIGH"
+    assert unreliable["level"] == "HIGH"
+    assert (
+        unreliable["classification_basis"]
+        == "ABSOLUTE_THRESHOLDS"
+    )

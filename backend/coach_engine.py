@@ -992,23 +992,90 @@ class CoachEngine:
 
 
 
-        load_analysis = (
+        load_context = {
+            "training_history": training_history,
+        }
 
-            self.load_analyzer.analyze(
-
-                {
-                    "training_history":
-
-                        training_history,
-
-                }
-
+        load_tolerance = (
+            athlete_profile_intelligence.get(
+                "load_tolerance",
+                {},
             )
-
+            if isinstance(
+                athlete_profile_intelligence,
+                dict,
+            )
+            else {}
         )
 
+        if load_tolerance:
+            load_context[
+                "load_tolerance"
+            ] = load_tolerance
 
+        source_training_freshness = {}
 
+        if isinstance(
+            data_freshness_assessment,
+            dict,
+        ):
+            candidate = (
+                data_freshness_assessment.get(
+                    "training",
+                    {},
+                )
+                or {}
+            )
+
+            if isinstance(
+                candidate,
+                dict,
+            ):
+                source_training_freshness = (
+                    candidate
+                )
+
+        source_status = str(
+            source_training_freshness.get(
+                "status",
+                "",
+            )
+            or ""
+        ).strip().upper()
+
+        source_basis = str(
+            source_training_freshness.get(
+                "basis",
+                "",
+            )
+            or ""
+        ).strip().lower()
+
+        source_checked_at = (
+            source_training_freshness.get(
+                "source_checked_at"
+            )
+        )
+
+        if (
+            source_basis
+            == "source_checked_at"
+            and source_status
+            == "CURRENT"
+            and source_checked_at
+        ):
+            load_context[
+                "analysis_date"
+            ] = source_checked_at
+            load_context[
+                "training_window_complete"
+            ] = True
+
+        load_analysis = (
+            self.load_analyzer.analyze(
+                load_context
+            )
+        )
 
         training_freshness = {}
 

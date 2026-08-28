@@ -42,11 +42,15 @@ def test_main_attaches_priority_aware_modified_workout(
             self,
             client,
             runtime_config=None,
+            garmin_source_state_path=None,
         ):
             captured["context_client"] = client
             captured[
                 "context_runtime_config"
             ] = runtime_config
+            captured[
+                "garmin_source_state_path"
+            ] = garmin_source_state_path
 
         def build(self):
             return context

@@ -95,9 +95,11 @@ def test_run_pipeline_reports_context_build_phase(
             self,
             client,
             runtime_config=None,
+            garmin_source_state_path=None,
         ):
             self.client = client
             self.runtime_config = runtime_config
+            self.garmin_source_state_path = garmin_source_state_path
 
         def build(self):
             raise OSError(

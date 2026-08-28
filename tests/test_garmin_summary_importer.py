@@ -21,6 +21,16 @@ from backend.importers.garmin_summary_importer import (
     GarminSummaryImportError,
     GarminSummaryImporter,
 )
+from backend.importers.garmin_live_activity_adapter import (
+    GarminLiveActivityAdapter,
+)
+from backend.importers.garmin_live_sync import (
+    GarminLiveSync,
+)
+from backend.importers.garmin_activity_exporter import (
+    GarminActivityExporter,
+)
+from backend.models.activity import IronCoachActivity
 
 
 def _write_summary_file(
@@ -398,3 +408,220 @@ def test_missing_activity_id_raises_error(
         GarminSummaryImporter(
             str(source)
         ).import_activities()
+
+def test_live_activity_adapter_preserves_live_units() -> None:
+    activity = GarminLiveActivityAdapter.convert(
+        {
+            "activityId": 24134063811,
+            "activityName": "Live Test",
+            "activityType": {
+                "typeKey": "indoor_cycling",
+            },
+            "startTimeGMT": "2026-08-27 09:00:42",
+            "startTimeLocal": "2026-08-27 11:00:42",
+            "duration": 3603.52099609375,
+            "elapsedDuration": 3603.52099609375,
+            "movingDuration": 3598.72998046875,
+            "distance": 30329.140625,
+            "calories": 523.0,
+            "averageHR": 118.0,
+            "maxHR": 143.0,
+            "averageSpeed": 8.416999816894531,
+            "maxSpeed": 14.97599983215332,
+            "activityTrainingLoad": 56.946868896484375,
+            "aerobicTrainingEffect": 2.5,
+            "anaerobicTrainingEffect": 0.0,
+        }
+    )
+
+    assert activity.activity_id == (
+        "garmin:24134063811"
+    )
+    assert activity.source_id == "24134063811"
+    assert activity.sport == "BIKE"
+    assert activity.activity_type == "indoor_cycling"
+
+    assert activity.start_time == (
+        "2026-08-27T09:00:42Z"
+    )
+    assert activity.duration_seconds == 3604
+
+    # L'API live restituisce già metri e m/s:
+    # questi valori NON devono essere riconvertiti
+    # come quelli dell'export storico.
+    assert activity.distance_meters == pytest.approx(
+        30329.140625
+    )
+    assert activity.avg_speed == pytest.approx(
+        8.416999816894531
+    )
+
+    assert activity.calories == 523
+    assert activity.avg_hr == 118
+    assert activity.max_hr == 143
+    assert activity.training_load == pytest.approx(
+        56.946868896484375
+    )
+    assert activity.training_effect == 2.5
+
+    assert activity.metadata[
+        "garmin_live"
+    ][
+        "start_time_local"
+    ] == "2026-08-27 11:00:42"
+
+
+def test_live_sync_updates_archive_and_records_source_check(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    archive_path = (
+        tmp_path
+        / "garmin_activities_merged.jsonl.gz"
+    )
+    state_path = (
+        tmp_path
+        / "garmin_live_sync_state.json"
+    )
+
+    existing = IronCoachActivity(
+        activity_id="garmin:100",
+        source="garmin",
+        source_id="100",
+        start_time="2026-07-30T04:10:16Z",
+        sport="RUN",
+        activity_type="running",
+        duration_seconds=3600,
+        training_load=100.0,
+    )
+
+    GarminActivityExporter(
+        output_path=str(
+            archive_path
+        )
+    ).export(
+        [existing]
+    )
+
+    class FakeGarmin:
+        def __init__(self):
+            self.login_tokenstore = None
+            self.fetch_args = None
+
+        def login(
+            self,
+            tokenstore=None,
+        ):
+            self.login_tokenstore = tokenstore
+
+        def get_activities_by_date(
+            self,
+            startdate,
+            enddate=None,
+            activitytype=None,
+            sortorder=None,
+        ):
+            self.fetch_args = {
+                "startdate": startdate,
+                "enddate": enddate,
+                "sortorder": sortorder,
+            }
+
+            return [
+                {
+                    "activityId": 100,
+                    "activityType": {
+                        "typeKey": "running",
+                    },
+                    "startTimeGMT": (
+                        "2026-07-30 04:10:16"
+                    ),
+                    "duration": 3600.0,
+                },
+                {
+                    "activityId": 101,
+                    "activityType": {
+                        "typeKey": "indoor_cycling",
+                    },
+                    "startTimeGMT": (
+                        "2026-08-01 09:00:00"
+                    ),
+                    "duration": 1800.0,
+                    "distance": 15000.0,
+                    "activityTrainingLoad": 50.0,
+                },
+            ]
+
+    client = FakeGarmin()
+
+    monkeypatch.setattr(
+        GarminLiveSync,
+        "_utc_now",
+        staticmethod(
+            lambda: "2026-08-28T07:30:00Z"
+        ),
+    )
+
+    result = GarminLiveSync(
+        archive_path=str(
+            archive_path
+        ),
+        state_path=str(
+            state_path
+        ),
+        tokenstore=str(
+            tmp_path / "auth"
+        ),
+        client=client,
+    ).sync(
+        end_date="2026-08-28"
+    )
+
+    assert client.fetch_args == {
+        "startdate": "2026-07-30",
+        "enddate": "2026-08-28",
+        "sortorder": "asc",
+    }
+
+    assert result.fetched_count == 2
+    assert result.existing_count == 1
+    assert result.added_count == 1
+    assert result.skipped_existing == 1
+    assert result.activity_count == 2
+
+    assert result.source_checked_at == (
+        "2026-08-28T07:30:00Z"
+    )
+    assert result.last_activity_at == (
+        "2026-08-01T09:00:00Z"
+    )
+
+    state = json.loads(
+        state_path.read_text(
+            encoding="utf-8"
+        )
+    )
+
+    assert state[
+        "source_checked_at"
+    ] == "2026-08-28T07:30:00Z"
+
+    assert state[
+        "last_activity_at"
+    ] == "2026-08-01T09:00:00Z"
+
+    archived = GarminActivityExporter(
+        output_path=str(
+            archive_path
+        )
+    ).load(
+        validate_manifest=True
+    )
+
+    assert [
+        activity.source_id
+        for activity in archived
+    ] == [
+        "100",
+        "101",
+    ]

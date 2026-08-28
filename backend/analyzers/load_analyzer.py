@@ -128,14 +128,39 @@ class LoadAnalyzer:
             if session_date >= acute_start:
                 acute_load += load
 
-        level = self._classify(
+        training_window_complete = bool(
+            history.get(
+                "training_window_complete",
+                False,
+            )
+        )
+
+        absolute_level = self._classify(
             valid_load_sessions=sessions_with_load,
             chronic_load=chronic_load,
+            recent_sessions=sessions_28d,
+            training_window_complete=training_window_complete,
+        )
+
+        (
+            level,
+            classification_basis,
+            personal_baseline_weekly_load,
+        ) = self._personalize_level(
+            absolute_level=absolute_level,
+            acute_load=acute_load,
+            load_tolerance=history.get(
+                "load_tolerance",
+                {},
+            ),
         )
 
         reasons = self._build_reasons(
             level=level,
             valid_load_sessions=sessions_with_load,
+            recent_sessions=sessions_28d,
+            training_window_complete=training_window_complete,
+            classification_basis=classification_basis,
         )
 
         chronic_weekly_average = (
@@ -152,6 +177,17 @@ class LoadAnalyzer:
 
         return {
             "level": level,
+            "absolute_level": absolute_level,
+            "classification_basis": classification_basis,
+            "personal_baseline_weekly_load": (
+                round(
+                    personal_baseline_weekly_load,
+                    2,
+                )
+                if personal_baseline_weekly_load
+                is not None
+                else None
+            ),
 
             # Compatibilità storica:
             # total_load ora rappresenta il carico recente a 28 giorni.
@@ -386,7 +422,15 @@ class LoadAnalyzer:
         self,
         valid_load_sessions,
         chronic_load,
+        recent_sessions,
+        training_window_complete,
     ):
+        if (
+            recent_sessions == 0
+            and training_window_complete
+        ):
+            return self.LEVEL_LOW
+
         if valid_load_sessions == 0:
             return self.LEVEL_UNKNOWN
 
@@ -398,14 +442,124 @@ class LoadAnalyzer:
 
         return self.LEVEL_NORMAL
 
+    def _personalize_level(
+        self,
+        *,
+        absolute_level,
+        acute_load,
+        load_tolerance,
+    ):
+        """
+        Evita di interpretare automaticamente un volume
+        assoluto elevato come sovraccarico individuale.
+
+        La baseline è utilizzata solo quando:
+        - la stima è esplicitamente disponibile;
+        - la confidenza è MODERATE o HIGH;
+        - la baseline settimanale è positiva;
+        - il carico acuto non supera la baseline osservata.
+
+        In tutti gli altri casi resta valida la
+        classificazione assoluta storica.
+        """
+
+        if absolute_level != self.LEVEL_HIGH:
+            return (
+                absolute_level,
+                "ABSOLUTE_THRESHOLDS",
+                None,
+            )
+
+        if not isinstance(
+            load_tolerance,
+            dict,
+        ):
+            return (
+                absolute_level,
+                "ABSOLUTE_THRESHOLDS",
+                None,
+            )
+
+        status = str(
+            load_tolerance.get(
+                "status",
+                "",
+            )
+            or ""
+        ).strip().upper()
+
+        confidence = str(
+            load_tolerance.get(
+                "confidence",
+                "",
+            )
+            or ""
+        ).strip().upper()
+
+        baseline = self._number(
+            load_tolerance.get(
+                "baseline_weekly_load"
+            )
+        )
+
+        reliable_baseline = (
+            status == "STIMATA"
+            and confidence in {
+                "MODERATE",
+                "HIGH",
+            }
+            and baseline is not None
+            and baseline > 0
+        )
+
+        if (
+            reliable_baseline
+            and acute_load <= baseline
+        ):
+            return (
+                self.LEVEL_NORMAL,
+                "PERSONAL_BASELINE",
+                baseline,
+            )
+
+        return (
+            absolute_level,
+            "ABSOLUTE_THRESHOLDS",
+            baseline
+            if reliable_baseline
+            else None,
+        )
+
     def _build_reasons(
         self,
         level,
         valid_load_sessions,
+        recent_sessions,
+        training_window_complete,
+        classification_basis,
     ):
+        if (
+            recent_sessions == 0
+            and training_window_complete
+        ):
+            return [
+                "Nessuna attività registrata negli ultimi 28 giorni"
+            ]
+
         if valid_load_sessions == 0:
             return [
                 "Dati di carico recente insufficienti"
+            ]
+
+        if (
+            classification_basis
+            == "PERSONAL_BASELINE"
+        ):
+            return [
+                (
+                    "Carico assoluto elevato ma coerente "
+                    "con la baseline personale"
+                )
             ]
 
         if level == self.LEVEL_HIGH:
