@@ -137,6 +137,11 @@ class GarminLiveActivityAdapter:
                                 )
                             )
                         ),
+                        "vo2_max": cls._number(
+                            record.get(
+                                "vO2MaxValue"
+                            )
+                        ),
                     }
                 )
             },

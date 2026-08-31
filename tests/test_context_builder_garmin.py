@@ -117,6 +117,7 @@ def _activity(
     duration_seconds: float = 3600.0,
     distance_meters: float = 10000.0,
     training_load: float = 80.0,
+    metadata=None,
 ) -> IronCoachActivity:
     return IronCoachActivity(
         activity_id=f"garmin:{source_id}",
@@ -143,11 +144,15 @@ def _activity(
         training_load=training_load,
         training_effect=None,
         segments=[],
-        metadata={
-            "garmin_merge": {
-                "merge_status": "MERGED",
+        metadata=(
+            metadata
+            if metadata is not None
+            else {
+                "garmin_merge": {
+                    "merge_status": "MERGED",
+                }
             }
-        },
+        ),
     )
 
 
@@ -524,16 +529,82 @@ def test_recovery_and_performance_history_are_preserved() -> None:
 
     context = ContextBuilder(
         client,
-        garmin_archive=FakeArchive(),
+        garmin_archive=FakeArchive(
+            [
+                _activity(
+                    source_id="vo2-run",
+                    start_time=(
+                        "2025-01-02T08:00:00Z"
+                    ),
+                    sport="RUN",
+                    metadata={
+                        "garmin": {
+                            "vo2_max": 56.0,
+                        }
+                    },
+                ),
+                _activity(
+                    source_id="vo2-bike",
+                    start_time=(
+                        "2025-01-03T08:00:00Z"
+                    ),
+                    sport="BIKE",
+                    metadata={
+                        "garmin_live": {
+                            "vo2_max": 55.0,
+                        }
+                    },
+                ),
+                _activity(
+                    source_id="vo2-other",
+                    start_time=(
+                        "2025-01-04T08:00:00Z"
+                    ),
+                    sport="OTHER",
+                    metadata={
+                        "garmin": {
+                            "vo2_max": 60.0,
+                        }
+                    },
+                ),
+            ]
+        ),
+        training_max_age_days=10000,
     ).build()
 
     assert len(
         context["recovery_history"]
     ) == 1
 
+    # Airtable Performance resta separato e invariato.
     assert len(
         context["performance_history"]
     ) == 1
+
+    assert context[
+        "garmin_performance_history"
+    ] == [
+        {
+            "date": "2025-01-02T08:00:00Z",
+            "metric": "vo2max_run",
+            "value": 56.0,
+            "source": "garmin",
+            "source_id": "vo2-run",
+        },
+        {
+            "date": "2025-01-03T08:00:00Z",
+            "metric": "vo2max_bike",
+            "value": 55.0,
+            "source": "garmin",
+            "source_id": "vo2-bike",
+        },
+    ]
+
+    assert context[
+        "history_sources"
+    ][
+        "garmin_performance_total"
+    ] == 2
 
     assert context["context_warnings"] == []
 

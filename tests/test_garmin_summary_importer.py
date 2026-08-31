@@ -431,6 +431,7 @@ def test_live_activity_adapter_preserves_live_units() -> None:
             "activityTrainingLoad": 56.946868896484375,
             "aerobicTrainingEffect": 2.5,
             "anaerobicTrainingEffect": 0.0,
+            "vO2MaxValue": 55.0,
         }
     )
 
@@ -469,6 +470,12 @@ def test_live_activity_adapter_preserves_live_units() -> None:
     ][
         "start_time_local"
     ] == "2026-08-27 11:00:42"
+
+    assert activity.metadata[
+        "garmin_live"
+    ][
+        "vo2_max"
+    ] == pytest.approx(55.0)
 
 
 def test_live_sync_updates_archive_and_records_source_check(
@@ -537,6 +544,7 @@ def test_live_sync_updates_archive_and_records_source_check(
                         "2026-07-30 04:10:16"
                     ),
                     "duration": 3600.0,
+                    "vO2MaxValue": 57.0,
                 },
                 {
                     "activityId": 101,
@@ -625,3 +633,19 @@ def test_live_sync_updates_archive_and_records_source_check(
         "100",
         "101",
     ]
+
+    # Il duplicato resta skipped dall'export incrementale,
+    # ma può essere arricchito con metadata live più recenti.
+    existing_after_sync = archived[0]
+
+    assert existing_after_sync.activity_id == (
+        "garmin:100"
+    )
+    assert existing_after_sync.source_id == "100"
+    assert existing_after_sync.training_load == 100.0
+
+    assert existing_after_sync.metadata[
+        "garmin_live"
+    ][
+        "vo2_max"
+    ] == pytest.approx(57.0)

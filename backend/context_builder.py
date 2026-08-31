@@ -114,6 +114,11 @@ class ContextBuilder:
 
         airtable_sessions = self._load_airtable_training(warnings)
         garmin_sessions = self._load_garmin_training(warnings)
+        garmin_performance_history = (
+            self._build_garmin_performance_history(
+                garmin_sessions
+            )
+        )
         merged_sessions = self._merge_training_sessions(
             garmin_sessions,
             airtable_sessions,
@@ -241,6 +246,13 @@ class ContextBuilder:
             "garmin_enabled": self.include_garmin,
         }
 
+        if garmin_performance_history:
+            history_sources[
+                "garmin_performance_total"
+            ] = len(
+                garmin_performance_history
+            )
+
         if source_checked_at:
             history_sources.update(
                 {
@@ -306,6 +318,9 @@ class ContextBuilder:
             "airtable_training_history": list(airtable_sessions),
             "garmin_recovery_history": list(
                 garmin_recovery_history
+            ),
+            "garmin_performance_history": list(
+                garmin_performance_history
             ),
             "recovery_history": (
                 recovery_history.records
@@ -541,6 +556,100 @@ class ContextBuilder:
         normalized["segments"] = list(activity.segments or [])
         normalized["metadata"] = dict(activity.metadata or {})
         return normalized
+
+    @staticmethod
+    def _build_garmin_performance_history(
+        garmin_sessions: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        observations: List[Dict[str, Any]] = []
+
+        metric_by_sport = {
+            "RUN": "vo2max_run",
+            "BIKE": "vo2max_bike",
+        }
+
+        for session in garmin_sessions:
+            if not isinstance(session, dict):
+                continue
+
+            sport = str(
+                session.get("sport")
+                or ""
+            ).strip().upper()
+
+            metric = metric_by_sport.get(
+                sport
+            )
+
+            if metric is None:
+                continue
+
+            date = session.get("date")
+
+            if date in (None, ""):
+                continue
+
+            metadata = (
+                session.get("metadata")
+                or {}
+            )
+
+            if not isinstance(
+                metadata,
+                dict,
+            ):
+                continue
+
+            live = (
+                metadata.get("garmin_live")
+                or {}
+            )
+            historical = (
+                metadata.get("garmin")
+                or {}
+            )
+
+            value = None
+
+            if isinstance(live, dict):
+                value = live.get(
+                    "vo2_max"
+                )
+
+            if (
+                value in (None, "")
+                and isinstance(
+                    historical,
+                    dict,
+                )
+            ):
+                value = historical.get(
+                    "vo2_max"
+                )
+
+            try:
+                numeric_value = float(
+                    value
+                )
+            except (TypeError, ValueError):
+                continue
+
+            if numeric_value <= 0:
+                continue
+
+            observations.append(
+                {
+                    "date": date,
+                    "metric": metric,
+                    "value": numeric_value,
+                    "source": "garmin",
+                    "source_id": session.get(
+                        "source_id"
+                    ),
+                }
+            )
+
+        return observations
 
     def _merge_training_sessions(
         self,
