@@ -122,3 +122,47 @@ def test_matcher_uses_planned_workout_sport_as_fallback():
     )
 
     assert activity is None
+
+    activity = matcher.find_match(
+        _episode(
+            recommended_workout={
+                "sport": "UNKNOWN",
+            },
+            planned_workout={
+                "sport": "RUN",
+            },
+        ),
+        [
+            {
+                "source": "garmin",
+                "source_id": "2002",
+                "activity_id": "garmin:2002",
+                "date": "2026-08-24T18:00:00Z",
+                "sport": "RUN",
+            },
+        ],
+    )
+
+    assert activity["source_id"] == "2002"
+
+    activity = matcher.find_match(
+        _episode(
+            recommended_workout={
+                "sport": "UNKNOWN",
+            },
+            planned_workout={
+                "sport": "UNKNOWN",
+            },
+        ),
+        [
+            {
+                "source": "garmin",
+                "source_id": "2003",
+                "activity_id": "garmin:2003",
+                "date": "2026-08-24T18:00:00Z",
+                "sport": "SWIM",
+            },
+        ],
+    )
+
+    assert activity["source_id"] == "2003"

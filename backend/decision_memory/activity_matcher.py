@@ -88,26 +88,38 @@ class ActivityMatcher:
             or {}
         )
 
-        sport = recommended_workout.get(
-            "sport"
-        )
-
-        if not sport:
-            planned_workout = (
-                episode.planned_workout
-                or {}
-            )
-
-            sport = planned_workout.get(
+        recommended_sport = str(
+            recommended_workout.get(
                 "sport"
             )
+            or ""
+        ).strip().upper()
 
-        if not sport:
+        if recommended_sport not in {
+            "",
+            "UNKNOWN",
+        }:
+            return recommended_sport
+
+        planned_workout = (
+            episode.planned_workout
+            or {}
+        )
+
+        planned_sport = str(
+            planned_workout.get(
+                "sport"
+            )
+            or ""
+        ).strip().upper()
+
+        if planned_sport in {
+            "",
+            "UNKNOWN",
+        }:
             return None
 
-        return str(
-            sport
-        ).upper()
+        return planned_sport
 
     def _parse_datetime(
         self,
