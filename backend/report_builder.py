@@ -822,6 +822,51 @@ class ReportBuilder:
                 latest_fueling = item
                 break
 
+        garmin_recovery_history = context.get(
+            "garmin_recovery_history",
+            [],
+        ) or []
+
+        latest_garmin_recovery = {}
+
+        for item in reversed(
+            garmin_recovery_history
+        ):
+            if isinstance(item, dict):
+                latest_garmin_recovery = item
+                break
+
+        garmin_performance_history = context.get(
+            "garmin_performance_history",
+            [],
+        ) or []
+
+        latest_garmin_vo2 = {}
+
+        for item in reversed(
+            garmin_performance_history
+        ):
+            if not isinstance(item, dict):
+                continue
+
+            metric = item.get("metric")
+
+            if (
+                metric
+                in (
+                    "vo2max_run",
+                    "vo2max_bike",
+                )
+                and metric
+                not in latest_garmin_vo2
+            ):
+                latest_garmin_vo2[metric] = (
+                    item.get("value")
+                )
+
+            if len(latest_garmin_vo2) == 2:
+                break
+
         report.append("")
 
 
@@ -1042,6 +1087,58 @@ class ReportBuilder:
             "estimated_water_ml"
         )
 
+        garmin_recovery_parts = []
+
+        resting_hr = latest_garmin_recovery.get(
+            "resting_hr"
+        )
+        garmin_stress = latest_garmin_recovery.get(
+            "stress"
+        )
+        body_battery = latest_garmin_recovery.get(
+            "body_battery"
+        )
+
+        if resting_hr not in (
+            None,
+            "",
+        ):
+            garmin_recovery_parts.append(
+                "FC riposo "
+                f"{float(resting_hr):g} bpm"
+            )
+
+        if garmin_stress not in (
+            None,
+            "",
+        ):
+            garmin_recovery_parts.append(
+                "Stress "
+                f"{float(garmin_stress):g}"
+            )
+
+        if body_battery not in (
+            None,
+            "",
+        ):
+            garmin_recovery_parts.append(
+                "Body Battery "
+                f"{float(body_battery):g}"
+            )
+
+        garmin_recovery_date = (
+            latest_garmin_recovery.get(
+                "date"
+            )
+        )
+
+        garmin_vo2_run = latest_garmin_vo2.get(
+            "vo2max_run"
+        )
+        garmin_vo2_bike = latest_garmin_vo2.get(
+            "vo2max_bike"
+        )
+
 
 
         report.append(
@@ -1076,6 +1173,74 @@ class ReportBuilder:
             f"• Nutrizione: {nutrition_state}"
 
         )
+
+
+
+        if garmin_recovery_parts:
+
+            recovery_label = (
+                "• Osservazioni Garmin recovery"
+            )
+
+            if garmin_recovery_date not in (
+                None,
+                "",
+            ):
+                recovery_label += (
+                    f" ({garmin_recovery_date})"
+                )
+
+            report.append(
+
+                recovery_label
+                + ": "
+                + "; ".join(
+                    garmin_recovery_parts
+                )
+
+            )
+
+
+
+        if (
+            garmin_vo2_run not in (
+                None,
+                "",
+            )
+            or garmin_vo2_bike not in (
+                None,
+                "",
+            )
+        ):
+
+            vo2_parts = []
+
+            if garmin_vo2_run not in (
+                None,
+                "",
+            ):
+                vo2_parts.append(
+                    "corsa "
+                    f"{float(garmin_vo2_run):g}"
+                )
+
+            if garmin_vo2_bike not in (
+                None,
+                "",
+            ):
+                vo2_parts.append(
+                    "bici "
+                    f"{float(garmin_vo2_bike):g}"
+                )
+
+            report.append(
+
+                "• Garmin VO₂max osservato: "
+                + "; ".join(
+                    vo2_parts
+                )
+
+            )
 
 
 

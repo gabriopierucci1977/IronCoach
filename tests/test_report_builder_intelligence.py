@@ -222,6 +222,34 @@ def test_coach_summary_reads_recovery_state_from_raw_data() -> None:
         }
     ]
 
+    context["garmin_recovery_history"] = [
+        {
+            "source": "garmin",
+            "source_id": "garmin-recovery:2026-08-28",
+            "date": "2026-08-28",
+            "resting_hr": 43.0,
+            "stress": 18.0,
+            "body_battery": 83.0,
+        }
+    ]
+
+    context["garmin_performance_history"] = [
+        {
+            "date": "2026-08-26T16:10:14Z",
+            "metric": "vo2max_run",
+            "value": 57.0,
+            "source": "garmin",
+            "source_id": "24126326294",
+        },
+        {
+            "date": "2026-08-27T09:00:42Z",
+            "metric": "vo2max_bike",
+            "value": 55.0,
+            "source": "garmin",
+            "source_id": "24134063811",
+        },
+    ]
+
     context["recovery"] = {
         "readiness": 69,
         "sleep": {
@@ -245,6 +273,19 @@ def test_coach_summary_reads_recovery_state_from_raw_data() -> None:
     ) in report
 
     assert "• Nutrizione: N/D" in report
+
+    assert (
+        "• Osservazioni Garmin recovery "
+        "(2026-08-28): "
+        "FC riposo 43 bpm; "
+        "Stress 18; "
+        "Body Battery 83"
+    ) in report
+
+    assert (
+        "• Garmin VO₂max osservato: "
+        "corsa 57; bici 55"
+    ) in report
 
     assert (
         "• Costo energetico seduta Garmin: "
