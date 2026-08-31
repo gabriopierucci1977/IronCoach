@@ -1764,3 +1764,114 @@ Stato noto al momento dell'handoff:
 - report osservativo Garmin: non modifica `DecisionEngine`;
 - prossimo step: definire eventuali contratti decisionali per i dati
   osservativi senza introdurre interpretazioni automatiche arbitrarie.
+
+---
+
+## 37. Checkpoint 31 agosto 2026 — Decision Memory activity matching
+
+### 37.1 Fix `UNKNOWN` nello sport atteso
+
+Commit:
+
+`8ac51b7 fix: treat unknown workout sport as unspecified`
+
+Problema rilevato sul primo episodio reale Decision Memory:
+
+- `recommended_workout.sport = UNKNOWN`;
+- `planned_workout.sport = UNKNOWN`;
+- il matcher trattava la stringa `UNKNOWN` come se fosse uno sport reale;
+- di conseguenza SWIM / BIKE / RUN venivano tutte escluse per incompatibilità.
+
+Correzione:
+
+- `UNKNOWN` e stringa vuota significano ora sport non specificato;
+- se il recommended sport è non specificato viene controllato il planned sport;
+- se anche il planned sport è non specificato, il matcher non applica alcun filtro sport.
+
+Validazione reale, senza scritture sul database:
+
+- expected sport normalizzato: `None`;
+- attività Garmin successive alla decisione: SWIM, BIKE, RUN;
+- risultato `find_match`: `None`, correttamente ambiguo.
+
+Suite dopo il fix:
+
+`500 passed, 5 skipped`
+
+### 37.2 Gestione esplicita del matching ambiguo
+
+Commit:
+
+`c27187e fix: resolve ambiguous activity matching safely`
+
+L'analisi del runtime ha mostrato che:
+
+- `garmin_training_history` viene passato al Decision Memory Activity Runtime;
+- il matcher filtra le attività successive alla decisione;
+- prima di questo fix, zero candidate e più candidate producevano entrambe `None`;
+- il processor lasciava quindi l'episodio indefinitamente in `WAITING_FOR_ACTIVITY`.
+
+Il contratto Beta 0.4 già stabiliva:
+
+- una sola attività compatibile può essere accettata;
+- un match ambiguo non deve essere indovinato;
+- l'aderenza in caso di informazione insufficiente deve essere `UNKNOWN`.
+
+Il flusso è ora:
+
+- 0 candidate -> resta `WAITING_FOR_ACTIVITY`;
+- 1 candidata -> viene collegata e passa a `WAITING_FOR_OUTCOME`;
+- più candidate -> nessuna attività viene scelta, ma l'episodio passa a `WAITING_FOR_OUTCOME`;
+- `OutcomeEvaluator` può quindi valutare l'aderenza come `UNKNOWN`.
+
+Non è stata introdotta alcuna finestra temporale arbitraria di matching.
+
+Il lifecycle consente ora:
+
+`mark_waiting_for_outcome(episode, activity=None)`
+
+senza inventare `actual_activity`, `actual_activity_id` o `actual_activity_source`.
+
+`ActivityMatcher.find_match()` resta retrocompatibile.
+
+È stato aggiunto `find_candidates()` per distinguere correttamente:
+
+- nessuna candidata;
+- una candidata;
+- ambiguità.
+
+### 37.3 Validazione sul primo episodio reale
+
+La validazione è stata eseguita interamente in memoria con SQLite aperto in modalità read-only.
+
+Il database reale non è stato aggiornato.
+
+Risultato:
+
+- candidate count: `3`;
+- candidate sports: `SWIM`, `BIKE`, `RUN`;
+- status simulato: `WAITING_FOR_OUTCOME`;
+- actual activity: `None`;
+- adherence status: `UNKNOWN`.
+
+Quindi il comportamento reale atteso è:
+
+`3 attività candidate -> nessuna scelta arbitraria -> WAITING_FOR_OUTCOME -> adherence UNKNOWN`
+
+L'episodio presente nel database resta ancora invariato finché non verrà eseguito un normale ciclo Decision Memory non-dry-run.
+
+### 37.4 Stato test finale
+
+Suite completa dopo tutte le modifiche:
+
+`501 passed, 5 skipped in 1.74s`
+
+### 37.5 Punto di ripartenza
+
+Alla ripresa:
+
+1. verificare `git status`;
+2. verificare/pushare i commit di questo checkpoint;
+3. decidere se eseguire intenzionalmente il normale processing del primo episodio reale;
+4. evitare di eseguire casualmente `backend.main` non-dry-run, perché salva anche una nuova decisione Airtable e SQLite;
+5. proseguire Beta 0.4 mantenendo Garmin Recovery, Performance e Fueling osservazionali e separati dai segnali decision-driving finché non esiste un contratto semantico affidabile.
