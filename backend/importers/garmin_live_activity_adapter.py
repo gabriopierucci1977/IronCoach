@@ -142,6 +142,11 @@ class GarminLiveActivityAdapter:
                                 "vO2MaxValue"
                             )
                         ),
+                        "water_estimated_ml": cls._number(
+                            record.get(
+                                "waterEstimated"
+                            )
+                        ),
                     }
                 )
             },

@@ -117,6 +117,7 @@ def _activity(
     duration_seconds: float = 3600.0,
     distance_meters: float = 10000.0,
     training_load: float = 80.0,
+    calories=None,
     metadata=None,
 ) -> IronCoachActivity:
     return IronCoachActivity(
@@ -132,7 +133,7 @@ def _activity(
         distance_meters=distance_meters,
         elevation_gain=None,
         elevation_loss=None,
-        calories=None,
+        calories=calories,
         avg_speed=None,
         max_speed=None,
         avg_hr=145,
@@ -322,6 +323,12 @@ def test_garmin_conversion_preserves_core_metrics() -> None:
                 duration_seconds=5400,
                 distance_meters=21097.5,
                 training_load=123.4,
+                calories=672,
+                metadata={
+                    "garmin_live": {
+                        "water_estimated_ml": 824.0,
+                    }
+                },
             )
         ]
     )
@@ -343,6 +350,31 @@ def test_garmin_conversion_preserves_core_metrics() -> None:
     assert session["duration_minutes"] == 90.0
     assert session["distance_km"] == 21.1
     assert session["training_load"] == 123.4
+    assert session["calories"] == 672
+
+    assert context[
+        "garmin_fueling_demand_history"
+    ] == [
+        {
+            "date": "2025-02-01T10:00:00Z",
+            "source": "garmin",
+            "source_id": "2001",
+            "sport": "RUN",
+            "calories_burned": 672.0,
+            "estimated_water_ml": 824.0,
+        }
+    ]
+
+    assert context[
+        "history_sources"
+    ][
+        "garmin_fueling_demand_total"
+    ] == 1
+
+    # Il costo della seduta non diventa automaticamente
+    # uno stato nutrizionale dell'atleta.
+    assert context["nutrition"] == {}
+
     assert session["heart_rate"] == {
         "average": 145,
         "max": 170,

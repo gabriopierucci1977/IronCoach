@@ -432,6 +432,7 @@ def test_live_activity_adapter_preserves_live_units() -> None:
             "aerobicTrainingEffect": 2.5,
             "anaerobicTrainingEffect": 0.0,
             "vO2MaxValue": 55.0,
+            "waterEstimated": 739.0,
         }
     )
 
@@ -476,6 +477,12 @@ def test_live_activity_adapter_preserves_live_units() -> None:
     ][
         "vo2_max"
     ] == pytest.approx(55.0)
+
+    assert activity.metadata[
+        "garmin_live"
+    ][
+        "water_estimated_ml"
+    ] == pytest.approx(739.0)
 
 
 def test_live_sync_updates_archive_and_records_source_check(

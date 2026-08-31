@@ -119,6 +119,11 @@ class ContextBuilder:
                 garmin_sessions
             )
         )
+        garmin_fueling_demand_history = (
+            self._build_garmin_fueling_demand_history(
+                garmin_sessions
+            )
+        )
         merged_sessions = self._merge_training_sessions(
             garmin_sessions,
             airtable_sessions,
@@ -253,6 +258,13 @@ class ContextBuilder:
                 garmin_performance_history
             )
 
+        if garmin_fueling_demand_history:
+            history_sources[
+                "garmin_fueling_demand_total"
+            ] = len(
+                garmin_fueling_demand_history
+            )
+
         if source_checked_at:
             history_sources.update(
                 {
@@ -321,6 +333,9 @@ class ContextBuilder:
             ),
             "garmin_performance_history": list(
                 garmin_performance_history
+            ),
+            "garmin_fueling_demand_history": list(
+                garmin_fueling_demand_history
             ),
             "recovery_history": (
                 recovery_history.records
@@ -553,9 +568,114 @@ class ContextBuilder:
         normalized["activity_id"] = activity.activity_id
         normalized["source_id"] = activity.source_id
         normalized["file_hash"] = activity.file_hash
+        normalized["calories"] = activity.calories
         normalized["segments"] = list(activity.segments or [])
         normalized["metadata"] = dict(activity.metadata or {})
         return normalized
+
+    @staticmethod
+    def _build_garmin_fueling_demand_history(
+        garmin_sessions: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        """
+        Espone soltanto il costo osservato/stimato della seduta.
+
+        Non rappresenta ciò che l'atleta ha mangiato o bevuto e
+        non produce uno stato nutrizionale o di idratazione.
+        """
+
+        observations: List[Dict[str, Any]] = []
+
+        for session in garmin_sessions:
+            if not isinstance(session, dict):
+                continue
+
+            date = session.get("date")
+
+            if date in (None, ""):
+                continue
+
+            calories = session.get(
+                "calories"
+            )
+
+            try:
+                calories_burned = float(
+                    calories
+                )
+            except (TypeError, ValueError):
+                calories_burned = None
+
+            if (
+                calories_burned is not None
+                and calories_burned <= 0
+            ):
+                calories_burned = None
+
+            metadata = (
+                session.get("metadata")
+                or {}
+            )
+
+            live = (
+                metadata.get("garmin_live")
+                if isinstance(
+                    metadata,
+                    dict,
+                )
+                else {}
+            ) or {}
+
+            water = (
+                live.get(
+                    "water_estimated_ml"
+                )
+                if isinstance(
+                    live,
+                    dict,
+                )
+                else None
+            )
+
+            try:
+                estimated_water_ml = float(
+                    water
+                )
+            except (TypeError, ValueError):
+                estimated_water_ml = None
+
+            if (
+                estimated_water_ml is not None
+                and estimated_water_ml <= 0
+            ):
+                estimated_water_ml = None
+
+            if (
+                calories_burned is None
+                and estimated_water_ml is None
+            ):
+                continue
+
+            observations.append(
+                {
+                    "date": date,
+                    "source": "garmin",
+                    "source_id": session.get(
+                        "source_id"
+                    ),
+                    "sport": session.get(
+                        "sport"
+                    ),
+                    "calories_burned": (
+                        calories_burned
+                    ),
+                    "estimated_water_ml": (
+                        estimated_water_ml
+                    ),
+                }
+            )
+
+        return observations
 
     @staticmethod
     def _build_garmin_performance_history(
