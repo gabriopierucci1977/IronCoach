@@ -33,12 +33,27 @@ class ActivityMatcher:
         episode,
         activities: List[Dict[str, Any]],
     ) -> Optional[Dict[str, Any]]:
+        candidates = self.find_candidates(
+            episode,
+            activities,
+        )
+
+        if len(candidates) != 1:
+            return None
+
+        return candidates[0]
+
+    def find_candidates(
+        self,
+        episode,
+        activities: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
         decision_time = self._parse_datetime(
             episode.decision_timestamp
         )
 
         if decision_time is None:
-            return None
+            return []
 
         expected_sport = self._expected_sport(
             episode
@@ -65,7 +80,7 @@ class ActivityMatcher:
                         "sport"
                     )
                     or ""
-                ).upper()
+                ).strip().upper()
 
                 if activity_sport != expected_sport:
                     continue
@@ -74,10 +89,7 @@ class ActivityMatcher:
                 activity
             )
 
-        if len(candidates) != 1:
-            return None
-
-        return candidates[0]
+        return candidates
 
     def _expected_sport(
         self,

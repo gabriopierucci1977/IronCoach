@@ -39,7 +39,7 @@ class DecisionEpisodeLifecycle:
     def mark_waiting_for_outcome(
         self,
         episode: DecisionEpisode,
-        activity,
+        activity=None,
     ) -> DecisionEpisode:
         if episode.status != "WAITING_FOR_ACTIVITY":
             raise ValueError(
@@ -48,16 +48,17 @@ class DecisionEpisodeLifecycle:
                 "WAITING_FOR_ACTIVITY."
             )
 
-        episode.actual_activity = activity
+        if activity is not None:
+            episode.actual_activity = activity
 
-        episode.actual_activity_id = (
-            activity.get("activity_id")
-            or activity.get("source_id")
-        )
+            episode.actual_activity_id = (
+                activity.get("activity_id")
+                or activity.get("source_id")
+            )
 
-        episode.actual_activity_source = (
-            activity.get("source")
-        )
+            episode.actual_activity_source = (
+                activity.get("source")
+            )
 
         episode.status = "WAITING_FOR_OUTCOME"
 

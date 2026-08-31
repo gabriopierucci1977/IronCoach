@@ -43,13 +43,19 @@ class DecisionMemoryActivityProcessor:
         episode,
         activities,
     ):
-        activity = self.matcher.find_match(
+        candidates = self.matcher.find_candidates(
             episode,
             activities,
         )
 
-        if activity is None:
+        if not candidates:
             return None
+
+        activity = (
+            candidates[0]
+            if len(candidates) == 1
+            else None
+        )
 
         self.lifecycle.mark_waiting_for_outcome(
             episode,
