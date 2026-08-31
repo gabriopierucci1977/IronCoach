@@ -807,6 +807,21 @@ class ReportBuilder:
             "nutrition",
             {},
         ) or {}
+
+        fueling_history = context.get(
+            "garmin_fueling_demand_history",
+            [],
+        ) or []
+
+        latest_fueling = {}
+
+        for item in reversed(
+            fueling_history
+        ):
+            if isinstance(item, dict):
+                latest_fueling = item
+                break
+
         report.append("")
 
 
@@ -1019,6 +1034,14 @@ class ReportBuilder:
             ],
         )
 
+        calories_burned = latest_fueling.get(
+            "calories_burned"
+        )
+
+        estimated_water_ml = latest_fueling.get(
+            "estimated_water_ml"
+        )
+
 
 
         report.append(
@@ -1053,6 +1076,34 @@ class ReportBuilder:
             f"• Nutrizione: {nutrition_state}"
 
         )
+
+
+
+        if calories_burned not in (
+            None,
+            "",
+        ):
+
+            report.append(
+
+                "• Costo energetico seduta Garmin: "
+                f"{float(calories_burned):g} kcal"
+
+            )
+
+
+
+        if estimated_water_ml not in (
+            None,
+            "",
+        ):
+
+            report.append(
+
+                "• Liquidi stimati dalla seduta Garmin: "
+                f"{float(estimated_water_ml):g} ml"
+
+            )
 
 
 

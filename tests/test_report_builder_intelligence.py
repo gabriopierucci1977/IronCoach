@@ -209,6 +209,19 @@ def test_intelligence_is_not_duplicated_as_raw_decision_field() -> None:
 def test_coach_summary_reads_recovery_state_from_raw_data() -> None:
     context = _context()
 
+    context["nutrition"] = {}
+
+    context["garmin_fueling_demand_history"] = [
+        {
+            "date": "2026-08-26T16:10:14Z",
+            "source": "garmin",
+            "source_id": "24126326294",
+            "sport": "RUN",
+            "calories_burned": 672.0,
+            "estimated_water_ml": 824.0,
+        }
+    ]
+
     context["recovery"] = {
         "readiness": 69,
         "sleep": {
@@ -229,6 +242,18 @@ def test_coach_summary_reads_recovery_state_from_raw_data() -> None:
     assert (
         "• Stato recovery: GIALLO, "
         "Recovery Score 69"
+    ) in report
+
+    assert "• Nutrizione: N/D" in report
+
+    assert (
+        "• Costo energetico seduta Garmin: "
+        "672 kcal"
+    ) in report
+
+    assert (
+        "• Liquidi stimati dalla seduta Garmin: "
+        "824 ml"
     ) in report
 
 
