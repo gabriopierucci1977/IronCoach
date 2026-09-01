@@ -40,6 +40,12 @@ class DecisionMemoryRecoveryOutcomeEvaluator:
         "REDUCE_LOAD",
     }
 
+    UNCERTAINTY_PRIMARY_INTENT = (
+        "MANAGE_UNCERTAINTY"
+    )
+
+    LEVEL_UNKNOWN = "UNKNOWN"
+
     LEVEL_RANK = {
         "LOW": 0,
         "MODERATE": 1,
@@ -149,6 +155,16 @@ class DecisionMemoryRecoveryOutcomeEvaluator:
                 end_day=end_day,
             )
 
+        if (
+            episode.primary_intent
+            == self.UNCERTAINTY_PRIMARY_INTENT
+        ):
+            result["overall"] = (
+                self._evaluate_uncertainty_overall(
+                    result
+                )
+            )
+
         return result
 
     def _evaluate_window(
@@ -194,6 +210,19 @@ class DecisionMemoryRecoveryOutcomeEvaluator:
             }
 
         evidence["mature"] = True
+
+        if (
+            episode.primary_intent
+            == self.UNCERTAINTY_PRIMARY_INTENT
+        ):
+            return self._evaluate_uncertainty_window(
+                baseline_level=baseline_level,
+                observations=observations,
+                decision_date=decision_date,
+                start_day=start_day,
+                end_day=end_day,
+                evidence=evidence,
+            )
 
         if (
             episode.primary_intent
@@ -306,6 +335,158 @@ class DecisionMemoryRecoveryOutcomeEvaluator:
         return {
             "status": status,
             "evidence": evidence,
+        }
+
+    def _evaluate_uncertainty_window(
+        self,
+        baseline_level,
+        observations,
+        decision_date,
+        start_day,
+        end_day,
+        evidence,
+    ):
+        if baseline_level != self.LEVEL_UNKNOWN:
+            evidence["reason"] = (
+                "baseline_recovery_not_uncertain"
+            )
+
+            return {
+                "status": "INSUFFICIENT_DATA",
+                "evidence": evidence,
+            }
+
+        candidates = [
+            item
+            for item in observations
+            if start_day
+            <= (
+                item["date"]
+                - decision_date
+            ).days
+            <= end_day
+        ]
+
+        if not candidates:
+            evidence["reason"] = (
+                "no_recovery_observation_in_window"
+            )
+
+            return {
+                "status": "INSUFFICIENT_DATA",
+                "evidence": evidence,
+            }
+
+        valid = []
+
+        for item in candidates:
+            assessment = self.analyzer.analyze(
+                item["record"]
+            )
+
+            level = assessment.get(
+                "level",
+                self.LEVEL_UNKNOWN,
+            )
+
+            if level in self.LEVEL_RANK:
+                valid.append(
+                    (
+                        item,
+                        level,
+                    )
+                )
+
+        if not valid:
+            evidence["reason"] = (
+                "recovery_observations_remain_unknown"
+            )
+
+            return {
+                "status": "INSUFFICIENT_DATA",
+                "evidence": evidence,
+            }
+
+        observation, post_level = max(
+            valid,
+            key=lambda item: item[0][
+                "date"
+            ],
+        )
+
+        evidence[
+            "observation_date"
+        ] = observation[
+            "date"
+        ].isoformat()
+
+        evidence[
+            "post_level"
+        ] = post_level
+
+        evidence["reason"] = (
+            "recovery_data_became_evaluable"
+        )
+
+        return {
+            "status": "POSITIVE",
+            "evidence": evidence,
+        }
+
+    @staticmethod
+    def _evaluate_uncertainty_overall(
+        result,
+    ):
+        window_statuses = {
+            window_name: (
+                result.get(
+                    window_name,
+                    {},
+                ).get(
+                    "status"
+                )
+            )
+            for window_name in (
+                "24h",
+                "72h",
+                "7d",
+            )
+        }
+
+        if window_statuses.get(
+            "7d"
+        ) is None:
+            return {
+                "status": None,
+                "evidence": {
+                    "mature": False,
+                    "window_statuses": (
+                        window_statuses
+                    ),
+                },
+            }
+
+        if "POSITIVE" in window_statuses.values():
+            status = "POSITIVE"
+            reason = (
+                "uncertainty_reduced_in_at_least_one_window"
+            )
+
+        else:
+            status = "INSUFFICIENT_DATA"
+            reason = (
+                "no_evaluable_recovery_data_in_outcome_windows"
+            )
+
+        return {
+            "status": status,
+            "evidence": {
+                "mature": True,
+                "reason": reason,
+                "window_statuses": (
+                    window_statuses
+                ),
+            },
         }
 
     def _prepare_observations(

@@ -8,7 +8,7 @@ Principi:
 - aderenza e outcome restano concetti separati;
 - le finestre non ancora mature restano senza status;
 - l'overall viene definito solo alla maturazione dei 7 giorni;
-- l'overall coincide con il risultato della finestra 7d;
+- l'overall usa il 7d salvo un risultato intent-specific fornito dall'evaluator;
 - dati insufficienti a 7d producono un outcome INSUFFICIENT_DATA ma chiudono l'episodio COMPLETE.
 """
 
@@ -107,15 +107,39 @@ class DecisionMemoryRecoveryOutcomeProcessor:
             "status"
         )
 
-        if outcome_7d_status is not None:
+        intent_specific_overall = (
+            evaluation.get(
+                "overall"
+            )
+        )
+
+        overall = (
+            intent_specific_overall
+            if intent_specific_overall is not None
+            else outcome_7d
+        )
+
+        overall_status = overall.get(
+            "status"
+        )
+
+        if (
+            outcome_7d_status is not None
+            and overall_status is not None
+        ):
             episode.overall_outcome_status = (
-                outcome_7d_status
+                overall_status
             )
 
             episode.overall_outcome_evidence = {
-                "source_window": "7d",
+                "source_window": (
+                    "overall"
+                    if intent_specific_overall
+                    is not None
+                    else "7d"
+                ),
                 "window_evidence": (
-                    outcome_7d.get(
+                    overall.get(
                         "evidence",
                         {},
                     )
@@ -127,7 +151,7 @@ class DecisionMemoryRecoveryOutcomeProcessor:
             )
 
             episode.outcome_evaluator_version = (
-                "recovery-outcome-v1"
+                "recovery-outcome-v2"
             )
 
             episode.status = "COMPLETE"
