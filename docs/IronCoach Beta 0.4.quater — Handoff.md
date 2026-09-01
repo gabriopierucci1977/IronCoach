@@ -1875,3 +1875,164 @@ Alla ripresa:
 3. decidere se eseguire intenzionalmente il normale processing del primo episodio reale;
 4. evitare di eseguire casualmente `backend.main` non-dry-run, perché salva anche una nuova decisione Airtable e SQLite;
 5. proseguire Beta 0.4 mantenendo Garmin Recovery, Performance e Fueling osservazionali e separati dai segnali decision-driving finché non esiste un contratto semantico affidabile.
+
+
+---
+
+## 38. Checkpoint 1 settembre 2026 — Decision Memory outcome coverage
+
+Questo checkpoint aggiorna e supera le informazioni operative
+riportate nelle sezioni 37.3, 37.4 e 37.5.
+
+### 38.1 Primo episodio reale processato intenzionalmente
+
+Il primo episodio reale Decision Memory è stato processato senza
+eseguire un normale ciclo `backend.main`, evitando quindi la creazione
+di una nuova decisione Airtable e SQLite.
+
+Backup creato prima del processing:
+
+`data/ironcoach_memory.db.before_first_real_processing_20260901_061935.bak`
+
+L'episodio reale:
+
+- ha trovato 3 attività Garmin candidate: SWIM, BIKE e RUN;
+- non ha scelto arbitrariamente nessuna attività;
+- è passato da `WAITING_FOR_ACTIVITY` a `WAITING_FOR_OUTCOME`;
+- mantiene `actual_activity = None`;
+- ha `adherence_status = UNKNOWN`.
+
+Gli outcome recovery maturati risultano:
+
+- 24h: `INSUFFICIENT_DATA`;
+- 72h: `INSUFFICIENT_DATA`;
+- 7d: non ancora maturo al momento del processing;
+- overall: non ancora disponibile.
+
+La finestra 7d dell'episodio, relativo alla decisione del
+28 agosto 2026, matura il 4 settembre 2026.
+
+### 38.2 Chiusura degli episodi con dati insufficienti
+
+Commit:
+
+`e5502bb fix: complete insufficient recovery outcomes`
+
+È stato corretto un disallineamento con il contratto Beta 0.4.
+
+Alla maturazione della finestra 7d:
+
+- `INSUFFICIENT_DATA` è un outcome valido;
+- l'episodio può quindi diventare `COMPLETE`;
+- `INCOMPLETE` resta riservato a casi tecnici o non finalizzabili;
+- `INSUFFICIENT_DATA` continua a essere escluso dal denominatore
+  utilizzato dal learning analyzer.
+
+### 38.3 Nuovo outcome intent-specific: MANAGE_UNCERTAINTY
+
+Commit:
+
+`3a3c1d7 feat: evaluate uncertainty reduction outcomes`
+
+`MANAGE_UNCERTAINTY` è ora valutabile utilizzando esclusivamente
+lo storico recovery Airtable già decision-driving.
+
+Il contratto è intenzionalmente conservativo:
+
+- il baseline recovery deve essere `UNKNOWN`;
+- una finestra diventa `POSITIVE` solo quando compare almeno un
+  nuovo dato recovery post-decisione che `RecoveryAnalyzer`
+  riesce realmente a classificare;
+- assenza di nuovi dati o dati ancora non classificabili producono
+  `INSUFFICIENT_DATA`;
+- non vengono generati `NEUTRAL` o `NEGATIVE` senza evidenza
+  semantica sufficiente.
+
+L'overall a 7 giorni:
+
+- è `POSITIVE` se almeno una delle finestre maturate ha realmente
+  ridotto l'incertezza;
+- altrimenti è `INSUFFICIENT_DATA`.
+
+Questo evita che una riduzione reale dell'incertezza avvenuta nelle
+prime 24h venga cancellata dalla successiva assenza di nuovi dati.
+
+Garmin Recovery non viene utilizzato per questo outcome:
+resta osservazionale.
+
+### 38.4 Compatibilità con gli outcome recovery esistenti
+
+È stato confrontato meccanicamente il nuovo evaluator con la versione
+precedente per:
+
+- `RESTORE_RECOVERY`;
+- `REDUCE_LOAD`.
+
+A parità di input, i risultati 24h, 72h e 7d sono risultati identici.
+
+La nuova semantica è quindi confinata a `MANAGE_UNCERTAINTY`.
+
+### 38.5 Copertura intenzionale degli intenti
+
+Stato attuale degli intenti Decision Memory:
+
+- `RESTORE_RECOVERY`: valutabile;
+- `REDUCE_LOAD`: valutabile;
+- `MANAGE_UNCERTAINTY`: valutabile;
+- `PROTECT_INJURY`: non ancora valutabile in modo affidabile;
+- `RESTORE_FUELING`: non ancora valutabile in modo affidabile;
+- `PROTECT_PERFORMANCE`: non ancora valutabile in modo affidabile;
+- `MAINTAIN_PLAN`: non ancora valutabile in modo affidabile.
+
+Gli intenti non supportati devono produrre
+`INSUFFICIENT_DATA` quando manca un segnale intent-specific valido.
+
+Non devono essere introdotti proxy arbitrari.
+
+In particolare `MAINTAIN_PLAN` non può essere considerato positivo
+solo perché è presente un'attività successiva alla decisione:
+il contratto richiede workout completato e stabilità generale,
+mentre l'attuale aderenza non dimostra volume, intensità e obiettivo
+della seduta e il solo recovery non rappresenta la stabilità generale.
+
+### 38.6 Learning policy invariata
+
+La Decision Memory continua a operare come calibrazione prudente:
+
+- apprendimento raggruppato per `rule_id`;
+- minimo 3 outcome valutabili;
+- `POSITIVE`, `NEUTRAL` e `NEGATIVE` entrano nel denominatore;
+- `INSUFFICIENT_DATA` è escluso;
+- massimo aggiustamento confidence: ±5;
+- nessuna modifica alla decisione o alla regola selezionata;
+- nessuna modifica memory sui guardrail `HIGH_ALERT`;
+- il cap derivato dalla freshness viene applicato dopo la calibrazione
+  Decision Memory.
+
+### 38.7 Validazione
+
+Suite locale dopo l'introduzione di `MANAGE_UNCERTAINTY`:
+
+`503 passed, 5 skipped in 2.19s`
+
+GitHub Actions sul commit `3a3c1d7`:
+
+`PASS`
+
+La CI utilizza Python 3.12, compatibile con
+`garminconnect==0.3.11`.
+
+### 38.8 Punto di ripartenza
+
+Alla ripresa:
+
+1. non forzare il 7d del primo episodio reale prima del
+   4 settembre 2026;
+2. lasciare gli intenti senza segnale affidabile come
+   `INSUFFICIENT_DATA`;
+3. non promuovere Garmin Recovery, Performance o Fueling da
+   osservazionali a decision-driving senza un contratto esplicito;
+4. evitare esecuzioni casuali di `backend.main` non-dry-run,
+   perché persistono nuove decisioni;
+5. proseguire solo con outcome che possano essere dimostrati dai dati,
+   non inferiti tramite proxy deboli.
