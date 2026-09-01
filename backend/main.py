@@ -377,6 +377,42 @@ def _attach_decision_memory_learning(
             )
         )
 
+        airtable_training_unavailable = any(
+            (
+                "airtable"
+                in str(
+                    warning
+                ).lower()
+                and "non disponibile"
+                in str(
+                    warning
+                ).lower()
+                and (
+                    "training"
+                    in str(
+                        warning
+                    ).lower()
+                    or "allenament"
+                    in str(
+                        warning
+                    ).lower()
+                )
+            )
+            for warning in warnings
+        )
+
+        airtable_training_history = (
+            None
+            if airtable_training_unavailable
+            else (
+                context.get(
+                    "airtable_training_history",
+                    [],
+                )
+                or []
+            )
+        )
+
         if hasattr(
             orchestrator,
             "process_outcome",
@@ -385,6 +421,9 @@ def _attach_decision_memory_learning(
                 athlete_id,
                 recovery_history=(
                     recovery_history
+                ),
+                airtable_training_history=(
+                    airtable_training_history
                 ),
             )
 

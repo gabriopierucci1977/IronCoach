@@ -1,18 +1,20 @@
 """
-IronCoach Decision Memory Outcome Runtime
+IronCoach Decision Memory Outcome Runtime.
 
-Coordina le fasi successive al collegamento
-dell'attività reale:
+Coordina le fasi successive al collegamento dell'attività reale:
 
 1. valutazione aderenza;
-2. valutazione recovery 24h / 72h / 7d;
+2. valutazione outcome intent-specific;
 3. chiusura COMPLETE / INCOMPLETE.
 
-Aderenza e outcome fisiologico restano separati.
+Aderenza e outcome restano concetti separati.
 """
 
 from __future__ import annotations
 
+from backend.decision_memory.injury_outcome_processor import (
+    DecisionMemoryInjuryOutcomeProcessor,
+)
 from backend.decision_memory.outcome_processor import (
     DecisionMemoryOutcomeProcessor,
 )
@@ -35,6 +37,10 @@ class DecisionMemoryOutcomeRuntime:
         recovery_processor_class=(
             DecisionMemoryRecoveryOutcomeProcessor
         ),
+        injury_processor=None,
+        injury_processor_class=(
+            DecisionMemoryInjuryOutcomeProcessor
+        ),
     ):
         self.repository = repository
 
@@ -50,6 +56,14 @@ class DecisionMemoryOutcomeRuntime:
             recovery_processor
             if recovery_processor is not None
             else recovery_processor_class(
+                repository
+            )
+        )
+
+        self.injury_processor = (
+            injury_processor
+            if injury_processor is not None
+            else injury_processor_class(
                 repository
             )
         )
@@ -82,6 +96,7 @@ class DecisionMemoryOutcomeRuntime:
         self,
         athlete_id,
         recovery_history=None,
+        airtable_training_history=None,
         as_of=None,
     ):
         """
@@ -89,9 +104,15 @@ class DecisionMemoryOutcomeRuntime:
 
         Prima completa l'aderenza ancora pendente.
 
-        Se recovery_history è disponibile, rivaluta
-        inoltre tutte le finestre temporali degli
-        episodi ancora WAITING_FOR_OUTCOME.
+        Poi instrada ogni episodio verso il segnale
+        valido per il suo primary_intent:
+
+        - PROTECT_INJURY -> training history Airtable;
+        - altri intenti attualmente supportati ->
+          recovery history.
+
+        Una sorgente None indica indisponibilità tecnica
+        e non viene interpretata come assenza di segnale.
         """
         processed = {}
 
@@ -112,15 +133,44 @@ class DecisionMemoryOutcomeRuntime:
                 result,
             )
 
-        if recovery_history is not None:
-            recovery_episodes = (
-                self.repository
-                .list_waiting_for_outcome_by_athlete(
-                    athlete_id
-                )
+        if (
+            recovery_history is None
+            and airtable_training_history is None
+        ):
+            return list(
+                processed.values()
             )
 
-            for episode in recovery_episodes:
+        outcome_episodes = (
+            self.repository
+            .list_waiting_for_outcome_by_athlete(
+                athlete_id
+            )
+        )
+
+        for episode in outcome_episodes:
+            if (
+                episode.primary_intent
+                == "PROTECT_INJURY"
+            ):
+                if airtable_training_history is None:
+                    continue
+
+                result = (
+                    self.injury_processor
+                    .process(
+                        episode=episode,
+                        training_history=(
+                            airtable_training_history
+                        ),
+                        as_of=as_of,
+                    )
+                )
+
+            else:
+                if recovery_history is None:
+                    continue
+
                 result = (
                     self.recovery_processor
                     .process(
@@ -132,10 +182,10 @@ class DecisionMemoryOutcomeRuntime:
                     )
                 )
 
-                self._remember_result(
-                    processed,
-                    result,
-                )
+            self._remember_result(
+                processed,
+                result,
+            )
 
         return list(
             processed.values()

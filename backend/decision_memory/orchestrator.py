@@ -91,15 +91,25 @@ class DecisionMemoryOrchestrator:
         self,
         athlete_id,
         recovery_history=None,
+        airtable_training_history=None,
         as_of=None,
     ):
+        kwargs = {
+            "recovery_history": (
+                recovery_history
+            ),
+            "as_of": as_of,
+        }
+
+        if airtable_training_history is not None:
+            kwargs[
+                "airtable_training_history"
+            ] = airtable_training_history
+
         return (
             self.outcome_runtime
             .process_outcomes(
                 athlete_id,
-                recovery_history=(
-                    recovery_history
-                ),
-                as_of=as_of,
+                **kwargs,
             )
         )
