@@ -2036,3 +2036,70 @@ Alla ripresa:
    perché persistono nuove decisioni;
 5. proseguire solo con outcome che possano essere dimostrati dai dati,
    non inferiti tramite proxy deboli.
+
+---
+
+## 39. Checkpoint 1 settembre 2026 — PROTECT_INJURY outcome
+
+Commit:
+
+`38a0247 feat: evaluate injury protection outcomes`
+
+`PROTECT_INJURY` è ora valutabile tramite segnali temporali espliciti
+dello storico training Airtable:
+
+- `pain_score`;
+- `current_problem`.
+
+La baseline proviene da:
+
+`pre_decision_state["training"]`
+
+e viene valutata con `InjuryAnalyzer` senza utilizzare injury history
+o limitazioni statiche del profilo atleta.
+
+Le finestre restano:
+
+- 24h: giorno +1;
+- 72h: giorni +2 / +3;
+- 7d: giorni +4 ... +7.
+
+Il confronto usa le categorie già esistenti di `InjuryAnalyzer`:
+
+- miglioramento -> `POSITIVE`;
+- livello invariato -> `NEUTRAL`;
+- peggioramento -> `NEGATIVE`;
+- assenza di segnale injury esplicito -> `INSUFFICIENT_DATA`.
+
+Missing data non viene mai interpretato come assenza di dolore.
+
+L'overall coincide con la finestra 7d.
+
+Il runtime usa routing intent-specific:
+
+- `PROTECT_INJURY` -> `airtable_training_history`;
+- intenti recovery supportati -> `recovery_history`.
+
+Garmin non viene utilizzato per l'outcome injury.
+
+Validazione:
+
+`505 passed, 5 skipped in 1.52s`
+
+GitHub Actions sul commit `38a0247`:
+
+`PASS`
+
+Intenti attualmente valutabili:
+
+- `RESTORE_RECOVERY`;
+- `REDUCE_LOAD`;
+- `MANAGE_UNCERTAINTY`;
+- `PROTECT_INJURY`.
+
+Intenti ancora intenzionalmente non valutabili senza un contratto
+più forte:
+
+- `RESTORE_FUELING`;
+- `PROTECT_PERFORMANCE`;
+- `MAINTAIN_PLAN`.
