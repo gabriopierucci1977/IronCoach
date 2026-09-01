@@ -9,7 +9,7 @@ Principi:
 - le finestre non ancora mature restano senza status;
 - l'overall viene definito solo alla maturazione dei 7 giorni;
 - l'overall coincide con il risultato della finestra 7d;
-- nessun dato sufficiente a 7d produce INCOMPLETE.
+- dati insufficienti a 7d producono un outcome INSUFFICIENT_DATA ma chiudono l'episodio COMPLETE.
 """
 
 from __future__ import annotations
@@ -130,13 +130,7 @@ class DecisionMemoryRecoveryOutcomeProcessor:
                 "recovery-outcome-v1"
             )
 
-            if outcome_7d_status == (
-                "INSUFFICIENT_DATA"
-            ):
-                episode.status = "INCOMPLETE"
-
-            else:
-                episode.status = "COMPLETE"
+            episode.status = "COMPLETE"
 
         self.repository.update(
             episode
