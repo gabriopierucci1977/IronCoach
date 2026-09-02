@@ -173,6 +173,12 @@ planned_workout:
     target: object | null
     allowed_secondary_methods: []
     evaluation_policy_id: string | null
+  dose:
+    applicability: REQUIRED | OPTIONAL | NOT_APPLICABLE
+    dose_policy_id: string | null
+    dose_policy_version: string | null
+    quantity_dimension_ref: string | null
+    intensity_dimension_ref: string | null
   structure:
     applicability: REQUIRED | NOT_APPLICABLE
     session_type: continuous | intervals | brick | other
@@ -315,6 +321,33 @@ Quantità o durata e intensità producono risultati separati. Sono combinati in
 una valutazione della dose complessiva esclusivamente da una policy esplicita e
 versionata, con campi e provenienza propri. Non esistono formule implicite e la
 dose non sostituisce retroattivamente una delle due dimensioni.
+
+La prescrizione dichiara se la valutazione della dose è `REQUIRED`, `OPTIONAL`
+o `NOT_APPLICABLE`, identifica policy e versione e riferisce esplicitamente le
+dimensioni di quantità e intensità da combinare. La presenza di questi campi
+formalizza il contratto, ma non approva né implementa la policy di combinazione.
+
+Il risultato della dose usa il seguente schema canonico:
+
+```yaml
+dose_evaluation:
+  status: MET | PARTIALLY_MET | NOT_MET | NOT_APPLICABLE | INSUFFICIENT_DATA
+  policy_id: string | null
+  policy_version: string | null
+  quantity_result_ref: string | null
+  intensity_result_ref: string | null
+  provenance: object
+  computed_at: datetime | null
+  missing_fields: []
+  warnings: []
+```
+
+Lo stato è prodotto soltanto dalla futura policy approvata. Se una dimensione
+richiesta dalla prescrizione non è valutabile, la valutazione della dose deve
+propagare `INSUFFICIENT_DATA`; non può colmare la missingness con formule,
+pesi, soglie, conversioni o valori impliciti. Riferimenti, provenienza e
+timestamp devono permettere di ricostruire quali risultati dimensionali e
+quale versione della policy abbiano prodotto la valutazione.
 
 ## 6. Meteo contestuale
 
@@ -539,10 +572,17 @@ inventare valori in questo draft:
   multipli di una Brick;
 - policy di aggregazione delle quattro dimensioni di esecuzione nei livelli
   `IN_LINE`, `PARTIALLY_IN_LINE`, `DIFFERENT` e `INSUFFICIENT_DATA`;
+- definizione e approvazione della policy versionata che combina quantità e
+  intensità nella valutazione della dose;
 - regole operative di freshness, completezza e gestione dei segnali
   contraddittori per la stabilità iniziale;
 - schema di dettaglio e retention dei dati soggettivi, di sicurezza e meteo;
 - versione di entrata in vigore per i soli nuovi episodi.
+
+L'aggregazione della dose non deve essere implementata finché la relativa
+policy di combinazione non è stata approvata esplicitamente. Lo schema
+canonico definisce esclusivamente forma, riferimenti e requisiti di audit e non
+costituisce approvazione della logica di calcolo.
 
 ## 16. Criteri di accettazione pre-implementazione
 
@@ -555,6 +595,14 @@ Evaluator e test possono essere progettati soltanto quando:
 - [x] il perimetro iniziale della stabilità è definito;
 - [x] quantità, intensità, copertura, compatibilità e divieto di conversioni
       implicite sono definiti;
+- [x] lo schema canonico della prescrizione e del risultato della dose è
+      approvato;
+- [ ] la policy versionata di combinazione fra quantità e intensità è
+      approvata;
+- [ ] la propagazione di `INSUFFICIENT_DATA` nella valutazione della dose è
+      verificata con fixture sintetiche;
+- [ ] riferimenti dimensionali, versione della policy, audit e provenance della
+      dose sono verificabili end-to-end;
 - [x] tempistiche, matrice finale, Brick, sicurezza e applicazione ai soli nuovi
       episodi sono definite;
 - [x] gerarchia delle sorgenti, matching con conferma, missingness per
