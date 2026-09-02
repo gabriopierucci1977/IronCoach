@@ -1,6 +1,6 @@
 # IronCoach Beta 0.4 — START HERE
 
-Ultimo aggiornamento: 1 settembre 2026.
+Ultimo aggiornamento: 2 settembre 2026.
 
 Questo documento è il punto di ripartenza operativo per una nuova chat.
 Supera i vecchi checkpoint quando esiste un'informazione più recente qui.
@@ -17,12 +17,16 @@ Branch di sviluppo:
 
 `feature/beta-0.4-decision-memory`
 
-Ultimo commit:
+Ultimo commit presente nel branch:
 
-`9e82982 docs: checkpoint injury outcome coverage`
+`45ad2b2 Merge pull request #3 from gabriopierucci1977/codex/esegui-manutenzione-ambiente-di-sviluppo`
 
 Ultimi commit rilevanti:
 
+- `84cd265 chore: align local python version`
+- `9e97aa8 Merge pull request #2 from gabriopierucci1977/codex/verifica-stato-working-tree-e-test-pytest`
+- `af6d8f8 feat: process pending decision memory episodes`
+- `20efb3f docs: add beta 0.4 start here`
 - `38a0247 feat: evaluate injury protection outcomes`
 - `9e82982 docs: checkpoint injury outcome coverage`
 - `3a3c1d7 feat: evaluate uncertainty reduction outcomes`
@@ -44,11 +48,17 @@ Python CI:
 
 `3.12`
 
+Python locale (`.python-version`):
+
+`3.12`
+
 Motivo: `garminconnect==0.3.11` richiede Python >= 3.12.
 
-Ultima suite locale completa:
+Suite locale completa verificata il 2 settembre 2026:
 
-`505 passed, 5 skipped in 1.52s`
+`508 passed, 5 skipped`
+
+Working tree verificato pulito il 2 settembre 2026.
 
 ---
 
@@ -66,9 +76,11 @@ Non chiedere modifiche manuali di singole righe.
 Ridurre al minimo i nuovi test.
 Aggiungerli solo per contratti o regressioni realmente significativi.
 
-Prima dei commit ripristinare eventuali `.pyc` tracciati sotto:
+Il bytecode sotto:
 
 `config/__pycache__/`
+
+non è più tracciato. Non aggiungerlo nuovamente al repository.
 
 ---
 
@@ -457,6 +469,10 @@ senza creare una nuova decisione.
 Comando dedicato:
 
 `python3.12 -m backend.main --process-pending-memory`
+
+La CLI è implementata e coperta da test nel commit:
+
+`af6d8f8 feat: process pending decision memory episodes`
 
 Il comando costruisce il contesto dalle sorgenti configurate e riusa i
 runtime activity/outcome della Decision Memory. Non esegue la coaching
