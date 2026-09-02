@@ -32,8 +32,10 @@ Le seguenti decisioni sono **APPROVATE**:
    comunicata all'atleta, conservata come snapshot immutabile. La prescrizione
    originaria resta disponibile esclusivamente per audit.
 2. **Dimensioni di esecuzione.** Sono identità sportiva, quantità di lavoro,
-   intensità e struttura della seduta. L'identità sportiva usa esclusivamente
-   `discipline`, `environment`, `mode` e `composition`.
+   intensità e struttura della seduta. `composition` classifica la sessione;
+   l'identità sportiva è rappresentata dall'elenco ordinato dei componenti,
+   ciascuno descritto da `component_index`, `discipline`, `environment` e
+   `mode`.
 3. **Separazione semantica.** Quantità di lavoro, intensità e dose/carico
    allenante sono concetti distinti. Quantità e intensità sono valutate
    separatamente e interpretate congiuntamente, senza formule o conversioni
@@ -66,13 +68,13 @@ Le seguenti decisioni sono **APPROVATE**:
 11. **Copertura.** Nelle sedute continue si valuta la copertura temporale;
     negli intervalli si valutano i singoli blocchi. Telemetria insufficiente
     rende non valutabile soltanto la dimensione interessata.
-12. **Identità sportiva.** La tassonomia canonica e autorevole è composta
-    esclusivamente da `discipline`, `environment`, `mode` e `composition`:
-    `discipline` identifica lo sport principale, `environment` rappresenta
-    indoor/outdoor, `mode` rappresenta modalità o specializzazione della
-    disciplina e `composition` distingue seduta singola, Brick e multisport.
-    Le sostituzioni devono essere esplicite e non possono essere inferite a
-    posteriori.
+12. **Identità sportiva.** La tassonomia canonica e autorevole è composta da
+    `composition` a livello di sessione e da un elenco ordinato di componenti.
+    `composition` ammette esclusivamente `single`, `brick` e `multisport`; ogni
+    componente contiene almeno `component_index`, `discipline`, `environment`
+    e `mode`. Una sessione `single` contiene esattamente un componente; `brick`
+    e `multisport` ne contengono più di uno. Le sostituzioni devono essere
+    esplicite e non possono essere inferite a posteriori.
 13. **Tempistiche.** Il report è visibile subito dopo la sincronizzazione e il
     recovery è usato prima della seduta successiva. Le finestre 72h e 7d sono
     riservate al trend interno. Allenamenti intervenuti impediscono attribuzioni
@@ -82,11 +84,12 @@ Le seguenti decisioni sono **APPROVATE**:
     sicurezza hanno priorità; segnali contraddittori o insufficienti non
     producono conclusioni inventate.
 15. **Matrice finale.** L'aggregazione vincolante è definita nella sezione 10.
-16. **Brick.** È una sola seduta composta, con segmenti ordinati inclusa la
-    transizione e obbligo di consequenzialità. Supporta sia un'attività
-    multisport sia file separati, produce dettaglio per segmento ma un solo
-    outcome e un solo contributo al learning. Recovery e stabilità riguardano
-    l'intera Brick; il meteo è contestuale per ogni segmento outdoor.
+16. **Brick e multisport.** Sono sessioni composte con più componenti sportivi
+    ordinati. I componenti conservano separatamente disciplina, ambiente e
+    modalità; blocchi, segmenti e transizioni appartengono invece alla struttura
+    interna. Una Brick resta una sola seduta, produce un solo outcome e un solo
+    contributo al learning. Recovery e stabilità riguardano l'intera Brick; il
+    meteo è contestuale per ogni componente outdoor.
 17. **Interruzioni e matching.** Un workout interrotto per sicurezza non deve
     essere descritto come errore dell'atleta. Attività multiple o ambigue non
     devono essere collegate arbitrariamente.
@@ -115,12 +118,13 @@ Le seguenti decisioni sono **APPROVATE**:
     autonomamente lo stato della seduta.
 25. **Matching e conferma.** Il matching è deterministico e privilegia
     l'identificativo diretto. Nei casi ambigui viene chiesta conferma
-    all'atleta; la seduta non entra nel learning prima della conferma.
-26. **Tassonomia.** `discipline`, `environment`, `mode` e `composition` sono
-    gli unici campi canonici della tassonomia: rappresentano rispettivamente
-    sport principale, ambiente indoor/outdoor, modalità o specializzazione e
-    composizione singola/Brick/multisport. Non esiste un insieme alternativo di
-    campi sportivi.
+    all'atleta; la seduta non entra nel learning prima della conferma. Per le
+    sessioni composte il collegamento conserva l'associazione e l'ordine di ogni
+    componente.
+26. **Tassonomia.** `composition` è la classificazione della sessione; i campi
+    canonici di ogni componente sono `component_index`, `discipline`,
+    `environment` e `mode`. Non esiste un insieme alternativo di campi sportivi
+    né un valore aggregato che possa sostituire i componenti.
 27. **Gerarchia e conflitti delle sorgenti.** L'ordine è prescrizione
     IronCoach, Garmin o dispositivo originale, Strava come integrazione o
     fallback, atleta per i dati soggettivi e Open-Meteo per quelli ambientali.
@@ -163,10 +167,12 @@ planned_workout:
     end: datetime
     timezone: string
   sport:
-    discipline: string
-    environment: indoor | outdoor
-    mode: string | null
     composition: single | brick | multisport
+    components:
+      - component_index: integer
+        discipline: string
+        environment: indoor | outdoor
+        mode: string | null
   allowed_substitutions: []
   quantity:
     applicability: REQUIRED | NOT_APPLICABLE
@@ -220,10 +226,12 @@ actual_session:
   end: datetime | null
   timezone: string
   sport:
-    discipline: string
-    environment: indoor | outdoor
-    mode: string | null
     composition: single | brick | multisport
+    components:
+      - component_index: integer
+        discipline: string
+        environment: indoor | outdoor
+        mode: string | null
   quantity:
     primary_metric: string | null
     observed: object | null
@@ -261,7 +269,10 @@ deterministico e dà priorità all'identificativo diretto. Se più attività
 restano candidate o la relazione è ambigua, nessuna viene scelta
 arbitrariamente: viene richiesta conferma all'atleta, le sole dimensioni non
 dimostrabili diventano `INSUFFICIENT_DATA` e la seduta non entra nel learning
-prima della conferma.
+prima della conferma. Per `brick` e `multisport`, il matching deve inoltre
+ricostruire l'associazione tra attività sorgente e componenti, il loro ordine e,
+quando richiesta, la consecutività. Se questa ricostruzione non è affidabile,
+la dimensione interessata non è valutabile.
 
 Una interruzione motivata da sicurezza conserva ragione ed evidenza e usa un
 testo neutro, non colpevolizzante. Non equivale automaticamente né a errore
@@ -271,12 +282,19 @@ dell'atleta né a esecuzione pienamente in linea.
 
 ### 5.1 Identità sportiva
 
-Il confronto usa separatamente `discipline`, `environment`, `mode` e
-`composition`, secondo le definizioni vincolanti della sezione 2. La
-compatibilità richiede coincidenza oppure un'autorizzazione esplicita nello
-snapshot o in una policy versionata da esso richiamata. Questo vale anche per
-`environment`. Somiglianza nominale, comune natura aerobica e attività
-osservate a posteriori non autorizzano sostituzioni.
+Il confronto valuta `composition` a livello di sessione e i componenti sportivi
+uno per uno, in ordine crescente di `component_index`. Una sessione `single`
+deve avere esattamente un componente; una sessione `brick` o `multisport` deve
+averne più di uno. Per ciascun componente si confrontano `discipline`,
+`environment` e `mode`; quando prevista, si verifica anche l'evidenza della
+consecutività con il componente successivo.
+
+La compatibilità richiede coincidenza oppure un'autorizzazione esplicita nello
+snapshot o in una policy versionata da esso richiamata. Somiglianza nominale,
+comune natura aerobica e attività osservate a posteriori non autorizzano
+sostituzioni. Se componenti o ordine non sono ricostruibili in modo affidabile,
+la dimensione interessata è `INSUFFICIENT_DATA`: non viene scelta una
+`discipline` arbitraria.
 
 ### 5.2 Quantità di lavoro
 
@@ -314,6 +332,12 @@ consequenzialità dei segmenti. I segmenti non ricostruibili sono trattati
 prudentemente come evidenza insufficiente per le dimensioni che ne dipendono;
 non sono inferiti. Il testo libero non viene trasformato a posteriori in
 struttura osservabile.
+
+La lista ordinata dei componenti sportivi resta distinta dalla struttura
+interna: i componenti rappresentano le discipline della sessione, mentre
+blocchi e segmenti rappresentano riscaldamento, main set, recuperi e
+defaticamento. Un blocco o segmento non sostituisce un componente sportivo e un
+componente non sostituisce la descrizione dei blocchi della seduta.
 
 ### 5.5 Obiettivo della seduta
 
@@ -503,24 +527,32 @@ Per `MAINTAIN_PLAN`, un'esecuzione diversa con stabilità produce dunque
 sull'atleta. Meteo mancante e obiettivo descrittivo non producono
 `INSUFFICIENT_DATA`.
 
-## 11. Contratto Brick
+## 11. Contratto Brick e multisport
 
-Una Brick è un'unica seduta composta:
+Una Brick o multisport è un'unica sessione composta. `composition` classifica
+la sessione e non sostituisce l'elenco dei componenti:
 
-- i segmenti, transizione inclusa, sono ordinati e devono essere consecutivi;
+- ogni disciplina è conservata in un componente separato con il proprio
+  `component_index`, `discipline`, `environment` e `mode`;
+- i componenti sono ordinati e, quando richiesto dal tipo di sessione, devono
+  essere consecutivi;
+- una Brick bici+corsa conserva quindi un componente bici e uno corsa nel loro
+  ordine, senza produrre una disciplina o un ambiente aggregato;
 - l'acquisizione può provenire da una singola attività multisport o da file
   separati collegati deterministicamente;
-- il report espone il dettaglio di ogni segmento e delle transizioni, ma genera
-  un solo outcome complessivo;
+- il report espone il dettaglio di ogni componente e della struttura interna,
+  ma genera un solo outcome complessivo;
 - l'episodio fornisce un solo contributo al learning;
 - recovery e stabilità sono riferiti all'intera Brick;
-- il meteo resta contestuale separatamente per ogni segmento outdoor e
+- il meteo resta contestuale separatamente per ogni componente outdoor e
   `NOT_APPLICABLE` per quelli indoor.
 
 File multipli ambigui, sovrapposti o non dimostrabilmente consecutivi non
-vengono assemblati arbitrariamente. L'insufficienza di un segmento rende non
-valutabili le sole dimensioni essenziali che dipendono da quell'evidenza e si
-propaga poi secondo la matrice finale.
+vengono assemblati arbitrariamente. Componenti e ordine non ricostruibili
+rendono non valutabili le dimensioni che dipendono da quell'evidenza e si
+propagano poi secondo la matrice finale. Blocchi e segmenti descrivono
+riscaldamento, main set, recuperi e defaticamento all'interno dei componenti:
+non sono un elenco alternativo delle discipline.
 
 ## 12. Perimetro della prima implementazione
 
@@ -552,7 +584,10 @@ contrattualizzate:
 - valori presenti solo nel payload grezzo quando manca il campo canonico;
 - zero sintetici al posto di dati mancanti;
 - `discipline`, `environment`, `mode`, `composition`, sostituzioni o tolleranze
-  inferiti a posteriori.
+  inferiti a posteriori;
+- valori aggregati o impliciti come disciplina principale, disciplina mista o
+  ambiente misto usati al posto dell'elenco dei componenti;
+- blocchi o segmenti della struttura usati come proxy dei componenti sportivi.
 
 ## 14. Versionamento, provenienza e applicazione
 
@@ -576,8 +611,8 @@ inventare valori in questo draft:
 - valori delle policy versionate per `discipline` e tipologia di seduta, senza
   introdurre qui soglie numeriche;
 - metodi d'intensità inizialmente supportati;
-- schema canonico dei segmenti e dettaglio operativo del matching dei file
-  multipli di una Brick;
+- dettaglio operativo del matching dei file multipli ai componenti ordinati di
+  Brick e multisport, inclusa l'evidenza della consecutività richiesta;
 - policy di aggregazione delle quattro dimensioni di esecuzione nei livelli
   `IN_LINE`, `PARTIALLY_IN_LINE`, `DIFFERENT` e `INSUFFICIENT_DATA`;
 - definizione e approvazione della policy versionata che combina quantità e
@@ -598,8 +633,11 @@ Evaluator e test possono essere progettati soltanto quando:
 
 - [x] la prescrizione autorevole è l'ultimo snapshot immutabile comunicato;
 - [x] le quattro dimensioni di esecuzione e la loro separazione sono definite;
-- [x] la tassonomia sportiva canonica unica e autorevole usa `discipline`,
-      `environment`, `mode` e `composition` in prescrizione e attività;
+- [x] `composition` classifica la sessione e gli elenchi ordinati dei componenti
+      usano `component_index`, `discipline`, `environment` e `mode` sia nella
+      prescrizione sia nell'attività;
+- [x] componenti sportivi e blocchi o segmenti della struttura interna sono
+      distinti nel contratto;
 - [x] meteo e obiettivo descrittivo sono contestuali e non bloccanti;
 - [x] stati interni e testi utente sono definiti;
 - [x] il perimetro iniziale della stabilità è definito;
@@ -613,13 +651,14 @@ Evaluator e test possono essere progettati soltanto quando:
       verificata con fixture sintetiche;
 - [ ] riferimenti dimensionali, versione della policy, audit e provenance della
       dose sono verificabili end-to-end;
-- [x] tempistiche, matrice finale, Brick, sicurezza e applicazione ai soli nuovi
-      episodi sono definite;
+- [x] tempistiche, matrice finale, Brick/multisport, sicurezza e applicazione ai
+      soli nuovi episodi sono definite;
 - [x] gerarchia delle sorgenti, matching con conferma, missingness per
       dimensione, report e perimetro della prima implementazione sono definiti;
 - [ ] le decisioni residue della sezione 15 sono approvate e versionate;
 - [ ] fixture esclusivamente sintetiche coprono tutti gli stati, la missingness,
-      l'ambiguità, l'interruzione per sicurezza e i casi Brick;
+      l'ambiguità, l'interruzione per sicurezza e i casi Brick/multisport,
+      inclusi componenti mancanti o fuori ordine;
 - [ ] persistenza e audit conservano policy, analyzer, evidenza e provenienza
       senza dipendere dai payload grezzi.
 
