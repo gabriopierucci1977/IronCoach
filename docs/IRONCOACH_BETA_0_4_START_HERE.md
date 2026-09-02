@@ -454,6 +454,15 @@ Dal 4 settembre 2026 in poi:
 processare intenzionalmente SOLO gli episodi già pendenti,
 senza creare una nuova decisione.
 
+Comando dedicato:
+
+`python3.12 -m backend.main --process-pending-memory`
+
+Il comando costruisce il contesto dalle sorgenti configurate e riusa i
+runtime activity/outcome della Decision Memory. Non esegue la coaching
+pipeline, non salva una nuova decisione e non passa un `as_of`, quindi
+le finestre non ancora mature non vengono forzate.
+
 Verificare sul primo episodio reale:
 
 - routing verso injury outcome;

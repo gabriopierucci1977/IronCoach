@@ -129,6 +129,16 @@ def _build_argument_parser() -> argparse.ArgumentParser:
         ),
     )
 
+    parser.add_argument(
+        "--process-pending-memory",
+        action="store_true",
+        help=(
+            "Processa esclusivamente gli episodi "
+            "Decision Memory già pendenti, senza "
+            "creare una nuova decisione."
+        ),
+    )
+
     return parser
 
 
@@ -328,104 +338,11 @@ def _attach_decision_memory_learning(
     )
 
     if process_pending:
-        activities = (
-            context.get(
-                "garmin_training_history",
-                [],
-            )
-            or []
+        _process_pending_decision_memory(
+            orchestrator=orchestrator,
+            athlete_id=athlete_id,
+            context=context,
         )
-
-        if (
-            activities
-            and hasattr(
-                orchestrator,
-                "process_activity",
-            )
-        ):
-            orchestrator.process_activity(
-                athlete_id,
-                activities,
-            )
-
-        warnings = (
-            context.get(
-                "context_warnings",
-                [],
-            )
-            or []
-        )
-
-        recovery_unavailable = any(
-            (
-                "Storico recovery Airtable "
-                "non disponibile"
-            )
-            in str(warning)
-            for warning in warnings
-        )
-
-        recovery_history = (
-            None
-            if recovery_unavailable
-            else (
-                context.get(
-                    "recovery_history",
-                    [],
-                )
-                or []
-            )
-        )
-
-        airtable_training_unavailable = any(
-            (
-                "airtable"
-                in str(
-                    warning
-                ).lower()
-                and "non disponibile"
-                in str(
-                    warning
-                ).lower()
-                and (
-                    "training"
-                    in str(
-                        warning
-                    ).lower()
-                    or "allenament"
-                    in str(
-                        warning
-                    ).lower()
-                )
-            )
-            for warning in warnings
-        )
-
-        airtable_training_history = (
-            None
-            if airtable_training_unavailable
-            else (
-                context.get(
-                    "airtable_training_history",
-                    [],
-                )
-                or []
-            )
-        )
-
-        if hasattr(
-            orchestrator,
-            "process_outcome",
-        ):
-            orchestrator.process_outcome(
-                athlete_id,
-                recovery_history=(
-                    recovery_history
-                ),
-                airtable_training_history=(
-                    airtable_training_history
-                ),
-            )
 
     if not hasattr(
         orchestrator,
@@ -449,6 +366,113 @@ def _attach_decision_memory_learning(
     ] = evidence
 
     return enriched_context
+
+
+def _process_pending_decision_memory(
+    orchestrator,
+    athlete_id,
+    context,
+):
+    """
+    Processa i soli episodi pendenti usando i runtime esistenti.
+
+    I processor applicano le proprie regole temporali usando l'ora
+    corrente; questo percorso non fornisce ``as_of`` e quindi non può
+    anticipare la maturazione delle finestre outcome.
+    """
+    context = context or {}
+
+    activities = (
+        context.get(
+            "garmin_training_history",
+            [],
+        )
+        or []
+    )
+
+    if (
+        activities
+        and hasattr(
+            orchestrator,
+            "process_activity",
+        )
+    ):
+        orchestrator.process_activity(
+            athlete_id,
+            activities,
+        )
+
+    warnings = (
+        context.get(
+            "context_warnings",
+            [],
+        )
+        or []
+    )
+
+    recovery_unavailable = any(
+        (
+            "Storico recovery Airtable "
+            "non disponibile"
+        )
+        in str(warning)
+        for warning in warnings
+    )
+
+    recovery_history = (
+        None
+        if recovery_unavailable
+        else (
+            context.get(
+                "recovery_history",
+                [],
+            )
+            or []
+        )
+    )
+
+    airtable_training_unavailable = any(
+        (
+            "airtable"
+            in str(warning).lower()
+            and "non disponibile"
+            in str(warning).lower()
+            and (
+                "training"
+                in str(warning).lower()
+                or "allenament"
+                in str(warning).lower()
+            )
+        )
+        for warning in warnings
+    )
+
+    airtable_training_history = (
+        None
+        if airtable_training_unavailable
+        else (
+            context.get(
+                "airtable_training_history",
+                [],
+            )
+            or []
+        )
+    )
+
+    if hasattr(
+        orchestrator,
+        "process_outcome",
+    ):
+        return orchestrator.process_outcome(
+            athlete_id,
+            recovery_history=recovery_history,
+            airtable_training_history=(
+                airtable_training_history
+            ),
+        )
+
+    return []
+
 
 def _save_decision_memory(
     runtime_config,
@@ -706,6 +730,74 @@ def _run_decision_memory_viewer() -> int:
     return 0
 
 
+def _run_process_pending_memory() -> int:
+    """
+    Processa Decision Memory senza eseguire la coaching pipeline.
+
+    In particolare, non inizializza CoachEngine o DecisionWriter e non
+    invoca il runtime che salva nuove decisioni.
+    """
+    runtime_config = _execute_phase(
+        "caricamento configurazione Decision Memory",
+        get_runtime_config,
+    )
+
+    client = _execute_phase(
+        "connessione ad Airtable",
+        AirtableClient,
+    )
+
+    builder = _execute_phase(
+        "inizializzazione Context Builder",
+        lambda: ContextBuilder(
+            client,
+            runtime_config=runtime_config,
+            garmin_source_state_path=str(
+                DEFAULT_SYNC_STATE_PATH
+            ),
+            garmin_recovery_archive=(
+                GarminRecoveryArchive()
+            ),
+            garmin_recovery_source_state_path=str(
+                DEFAULT_RECOVERY_SYNC_STATE_PATH
+            ),
+        ),
+    )
+
+    context = _execute_phase(
+        "costruzione contesto atleta",
+        builder.build,
+    )
+
+    athlete = (
+        context.get("athlete", {})
+        or context.get("athlete_profile", {})
+        or {}
+    )
+    athlete_id = athlete.get("source_id")
+
+    if not athlete_id:
+        return 0
+
+    orchestrator = _execute_phase(
+        "inizializzazione Decision Memory",
+        lambda: create_decision_memory_orchestrator(
+            runtime_config
+        ),
+    )
+
+    _execute_phase(
+        "processing episodi Decision Memory pendenti",
+        lambda: _process_pending_decision_memory(
+            orchestrator=orchestrator,
+            athlete_id=athlete_id,
+            context=context,
+        ),
+    )
+
+    return 0
+
+
 
 
 def create_activity_runtime(
@@ -880,6 +972,9 @@ def main(
 
     if args.evaluate_outcome:
         return _run_evaluate_outcome()
+
+    if args.process_pending_memory:
+        return _run_process_pending_memory()
 
     try:
         if args.dry_run:
