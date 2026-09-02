@@ -31,8 +31,9 @@ Le seguenti decisioni sono **APPROVATE**:
 1. **Prescrizione autorevole.** È l'ultima prescrizione effettivamente
    comunicata all'atleta, conservata come snapshot immutabile. La prescrizione
    originaria resta disponibile esclusivamente per audit.
-2. **Dimensioni di esecuzione.** Sono sport, quantità di lavoro, intensità e
-   struttura della seduta.
+2. **Dimensioni di esecuzione.** Sono identità sportiva, quantità di lavoro,
+   intensità e struttura della seduta. L'identità sportiva usa esclusivamente
+   `discipline`, `environment`, `mode` e `composition`.
 3. **Separazione semantica.** Quantità di lavoro, intensità e dose/carico
    allenante sono concetti distinti. Quantità e intensità sono valutate
    separatamente e interpretate congiuntamente, senza formule o conversioni
@@ -65,10 +66,13 @@ Le seguenti decisioni sono **APPROVATE**:
 11. **Copertura.** Nelle sedute continue si valuta la copertura temporale;
     negli intervalli si valutano i singoli blocchi. Telemetria insufficiente
     rende non valutabile soltanto la dimensione interessata.
-12. **Identità sportiva.** Sport principale, modalità e variante sono campi
-    distinti. Indoor e outdoor sono compatibili soltanto se ammessi. Le
-    sostituzioni sportive devono essere esplicite e non possono essere inferite
-    a posteriori.
+12. **Identità sportiva.** La tassonomia canonica e autorevole è composta
+    esclusivamente da `discipline`, `environment`, `mode` e `composition`:
+    `discipline` identifica lo sport principale, `environment` rappresenta
+    indoor/outdoor, `mode` rappresenta modalità o specializzazione della
+    disciplina e `composition` distingue seduta singola, Brick e multisport.
+    Le sostituzioni devono essere esplicite e non possono essere inferite a
+    posteriori.
 13. **Tempistiche.** Il report è visibile subito dopo la sincronizzazione e il
     recovery è usato prima della seduta successiva. Le finestre 72h e 7d sono
     riservate al trend interno. Allenamenti intervenuti impediscono attribuzioni
@@ -89,7 +93,7 @@ Le seguenti decisioni sono **APPROVATE**:
 18. **Applicazione temporale.** Il nuovo contratto si applica soltanto ai nuovi
     episodi. Nessun episodio storico viene reinterpretato.
 19. **Tolleranze esplicite.** Le tolleranze sono definite da policy versionate
-    per sport e tipologia di seduta. Una regola specifica conservata nella
+    per `discipline` e tipologia di seduta. Una regola specifica conservata nella
     prescrizione può sostituire la policy generale. Limite inferiore e limite
     superiore sono indipendenti e distinguono una fascia principale da una
     secondaria; l'evaluator non contiene tolleranze nascoste.
@@ -112,8 +116,11 @@ Le seguenti decisioni sono **APPROVATE**:
 25. **Matching e conferma.** Il matching è deterministico e privilegia
     l'identificativo diretto. Nei casi ambigui viene chiesta conferma
     all'atleta; la seduta non entra nel learning prima della conferma.
-26. **Tassonomia.** Disciplina, ambiente indoor/outdoor, modalità e composizione
-    singola/Brick/multisport sono dimensioni distinte.
+26. **Tassonomia.** `discipline`, `environment`, `mode` e `composition` sono
+    gli unici campi canonici della tassonomia: rappresentano rispettivamente
+    sport principale, ambiente indoor/outdoor, modalità o specializzazione e
+    composizione singola/Brick/multisport. Non esiste un insieme alternativo di
+    campi sportivi.
 27. **Gerarchia e conflitti delle sorgenti.** L'ordine è prescrizione
     IronCoach, Garmin o dispositivo originale, Strava come integrazione o
     fallback, atleta per i dati soggettivi e Open-Meteo per quelli ambientali.
@@ -262,22 +269,22 @@ dell'atleta né a esecuzione pienamente in linea.
 
 ## 5. Valutazione dell'esecuzione
 
-### 5.1 Sport
+### 5.1 Identità sportiva
 
-Il confronto usa separatamente disciplina, ambiente indoor/outdoor, modalità e
-composizione singola/Brick/multisport. La
+Il confronto usa separatamente `discipline`, `environment`, `mode` e
+`composition`, secondo le definizioni vincolanti della sezione 2. La
 compatibilità richiede coincidenza oppure un'autorizzazione esplicita nello
 snapshot o in una policy versionata da esso richiamata. Questo vale anche per
-indoor/outdoor. Somiglianza nominale, comune natura aerobica e attività
+`environment`. Somiglianza nominale, comune natura aerobica e attività
 osservate a posteriori non autorizzano sostituzioni.
 
 ### 5.2 Quantità di lavoro
 
 La quantità è valutata sulla metrica primaria dichiarata: durata, distanza,
 serie/ripetizioni o metrica per segmento. Metrica, rappresentazione e unità
-devono essere compatibili secondo una policy esplicita e versionata per sport e
-tipologia di seduta. Una regola specifica della prescrizione sostituisce, quando
-presente, la policy generale. Gli stati dipendono da limiti inferiori e
+devono essere compatibili secondo una policy esplicita e versionata per
+`discipline` e tipologia di seduta. Una regola specifica della prescrizione
+sostituisce, quando presente, la policy generale. Gli stati dipendono da limiti inferiori e
 superiori indipendenti, con fascia principale e secondaria esplicitate dalla
 policy; nessuna tolleranza è nascosta nell'evaluator e nessun valore numerico è
 definito qui.
@@ -296,8 +303,8 @@ distinti e non vengono convertiti fra loro.
 Per una seduta continua la policy valuta la copertura temporale. Per una seduta
 a intervalli valuta separatamente i blocchi prescritti. Medie complessive non
 dimostrano l'esecuzione dei singoli blocchi. Telemetria insufficiente produce
-`INSUFFICIENT_DATA` per l'intensità senza invalidare automaticamente sport,
-quantità o struttura.
+`INSUFFICIENT_DATA` per l'intensità senza invalidare automaticamente l'identità
+sportiva, la quantità o la struttura.
 
 ### 5.4 Struttura
 
@@ -479,7 +486,7 @@ seduta.
 
 L'esecuzione aggregata assume uno dei livelli `IN_LINE`, `PARTIALLY_IN_LINE`,
 `DIFFERENT` o `INSUFFICIENT_DATA`, derivato tramite policy versionate dai
-risultati di sport, quantità, intensità e struttura. L'obiettivo
+risultati di identità sportiva, quantità, intensità e struttura. L'obiettivo
 `CONTEXT_ONLY` e il meteo mancante sono esclusi dalle dimensioni essenziali.
 
 | Esecuzione | Stabilità | Outcome `MAINTAIN_PLAN` |
@@ -533,7 +540,7 @@ non viene promossa automaticamente a Brick.
 Non costituiscono prova sufficiente, da soli o in combinazioni non
 contrattualizzate:
 
-- la mera esistenza di un'attività o la sola coincidenza dello sport;
+- la mera esistenza di un'attività o la sola coincidenza di `discipline`;
 - nomi, note o obiettivi in testo libero;
 - una metrica secondaria al posto della quantità primaria;
 - medie complessive per dimostrare intervalli o segmenti;
@@ -544,8 +551,8 @@ contrattualizzate:
 - assenza di record come certificazione di assenza di problemi;
 - valori presenti solo nel payload grezzo quando manca il campo canonico;
 - zero sintetici al posto di dati mancanti;
-- sport, modalità, variante, indoor/outdoor, sostituzioni o tolleranze inferiti
-  a posteriori.
+- `discipline`, `environment`, `mode`, `composition`, sostituzioni o tolleranze
+  inferiti a posteriori.
 
 ## 14. Versionamento, provenienza e applicazione
 
@@ -563,9 +570,10 @@ queste regole.
 Le decisioni elencate nella sezione 2 sono chiuse. Restano da approvare senza
 inventare valori in questo draft:
 
-- schema delle sostituzioni esplicite e relativa governance;
+- schema delle sostituzioni esplicite fra valori della tassonomia canonica e
+  relativa governance;
 - forma canonica di target, osservazioni e unità per ciascuna metrica primaria;
-- valori delle policy versionate per sport e tipologia di seduta, senza
+- valori delle policy versionate per `discipline` e tipologia di seduta, senza
   introdurre qui soglie numeriche;
 - metodi d'intensità inizialmente supportati;
 - schema canonico dei segmenti e dettaglio operativo del matching dei file
@@ -590,6 +598,8 @@ Evaluator e test possono essere progettati soltanto quando:
 
 - [x] la prescrizione autorevole è l'ultimo snapshot immutabile comunicato;
 - [x] le quattro dimensioni di esecuzione e la loro separazione sono definite;
+- [x] la tassonomia sportiva canonica unica e autorevole usa `discipline`,
+      `environment`, `mode` e `composition` in prescrizione e attività;
 - [x] meteo e obiettivo descrittivo sono contestuali e non bloccanti;
 - [x] stati interni e testi utente sono definiti;
 - [x] il perimetro iniziale della stabilità è definito;
