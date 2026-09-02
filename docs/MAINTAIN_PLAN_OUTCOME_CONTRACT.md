@@ -2,128 +2,253 @@
 
 > **Stato:** DRAFT, NON IMPLEMENTATO.
 >
-> Questo documento definisce il contratto dati e semantico minimo da approvare
-> prima di implementare evaluator o test per l'outcome `MAINTAIN_PLAN`. Non
-> descrive comportamento attualmente disponibile nel runtime.
+> Le decisioni contrassegnate come **APPROVATA** definiscono il contratto
+> concordato, ma non descrivono comportamento attualmente disponibile nel
+> runtime. Finché le decisioni residue non saranno approvate e il contratto non
+> sarà implementato esplicitamente, `MAINTAIN_PLAN` deve restare
+> `INSUFFICIENT_DATA` e non deve ricevere esiti tramite fallback o proxy.
 
-## 1. Obiettivo e non-obiettivi
+## 1. Scopo e confini
 
-### Obiettivo
-
-Definire quando IronCoach dispone di evidenza sufficiente per valutare se una
+Questo documento definisce il contratto dati e semantico per valutare se una
 decisione con primary intent `MAINTAIN_PLAN` ha prodotto congiuntamente:
 
-1. il completamento del workout prescritto; e
-2. la stabilità generale dell'atleta nella finestra osservativa approvata.
+1. un'esecuzione coerente con l'ultima prescrizione effettivamente comunicata
+   all'atleta; e
+2. la stabilità generale dell'atleta.
 
-Il contratto deve rendere confrontabili prescrizione ed esecuzione senza
-dedurre informazioni non osservate e deve produrre evidenza verificabile per
-ogni dimensione valutata.
+Il contratto deve conservare evidenza verificabile per ogni dimensione, senza
+dedurre informazioni non osservate.
 
-### Non-obiettivi
+Non implementa evaluator o test, non introduce soglie numeriche, non autorizza
+equivalenze implicite, non formula diagnosi cliniche e non usa la mera presenza
+di un'attività come prova di successo.
 
-Questo contratto non:
+## 2. Registro delle decisioni approvate
 
-- implementa un evaluator, modifica il runtime o definisce nuovi test;
-- stabilisce soglie numeriche di aderenza o finestre temporali;
-- definisce equivalenze o sostituzioni tra sport;
-- converte automaticamente metodi d'intensità differenti;
-- introduce criteri clinici o sostituisce una valutazione sanitaria;
-- misura il miglioramento di lungo periodo o la correttezza originaria della
-  decisione;
-- considera la mera presenza di un'attività come prova di successo;
-- autorizza l'uso di dati grezzi non contrattualizzati come fallback
-  decisionale.
+Le seguenti decisioni sono **APPROVATE**:
 
-## 2. Prescrizione canonica minima
+1. **Prescrizione autorevole.** È l'ultima prescrizione effettivamente
+   comunicata all'atleta, conservata come snapshot immutabile. La prescrizione
+   originaria resta disponibile esclusivamente per audit.
+2. **Dimensioni di esecuzione.** Sono sport, quantità di lavoro, intensità e
+   struttura della seduta.
+3. **Separazione semantica.** Quantità di lavoro, intensità e dose/carico
+   allenante sono concetti distinti. Quantità e intensità sono valutate
+   separatamente e interpretate congiuntamente, senza formule o conversioni
+   implicite.
+4. **Meteo.** È un dato contestuale facoltativo per le attività outdoor:
+   arricchisce l'analisi, non determina direttamente `MET` o `NOT_MET`, e la
+   sua assenza non blocca il report né produce `INSUFFICIENT_DATA`. Per le
+   attività indoor è `NOT_APPLICABLE`. Sorgente e provenienza devono essere
+   conservate.
+5. **Obiettivo.** È valutabile soltanto se possiede criteri strutturati e
+   osservabili. Un obiettivo testuale o generico resta contesto e non blocca
+   l'analisi.
+6. **Stati e testi utente.** La corrispondenza definita nella sezione 7 è
+   vincolante. La mancanza di dati non deve essere presentata come fallimento
+   dell'atleta.
+7. **Stabilità iniziale.** Il recovery è valutato automaticamente mediante le
+   categorie già approvate. L'assenza di problemi riferiti produce
+   `NO_KNOWN_ISSUE`, non una certificazione clinica; i problemi riferiti
+   dall'atleta devono essere considerati. La performance non è obbligatoria
+   nella prima versione. Recovery mancante o stale non blocca l'analisi
+   dell'esecuzione, ma impedisce di inventare la stabilità.
+8. **Metrica primaria della quantità.** Ogni prescrizione dichiara `duration`,
+   `distance`, `sets_repetitions` oppure una metrica esplicita per segmento. Le
+   metriche secondarie sono contestuali e non sono convertite automaticamente.
+9. **Policy della quantità.** Gli stati della quantità dipendono da policy
+   esplicite e versionate. Questo draft non introduce tolleranze numeriche.
+10. **Metodo d'intensità.** Ogni prescrizione dichiara un metodo principale ed
+    eventuali metodi secondari ammessi. Sono vietate conversioni automatiche
+    fra frequenza cardiaca, potenza, passo/velocità e RPE.
+11. **Copertura.** Nelle sedute continue si valuta la copertura temporale;
+    negli intervalli si valutano i singoli blocchi. Telemetria insufficiente
+    rende non valutabile soltanto la dimensione interessata.
+12. **Identità sportiva.** Sport principale, modalità e variante sono campi
+    distinti. Indoor e outdoor sono compatibili soltanto se ammessi. Le
+    sostituzioni sportive devono essere esplicite e non possono essere inferite
+    a posteriori.
+13. **Tempistiche.** Il report è visibile subito dopo la sincronizzazione e il
+    recovery è usato prima della seduta successiva. Le finestre 72h e 7d sono
+    riservate al trend interno. Allenamenti intervenuti impediscono attribuzioni
+    causali alla singola seduta. Nessun aggiornamento tardivo può essere
+    presentato come un nuovo report della vecchia seduta.
+14. **Deterioramento.** Usa analyzer e categorie già approvati. I segnali di
+    sicurezza hanno priorità; segnali contraddittori o insufficienti non
+    producono conclusioni inventate.
+15. **Matrice finale.** L'aggregazione vincolante è definita nella sezione 10.
+16. **Brick.** È una sola seduta composta, con segmenti ordinati inclusa la
+    transizione e obbligo di consequenzialità. Supporta sia un'attività
+    multisport sia file separati, produce dettaglio per segmento ma un solo
+    outcome e un solo contributo al learning. Recovery e stabilità riguardano
+    l'intera Brick; il meteo è contestuale per ogni segmento outdoor.
+17. **Interruzioni e matching.** Un workout interrotto per sicurezza non deve
+    essere descritto come errore dell'atleta. Attività multiple o ambigue non
+    devono essere collegate arbitrariamente.
+18. **Applicazione temporale.** Il nuovo contratto si applica soltanto ai nuovi
+    episodi. Nessun episodio storico viene reinterpretato.
+19. **Tolleranze.** Sono definite da policy versionate per disciplina e
+    tipologia di seduta. Una regola specifica, esplicita e versionata contenuta
+    nella prescrizione può sostituire la policy generale. Nessuna tolleranza è
+    nascosta nell'evaluator.
+20. **Dose complessiva.** Quantità/durata e intensità sono valutate
+    separatamente e soltanto dopo sono combinate nella valutazione della dose
+    complessiva mediante una policy esplicita e versionata.
+21. **Fasce indipendenti.** I limiti inferiori e superiori sono indipendenti e
+    distinguono una fascia principale e una fascia secondaria. Valori e criteri
+    appartengono alla policy o alla regola specifica della prescrizione; questo
+    draft non introduce soglie numeriche.
+22. **Struttura.** La valutazione distingue blocchi obbligatori e facoltativi,
+    ordine e `main_set`. Se i blocchi non sono ricostruibili, la gestione è
+    prudente e la sola dimensione interessata è `INSUFFICIENT_DATA`.
+23. **Intensità per blocco.** Ogni blocco valutabile dichiara metodo, unità,
+    obiettivo e copertura richiesta. Non sono ammesse conversioni automatiche
+    fra frequenza cardiaca, potenza, passo/velocità e RPE.
+24. **Meteo non bloccante.** Per le attività outdoor è contestuale e
+    facoltativo; per le attività indoor è `NOT_APPLICABLE`.
+25. **Prima sorgente meteo.** Open-Meteo è la prima sorgente sostituibile, con
+    riferimento alla [Historical Weather API](https://open-meteo.com/en/docs/historical-weather-api)
+    e alle [condizioni di utilizzo e pricing](https://open-meteo.com/en/pricing).
+    Devono essere conservate attribuzione e provenienza. La richiesta usa
+    coordinate approssimate e non trasmette l'intero tracciato GPS.
+26. **Ruolo iniziale del meteo.** Nella prima versione spiega difficoltà e
+    scostamenti, ma non applica correzioni matematiche automatiche e non cambia
+    da solo lo stato della seduta.
+27. **Matching e conferma.** Il matching è deterministico e dà priorità
+    all'identificativo diretto. Nei casi ambigui richiede conferma all'atleta;
+    prima della conferma l'episodio non entra nel learning.
+28. **Tassonomia.** Distingue disciplina, ambiente indoor/outdoor, modalità e
+    composizione `single`/`brick`/`multisport`.
+29. **Gerarchia delle sorgenti.** L'ordine è: prescrizione IronCoach per quanto
+    previsto; Garmin/dispositivo originale per i dati oggettivi eseguiti;
+    Strava come integrazione o fallback; feedback dell'atleta per i dati
+    soggettivi; Open-Meteo per i dati ambientali.
+30. **Discordanze.** Dati discordanti non sono mediati né fusi
+    automaticamente. Si conserva l'evidenza distinta secondo provenienza e si
+    applica la gerarchia senza nascondere il conflitto.
+31. **Missingness per dimensione.** La missingness è isolata alla dimensione
+    interessata e il report viene comunque prodotto. Se una dimensione
+    obbligatoria non è valutabile, manca un outcome complessivo definitivo. Il
+    meteo rimane facoltativo.
+32. **Report immediato.** Contiene seduta prevista, seduta eseguita, confronto
+    dimensionale, contesto, valutazione della dose e, soltanto se supportate,
+    indicazioni per la seduta successiva. Le analisi a 72 ore e 7 giorni
+    restano interne.
+33. **Questionario facoltativo.** Nessun questionario è obbligatorio. L'assenza
+    di segnalazioni significa “nessun problema noto”, non certificazione di
+    assenza di problemi.
+34. **Feedback soggettivo.** È facoltativo e strutturato per RPE, dolore,
+    affaticamento insolito, interruzioni e relative motivazioni.
+35. **Perimetro della prima implementazione.** Comprende sedute continue quando
+    i dati sono compatibili; intervalli soltanto quando blocchi e segmenti sono
+    ricostruibili; Brick come sessione atomica con ordine e consecutività
+    verificabili. Non usa proxy per tipologie non supportate.
+36. **Linguaggio del report.** I testi mostrati sono comprensibili all'utente;
+    codici tecnici, stati di elaborazione e dettagli di policy restano interni.
 
-La prescrizione valutabile deve essere uno snapshot immutabile, riferito alla
-decisione, con provenienza e versione del contratto. I campi obbligatori minimi
-sono:
+## 3. Prescrizione autorevole e audit
+
+Lo snapshot autorevole è creato quando la prescrizione viene effettivamente
+comunicata all'atleta. Una modifica successiva diventa autorevole soltanto dopo
+una nuova comunicazione e genera un nuovo snapshot immutabile. Non si modifica
+retroattivamente lo snapshot precedente.
 
 ```yaml
 planned_workout:
   contract_version: string
+  prescription_snapshot_id: string
   workout_id: string
   decision_id: string
+  communicated_at: datetime
   scheduled_window:
     start: datetime
     end: datetime
     timezone: string
   sport:
-    code: string
+    discipline: string
+    environment: indoor | outdoor | null
+    mode: string | null
+    composition: single | brick | multisport
   allowed_substitutions: []
-  volume:
+  quantity:
     applicability: REQUIRED | NOT_APPLICABLE
-    metric: string | null
-    target: number | null
-    unit: string | null
-    tolerance_policy_id: string | null
+    primary_metric: duration | distance | sets_repetitions | per_segment
+    target: object | null
+    secondary_metrics: []
+    evaluation_policy_id: string | null
+    prescription_override: object | null
+    bands:
+      lower_limit: object | null
+      upper_limit: object | null
+      primary: object | null
+      secondary: object | null
   intensity:
     applicability: REQUIRED | NOT_APPLICABLE
-    method: string | null
+    primary_method: string | null
     target: object | null
-    unit: string | null
-    tolerance_policy_id: string | null
+    allowed_secondary_methods: []
+    evaluation_policy_id: string | null
   structure:
     applicability: REQUIRED | NOT_APPLICABLE
+    session_type: continuous | intervals | brick | other
     segments: []
     evaluation_policy_id: string | null
   objective:
-    applicability: REQUIRED | NOT_APPLICABLE
+    evaluability: STRUCTURED | CONTEXT_ONLY | NOT_APPLICABLE
     code: string | null
     success_criteria: []
+    context_text: string | null
     evaluation_policy_id: string | null
   provenance:
     source: string
     captured_at: datetime
+  audit:
+    original_plan_snapshot_id: string | null
 ```
 
-Ogni elemento di `allowed_substitutions` deve essere dichiarato esplicitamente
-nella prescrizione o in una policy identificata e versionata. Il contratto non
-presume alcuna equivalenza tra sport.
+Target, unità e criteri devono essere strutturati. Se la metrica primaria è
+`per_segment`, ciascun segmento dichiara esplicitamente la propria metrica.
+Le metriche secondarie non sostituiscono quella primaria. L'eventuale piano
+originario è consultabile per audit, ma non partecipa al confronto.
 
-Se `structure.applicability` è `REQUIRED`, ogni segmento deve identificare
-almeno ordine, tipo, volume applicabile, metodo d'intensità applicabile,
-recupero applicabile e opzionalità. Valori target e unità devono essere campi
-strutturati, non estratti da testo libero durante la valutazione.
-
-Le tolerance policy e le evaluation policy sono riferimenti obbligatori quando
-la relativa dimensione è richiesta. I loro contenuti e le eventuali soglie
-devono essere approvati separatamente: questo draft non ne inventa alcuno.
-
-## 3. Attività eseguita canonica minima
-
-L'attività associata deve essere già normalizzata e deve conservare missingness,
-provenienza e qualità dei dati:
+## 4. Attività eseguita e matching
 
 ```yaml
-actual_activity:
+actual_session:
   contract_version: string
-  activity_id: string
-  source: string
+  session_id: string
+  source_activities: []
   start: datetime
   end: datetime | null
   timezone: string
   sport:
-    code: string
-  volume:
-    metric: string | null
-    value: number | null
-    unit: string | null
-  intensity:
-    method: string | null
+    discipline: string
+    environment: indoor | outdoor | null
+    mode: string | null
+    composition: single | brick | multisport
+  quantity:
+    primary_metric: string | null
     observed: object | null
-    unit: string | null
-    coverage: object | null
+    secondary_metrics: []
+  intensity:
+    methods: []
+    observations: object | null
+    temporal_coverage: object | null
   structure:
+    session_type: string | null
     segments: []
   completion:
     status: string | null
     interruption_reason: string | null
-  safety:
+    safety_interruption: boolean | null
+  athlete_feedback:
+    rpe: object | null
     pain: object | null
-    injury_or_adverse_event: object | null
+    unusual_fatigue: object | null
+    interruption: object | null
+    interruption_reason: object | null
+  weather_context: []
   data_quality:
     source_checked_at: datetime | null
     completeness: string
@@ -133,245 +258,339 @@ actual_activity:
     normalized_at: datetime
 ```
 
-Il valore mancante deve rimanere `null` e non essere trasformato in zero. Le
-unità devono essere esplicite. `raw` può essere conservato per audit, ma non può
-sostituire i campi canonici richiesti dall'evaluator.
+Missingness resta esplicita e non diventa zero. Nessun questionario è
+obbligatorio. Ogni elemento di
+`source_activities` conserva ID e provenienza. Il matching deve essere
+deterministico e privilegia l'identificativo diretto. Se più attività restano
+candidate o la relazione è ambigua, nessuna viene scelta arbitrariamente: si
+richiede conferma all'atleta, le sole dimensioni non dimostrabili diventano
+`INSUFFICIENT_DATA` e l'episodio non entra nel learning prima della conferma.
 
-Se la prescrizione richiede struttura, i segmenti reali devono offrire le
-stesse dimensioni necessarie al confronto. Una media complessiva dell'attività
-non dimostra da sola l'esecuzione dei singoli segmenti.
+La gerarchia delle sorgenti è prescrizione IronCoach, Garmin/dispositivo
+originale, Strava come integrazione o fallback, feedback atleta per i dati
+soggettivi e Open-Meteo per quelli ambientali. Evidenze discordanti conservano
+ciascuna la propria provenienza: non sono mediate o fuse automaticamente.
 
-## 4. Contratto di stabilità generale
+Una interruzione motivata da sicurezza conserva ragione ed evidenza e usa un
+testo neutro, non colpevolizzante. Non equivale automaticamente né a errore
+dell'atleta né a esecuzione pienamente in linea.
 
-La stabilità generale è un outcome composito distinto dall'aderenza. Deve
-confrontare una baseline pre-decisione con osservazioni post-decisione entro
-finestre esplicite, mature e complete.
+## 5. Valutazione dell'esecuzione
+
+### 5.1 Sport
+
+Il confronto usa separatamente disciplina, ambiente indoor/outdoor, modalità e
+composizione `single`/`brick`/`multisport`. La
+compatibilità richiede coincidenza oppure un'autorizzazione esplicita nello
+snapshot o in una policy versionata da esso richiamata. Questo vale anche per
+indoor/outdoor. Somiglianza nominale, comune natura aerobica e attività
+osservate a posteriori non autorizzano sostituzioni.
+
+### 5.2 Quantità di lavoro
+
+La quantità, inclusa la durata quando è la metrica primaria, è valutata sulla
+metrica dichiarata: durata, distanza,
+serie/ripetizioni o metrica per segmento. Metrica, rappresentazione e unità
+devono essere compatibili secondo una policy esplicita e versionata per
+disciplina e tipologia di seduta. Una regola specifica nella prescrizione può
+sostituire la policy generale soltanto se è esplicita, versionata e auditabile.
+
+Limite inferiore e limite superiore sono indipendenti. La policy distingue una
+fascia principale e una fascia secondaria e assegna i relativi stati. Nessuna
+tolleranza è codificata o nascosta nell'evaluator e nessun valore numerico è
+definito in questo documento.
+
+Le metriche secondarie arricchiscono il contesto ma non sostituiscono la
+primaria. Non si converte automaticamente distanza in durata, durata in
+distanza o una metrica di segmento in una metrica complessiva.
+
+### 5.3 Intensità
+
+La valutazione usa il metodo principale prescritto oppure un metodo secondario
+esplicitamente ammesso. Per ogni blocco specifica metodo, unità, obiettivo e
+copertura richiesta. Frequenza cardiaca, potenza, passo/velocità e RPE restano
+metodi distinti e non vengono convertiti fra loro.
+
+Per una seduta continua la policy valuta la copertura temporale. Per una seduta
+a intervalli valuta separatamente i blocchi prescritti. Medie complessive non
+dimostrano l'esecuzione dei singoli blocchi. Telemetria insufficiente produce
+`INSUFFICIENT_DATA` per l'intensità senza invalidare automaticamente sport,
+quantità o struttura.
+
+### 5.4 Struttura
+
+La struttura confronta blocchi obbligatori e facoltativi, ordine, `main_set`,
+tipo, quantità applicabile, intensità applicabile, recupero applicabile e
+consequenzialità dei segmenti. Il testo libero non viene trasformato a
+posteriori in struttura osservabile. Blocchi o segmenti non ricostruibili sono
+gestiti prudentemente: la struttura, o il solo blocco da cui dipende una
+dimensione, diventa `INSUFFICIENT_DATA` senza inventare l'esecuzione.
+
+### 5.5 Obiettivo della seduta
+
+L'obiettivo è una dimensione valutabile solo con criteri strutturati,
+osservabili e associati a una policy versionata. Se è generico o soltanto
+testuale, ha `evaluability: CONTEXT_ONLY`: resta visibile come contesto, non
+entra nell'aggregazione e non rende l'esecuzione insufficiente.
+
+### 5.6 Quantità, intensità e dose/carico
+
+Quantità/durata e intensità producono risultati separati. Soltanto dopo questa
+valutazione sono combinate nella dose complessiva mediante una policy esplicita
+e versionata. La combinazione non crea formule implicite: campi, regole,
+provenienza e missingness della dose devono essere dichiarati e non possono
+sostituire retroattivamente una delle due dimensioni.
+
+## 6. Meteo contestuale
+
+Il meteo è facoltativo e non è una dimensione di aderenza:
+
+- per ogni segmento outdoor può essere registrato con sorgente, timestamp,
+  località/provenienza e qualità;
+- può spiegare o arricchire il report, ma non determina direttamente `MET` o
+  `NOT_MET`;
+- se manca, il report procede e non diventa `INSUFFICIENT_DATA`;
+- per attività o segmenti indoor è `NOT_APPLICABLE`.
+
+Nella prima versione Open-Meteo è la sorgente sostituibile prioritaria, secondo
+la [Historical Weather API](https://open-meteo.com/en/docs/historical-weather-api)
+e le [condizioni di utilizzo e pricing](https://open-meteo.com/en/pricing).
+Ogni osservazione conserva sorgente, attribuzione, timestamp, coordinate usate
+e provenienza. Le richieste usano coordinate approssimate e non trasmettono
+l'intero tracciato GPS.
+
+Il meteo può spiegare difficoltà e scostamenti nel contesto del report, ma non
+applica correzioni matematiche automatiche e non cambia da solo lo stato di una
+dimensione o della seduta.
+
+## 7. Stati interni e testi rivolti all'atleta
+
+| Stato interno | Testo utente obbligatorio |
+|---|---|
+| `MET` | In linea con quanto previsto |
+| `PARTIALLY_MET` | Parzialmente in linea con quanto previsto |
+| `NOT_MET` | Diverso da quanto previsto |
+| `NOT_APPLICABLE` | Non previsto per questa seduta |
+| `INSUFFICIENT_DATA` | Dati non sufficienti per valutarlo |
+
+`PARTIALLY_MET` richiede criteri espliciti della policy. `NOT_APPLICABLE` è
+valido solo quando dichiarato dal contratto. `NOT_MET` richiede evidenza
+sufficiente e compatibile; dati mancanti, incompatibili o ambigui producono
+invece `INSUFFICIENT_DATA` per la dimensione interessata. I testi e le
+motivazioni non devono rappresentare missingness, ambiguità o interruzioni di
+sicurezza come fallimenti dell'atleta.
+
+Ogni risultato conserva stato, `policy_id`, evidenza pianificata ed effettiva,
+ragioni, qualità dei dati e provenienza.
+
+Nel report i codici tecnici restano interni e sono tradotti nei testi utente
+approvati. Anche motivazioni, contesto e indicazioni devono usare un linguaggio
+comprensibile, senza esporre identificativi di policy o stati di elaborazione.
+
+## 8. Stabilità generale iniziale
+
+La stabilità è distinta dall'esecuzione. Nella prima versione:
+
+- il recovery è valutato automaticamente tramite analyzer e categorie già
+  approvati;
+- i problemi riferiti dall'atleta sono considerati come segnali di sicurezza;
+- l'assenza di problemi riferiti è `NO_KNOWN_ISSUE`, cioè assenza di problemi
+  noti nella sorgente, e non certificazione clinica;
+- il feedback soggettivo è facoltativo e, quando fornito, è strutturato per
+  RPE, dolore, affaticamento insolito, interruzioni e motivazioni;
+- la performance non è obbligatoria;
+- recovery mancante o stale non impedisce il report sull'esecuzione, ma rende
+  la stabilità `INSUFFICIENT_DATA` anziché consentire una stabilità inventata.
 
 ```yaml
 general_stability:
   contract_version: string
-  baseline:
-    observed_at: datetime
-    dimensions: object
-    data_quality: object
-  observation_window:
-    start: datetime
-    end: datetime
-    evaluated_at: datetime
-    mature: boolean
-    complete: boolean
-  dimensions:
-    recovery: dimension_result
-    pain_or_injury: dimension_result
-    load_tolerance: dimension_result
-    performance: dimension_result
-    adverse_events: dimension_result
+  recovery:
+    analyzer_version: string
+    baseline: object | null
+    observation: object | null
+    freshness: object
+    result: STABLE | DETERIORATED | INSUFFICIENT_DATA
+  reported_problems:
+    result: NO_KNOWN_ISSUE | ISSUE_REPORTED | INSUFFICIENT_DATA
+    evidence: object
+    provenance: object
+  performance:
+    applicability: OPTIONAL
+    evidence: object | null
+  safety_signals: []
   overall:
     status: STABLE | DETERIORATED | INSUFFICIENT_DATA
     policy_id: string
     evidence: object
-  data_quality:
-    freshness: object
-    missing_dimensions: []
-    warnings: []
 ```
 
-Per ciascuna dimensione, `dimension_result` deve contenere almeno stato,
-baseline, osservazioni, finestra, sorgente, freshness, completezza, policy
-versionata ed evidenza. Le dimensioni obbligatorie, le finestre, il significato
-di deterioramento e la regola di aggregazione devono essere approvati prima
-dell'implementazione.
+Il deterioramento riusa analyzer e categorie già approvati, senza nuove soglie
+implicite. I segnali di sicurezza hanno priorità. Evidenza insufficiente o
+contraddittoria non autorizza conclusioni inventate.
 
-Il solo recovery non equivale a stabilità generale. L'assenza di un record di
-dolore, infortunio o evento avverso non equivale alla prova della loro assenza.
-Una finestra non matura o incompleta non può produrre `STABLE`.
+## 9. Tempistiche del report e dei trend
 
-## 5. Stati delle dimensioni
+Il report della seduta è reso visibile subito dopo la sincronizzazione e
+mantiene la propria identità. Viene prodotto anche quando una dimensione è
+`INSUFFICIENT_DATA` e presenta, nell'ordine:
 
-Ogni dimensione di completamento (`sport`, `volume`, `intensity`, `structure`,
-`objective`) deve restituire esattamente uno dei seguenti stati:
+1. seduta prevista;
+2. seduta eseguita;
+3. confronto dimensionale;
+4. contesto;
+5. valutazione della dose;
+6. indicazioni per la seduta successiva, soltanto quando supportate
+   dall'evidenza disponibile.
 
-| Stato | Significato |
-|---|---|
-| `MET` | L'evidenza richiesta, compatibile e completa soddisfa la policy approvata della dimensione. |
-| `PARTIALLY_MET` | L'evidenza richiesta è sufficiente per applicare la policy, ma soddisfa solo il criterio di aderenza parziale definito dalla policy. |
-| `NOT_MET` | L'evidenza richiesta è sufficiente e compatibile, ma non soddisfa la policy. |
-| `NOT_APPLICABLE` | La prescrizione dichiara esplicitamente che la dimensione non si applica. Non è sinonimo di dato mancante. |
-| `INSUFFICIENT_DATA` | L'evidenza è mancante, incompleta, ambigua, incompatibile, non fresca o non consente di applicare la policy. |
+Il recovery disponibile viene usato prima della
+seduta successiva. Le osservazioni a 72 ore e 7 giorni servono esclusivamente
+al trend interno e non generano un nuovo report della vecchia seduta.
 
-`PARTIALLY_MET` richiede criteri approvati specifici della dimensione; non può
-essere assegnato per intuizione. `NOT_APPLICABLE` è valido solo se dichiarato
-nel contratto della prescrizione. In ogni altro caso, l'assenza di dati produce
+Se fra la seduta e un'osservazione successiva sono intervenuti altri
+allenamenti, il sistema non attribuisce causalmente il segnale alla singola
+seduta. Un aggiornamento tardivo può aggiornare il trend interno secondo policy
+esplicita, ma non viene presentato all'atleta come un nuovo esito di quella
+seduta.
+
+## 10. Aggregazione finale approvata
+
+L'esecuzione aggregata assume uno dei livelli `IN_LINE`, `PARTIALLY_IN_LINE`,
+`DIFFERENT` o `INSUFFICIENT_DATA`, derivato tramite policy versionate dai
+risultati di sport, quantità, intensità e struttura. L'obiettivo
+`CONTEXT_ONLY` e il meteo mancante sono esclusi dalle dimensioni essenziali.
+
+| Esecuzione | Stabilità | Outcome `MAINTAIN_PLAN` |
+|---|---|---|
+| `IN_LINE` | `STABLE` | `POSITIVE` |
+| `PARTIALLY_IN_LINE` | `STABLE` | `NEUTRAL` |
+| `DIFFERENT` | `STABLE` | `NEGATIVE` |
+| qualsiasi stato valutabile | `DETERIORATED` | `NEGATIVE`, con priorità ai segnali di sicurezza |
+| dato essenziale non valutabile | qualsiasi | `INSUFFICIENT_DATA` |
+| qualsiasi | `INSUFFICIENT_DATA` | `INSUFFICIENT_DATA` |
+
+Per `MAINTAIN_PLAN`, un'esecuzione diversa con stabilità produce dunque
+`NEGATIVE`; ciò descrive la differenza dalla prescrizione e non un giudizio
+sull'atleta. Meteo mancante e obiettivo descrittivo non producono
 `INSUFFICIENT_DATA`.
 
-Ogni risultato deve includere:
+La missingness resta isolata nella dimensione interessata, così le altre parti
+del confronto e il report immediato rimangono disponibili. Se una dimensione
+obbligatoria non è valutabile, tuttavia, non viene prodotto un outcome
+complessivo definitivo e l'aggregazione resta `INSUFFICIENT_DATA`. Il meteo non
+è mai una dimensione obbligatoria.
 
-```yaml
-dimension_result:
-  status: MET | PARTIALLY_MET | NOT_MET | NOT_APPLICABLE | INSUFFICIENT_DATA
-  policy_id: string | null
-  planned_evidence: object
-  actual_evidence: object
-  reasons: []
-  data_quality: object
-```
+## 11. Contratto Brick
 
-## 6. Regole di compatibilità
+Una Brick è un'unica seduta composta:
 
-### Sport
+- i segmenti, transizione inclusa, sono ordinati e devono essere consecutivi;
+- l'acquisizione può provenire da una singola attività multisport o da file
+  separati collegati deterministicamente;
+- il report espone il dettaglio di ogni segmento e delle transizioni, ma genera
+  un solo outcome complessivo;
+- l'episodio fornisce un solo contributo al learning;
+- recovery e stabilità sono riferiti all'intera Brick;
+- il meteo resta contestuale separatamente per ogni segmento outdoor e
+  `NOT_APPLICABLE` per quelli indoor.
 
-Il confronto è valido solo quando:
+File multipli ambigui, sovrapposti o non dimostrabilmente consecutivi non
+vengono assemblati arbitrariamente. L'insufficienza di un segmento rende non
+valutabili le sole dimensioni essenziali che dipendono da quell'evidenza e si
+propaga poi secondo la matrice finale.
 
-- lo sport reale coincide con lo sport canonico prescritto; oppure
-- la sostituzione è esplicitamente ammessa da `allowed_substitutions` o da una
-  policy versionata richiamata dalla prescrizione.
+## 12. Perimetro della prima implementazione
 
-Una somiglianza nominale, la comune natura aerobica o l'appartenenza implicita
-a una famiglia non autorizzano una sostituzione.
+La prima implementazione, quando sarà autorizzata, è limitata a:
 
-### Volume
+- sedute continue, quando metrica, unità, metodo e dati sono compatibili;
+- intervalli, soltanto quando blocchi e segmenti sono ricostruibili;
+- Brick trattate come singole sessioni atomiche, soltanto quando ordine e
+  consecutività sono verificabili.
 
-Il confronto è valido solo quando metrica e unità del volume sono identiche sui
-due lati. Conversioni ammesse devono avvenire prima dell'evaluator, in un layer
-di normalizzazione con regole esplicite e testate; l'evaluator non deve
-indovinare unità o convertire in base alla magnitudine.
+Tipologie non supportate o non ricostruibili restano non valutabili. Non si
+usano proxy per estendere artificialmente il perimetro.
 
-### Intensità
+## 13. Proxy vietati
 
-Il confronto è valido solo quando il metodo d'intensità è lo stesso nella
-prescrizione e nell'attività: per esempio, un target basato su un metodo non può
-essere dimostrato mediante un metodo diverso. Qualunque conversione futura fra
-metodi richiederà un contratto separato, esplicito e approvato.
+Non costituiscono prova sufficiente, da soli o in combinazioni non
+contrattualizzate:
 
-### Missingness e incompatibilità
-
-Se una dimensione richiesta presenta dati mancanti, unità incompatibili,
-metodi incompatibili, segmentazione insufficiente, sorgente non fresca o
-matching ambiguo, il suo stato deve essere `INSUFFICIENT_DATA`.
-
-L'incompatibilità non equivale a `NOT_MET`: quest'ultimo richiede dati
-sufficienti per dimostrare che il criterio non è stato soddisfatto.
-
-## 7. Regole contro proxy deboli
-
-È vietato concludere che `MAINTAIN_PLAN` sia positivo usando, da soli o in
-combinazioni non contrattualizzate:
-
-- la sola esistenza di un'attività successiva alla decisione;
-- la sola coincidenza dello sport;
-- nome del workout, tipo seduta o note in testo libero;
-- la sola durata, distanza o presenza di movimento;
-- medie complessive per inferire l'esecuzione di intervalli o segmenti;
-- frequenza cardiaca per dimostrare un target di potenza, potenza per dimostrare
-  RPE, o qualsiasi altro metodo d'intensità differente;
+- la mera esistenza di un'attività o la sola coincidenza dello sport;
+- nomi, note o obiettivi in testo libero;
+- una metrica secondaria al posto della quantità primaria;
+- medie complessive per dimostrare intervalli o segmenti;
+- conversioni fra metodi d'intensità o fra metriche di quantità;
 - calorie Garmin come prova di fueling;
-- VO2max, velocità media o una singola metrica osservazionale come prova di
-  performance stabile;
-- il solo recovery come prova di stabilità generale;
-- assenza di record come prova di assenza di dolore, infortunio o evento
-  avverso;
-- valori presenti solo in `raw` quando manca il campo canonico richiesto;
+- VO2max o una singola metrica osservazionale come prova di stabilità;
+- recovery mancante o stale come prova di stabilità;
+- assenza di record come certificazione di assenza di problemi;
+- valori presenti solo nel payload grezzo quando manca il campo canonico;
 - zero sintetici al posto di dati mancanti;
-- sport, unità, intensità, criteri clinici o tolleranze inferiti implicitamente.
+- sport, modalità, variante, indoor/outdoor, sostituzioni o tolleranze inferiti
+  a posteriori.
 
-Il risultato complessivo non deve nascondere gli
-`INSUFFICIENT_DATA` delle dimensioni obbligatorie.
+## 14. Versionamento, provenienza e applicazione
 
-## 8. Sorgenti dati necessarie
+Snapshot, attività normalizzata, policy, analyzer, evidenza per dimensione e
+risultato devono essere versionati e auditabili. Il payload grezzo può essere
+conservato secondo le policy di privacy, ma non sostituisce i dati canonici.
 
-Prima dell'implementazione devono essere disponibili e contrattualizzate:
+Il presente contratto vale soltanto per episodi creati dopo la futura entrata
+in vigore della versione implementata. Episodi già persistiti mantengono
+contratto, evidenza e outcome originali: non sono migrati o reinterpretati da
+queste regole.
 
-1. **Piano/versione della prescrizione**: snapshot immutabile del workout
-   effettivamente valido dopo la decisione, inclusi applicabilità, policy e
-   finestra programmata.
-2. **Attività normalizzata**: sorgente dell'esecuzione con ID stabile, timestamp,
-   sport, volume e, quando richiesti, intensità e segmenti.
-3. **Telemetria coerente con la prescrizione**: HR, potenza, passo, velocità o
-   altro metodo solo quando quello stesso metodo è prescritto e la copertura è
-   sufficiente secondo una policy approvata.
-4. **Feedback soggettivo strutturato**: RPE, completamento/interruzione, dolore e
-   problemi, quando richiesti; il testo libero può accompagnare ma non
-   sostituire il dato canonico.
-5. **Recovery history**: baseline e osservazioni successive con timestamp,
-   freshness e completezza.
-6. **Training/load history**: dati coerenti e confrontabili necessari alla
-   dimensione di tolleranza al carico.
-7. **Injury/adverse-event history**: osservazioni esplicite, incluse quelle
-   negative se il contratto della sorgente ne garantisce il significato.
-8. **Performance history**, solo se dichiarata obbligatoria dalla policy di
-   stabilità e supportata da un vero trend temporale confrontabile.
-9. **Stato delle sorgenti**: ultimo controllo riuscito, copertura della finestra,
-   freshness, errori e campi mancanti.
+## 15. Decisioni residue prima dell'implementazione
 
-Le credenziali, i payload reali e i dati grezzi sensibili non fanno parte di
-questo contratto documentale.
+Le decisioni elencate nella sezione 2 sono chiuse. Restano da approvare senza
+inventare valori in questo draft:
 
-## 9. Decisioni ancora aperte prima dell'implementazione
+- valori ammessi nella tassonomia separata di disciplina, ambiente, modalità e
+  composizione;
+- schema delle sostituzioni esplicite e relativa governance;
+- forma canonica di target, osservazioni e unità per ciascuna metrica primaria;
+- contenuti numerici delle policy versionate e delle eventuali regole
+  specifiche di prescrizione per limiti e fasce;
+- metodi d'intensità inizialmente supportati e valori delle policy di copertura
+  temporale o per blocco;
+- schema canonico dei segmenti, mantenendo le regole approvate su blocchi,
+  ordine, `main_set`, matching e Brick;
+- policy di aggregazione delle quattro dimensioni di esecuzione nei livelli
+  `IN_LINE`, `PARTIALLY_IN_LINE`, `DIFFERENT` e `INSUFFICIENT_DATA`;
+- regole operative di freshness, completezza e gestione dei segnali
+  contraddittori per la stabilità iniziale;
+- schema definitivo e retention dei dati soggettivi, di sicurezza e meteo;
+- versione di entrata in vigore per i soli nuovi episodi.
 
-Devono essere risolte e documentate almeno le seguenti decisioni:
+## 16. Criteri di accettazione pre-implementazione
 
-- quale oggetto prevale fra workout originariamente pianificato e workout
-  raccomandato/modificato;
-- tassonomia canonica degli sport e governance delle sostituzioni esplicite;
-- metriche di volume ammesse per ciascuno sport;
-- policy e tolleranze per `MET`, `PARTIALLY_MET` e `NOT_MET` sul volume;
-- metodi d'intensità supportati e forma canonica dei rispettivi target;
-- copertura minima della telemetria necessaria per valutare l'intensità;
-- schema dei segmenti pianificati e reali, incluso il multisport;
-- criteri strutturati per dichiarare raggiunto l'obiettivo della seduta;
-- dimensioni obbligatorie della stabilità generale;
-- baseline, finestre temporali, maturity, freshness e completezza richieste;
-- definizione di deterioramento per ogni dimensione di stabilità;
-- regola di aggregazione della stabilità generale;
-- regola di aggregazione fra completamento e stabilità nell'outcome finale;
-- trattamento di più attività candidate, workout divisi e attività combinate;
-- distinzione operativa tra `NOT_MET` e `INSUFFICIENT_DATA` quando l'attività è
-  interrotta o la sorgente è incompleta;
-- versionamento, audit e migrazione degli episodi già persistiti;
-- gestione della privacy e retention dei dati soggettivi o di sicurezza.
+Evaluator e test possono essere progettati soltanto quando:
 
-Finché queste decisioni non sono chiuse, `MAINTAIN_PLAN` deve rimanere non
-implementato e non deve ricevere un esito positivo tramite fallback.
+- [x] la prescrizione autorevole è l'ultimo snapshot immutabile comunicato;
+- [x] le quattro dimensioni di esecuzione e la loro separazione sono definite;
+- [x] meteo e obiettivo descrittivo sono contestuali e non bloccanti;
+- [x] stati interni e testi utente sono definiti;
+- [x] il perimetro iniziale della stabilità è definito;
+- [x] quantità, intensità, copertura, compatibilità e divieto di conversioni
+      implicite sono definiti;
+- [x] tempistiche, matrice finale, Brick, sicurezza e applicazione ai soli nuovi
+      episodi sono definite;
+- [x] tolleranze, limiti indipendenti, fasce e override della prescrizione hanno
+      una governance esplicita senza soglie numeriche inventate;
+- [x] matching, gerarchia delle sorgenti, discordanza e conferma dell'atleta
+      sono definiti senza fusioni automatiche;
+- [x] struttura del report, feedback facoltativo, linguaggio utente e perimetro
+      della prima implementazione sono definiti;
+- [x] Open-Meteo è indicata come prima sorgente ambientale sostituibile con
+      attribuzione, provenienza e minimizzazione delle coordinate;
+- [ ] le decisioni residue della sezione 15 sono approvate e versionate;
+- [ ] fixture esclusivamente sintetiche coprono tutti gli stati, la missingness,
+      l'ambiguità, l'interruzione per sicurezza e i casi Brick;
+- [ ] persistenza e audit conservano policy, analyzer, evidenza e provenienza
+      senza dipendere dai payload grezzi.
 
-## 10. Criteri di accettazione pre-implementazione
-
-Evaluator e test per `MAINTAIN_PLAN` possono essere scritti solo quando tutti i
-seguenti criteri sono soddisfatti:
-
-- [ ] Il contratto di prescrizione canonica è approvato, versionato e distingue
-      campi richiesti, opzionali e `NOT_APPLICABLE`.
-- [ ] Lo snapshot persistito identifica senza ambiguità il workout valido dopo
-      la decisione.
-- [ ] Il contratto dell'attività reale è approvato, versionato e conserva
-      missingness, unità, provenienza e qualità.
-- [ ] Matching temporale, sportivo, multisport e multi-candidato è definito in
-      modo deterministico.
-- [ ] La tassonomia sportiva e le sole sostituzioni ammesse sono approvate.
-- [ ] Le metriche e unità di volume supportate sono esplicite; non esistono
-      euristiche basate sulla magnitudine nel percorso dell'evaluator.
-- [ ] I metodi d'intensità supportati hanno target e osservazioni nella stessa
-      rappresentazione canonica.
-- [ ] La struttura prescritta e quella reale sono confrontabili tramite
-      segmenti strutturati, senza parsing decisionale di testo libero.
-- [ ] L'obiettivo della seduta dispone di criteri osservabili e versionati,
-      oppure è dichiarato esplicitamente `NOT_APPLICABLE`.
-- [ ] Ogni dimensione ha una policy approvata per tutti e cinque gli stati,
-      senza soglie implicite.
-- [ ] Il contratto di stabilità generale specifica dimensioni obbligatorie,
-      baseline, finestre, maturity, freshness, completezza e aggregazione.
-- [ ] Le sorgenti necessarie distinguono esplicitamente dato assente da valore
-      zero e assenza di record da osservazione negativa.
-- [ ] L'outcome complessivo propaga `INSUFFICIENT_DATA` quando una dimensione
-      obbligatoria non è valutabile.
-- [ ] Sono approvate le regole che combinano completamento del workout e
-      stabilità generale in un outcome finale.
-- [ ] Sono disponibili fixture esclusivamente sintetiche e prive di dati reali
-      per ciascuno stato, incompatibilità, missingness e caso ambiguo.
-- [ ] Versioni delle policy, evidenza per dimensione e motivazioni sono
-      persistibili e auditabili senza consultare `raw`.
-- [ ] È stata completata una revisione esplicita contro tutti i proxy deboli
-      elencati in questo documento.
-
-Il soddisfacimento di questa checklist autorizza la progettazione di evaluator
-e test, ma non costituisce di per sé approvazione delle soglie o dei criteri
-ancora da definire.
+Il completamento futuro della checklist autorizzerà la progettazione
+dell'implementazione, ma non modificherà automaticamente lo stato di questo
+documento. Fino a un'approvazione esplicita successiva, resta **DRAFT — NON
+IMPLEMENTATO**.
