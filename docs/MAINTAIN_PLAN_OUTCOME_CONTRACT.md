@@ -245,6 +245,12 @@ Le seguenti decisioni sono **APPROVATE**:
     `IDENTITY`, `QUANTITY`, `INTENSITY`, `STRUCTURE`, `DOSE` e `DECISION`,
     elencando tutte le dimensioni realmente interessate senza ricorrere a una
     generica fascia o usare `DECISION` come sostituto.
+68. **Baseline del feedback e proiezione.**
+    `actual_session.athlete_feedback` è la baseline immutabile della cattura
+    iniziale. L'evento `CAPTURED` la identifica e ne verifica schema e hash,
+    senza duplicarne il payload sensibile. La proiezione versionata deriva
+    dalla baseline verificata e dagli eventi append-only successivi ordinati;
+    una catena incompleta o incoerente è invalida ed esclusa dal learning.
 
 ## 3. Prescrizione autorevole e audit
 
@@ -533,6 +539,7 @@ actual_session:
   athlete_feedback:
     feedback_id: string
     schema_version: maintain-plan-subjective-feedback/1.0.0-draft
+    payload_hash: string
     rpe: number | null
     pain: number | null
     unusual_fatigue: NONE | MILD | MODERATE | HIGH | null
@@ -612,6 +619,10 @@ soltanto identità e dati osservati: nessun elemento di `actual_session` punter�
 a una prescrizione o a un risultato futuro. Transizioni, componenti sportivi,
 recovery blocks e source segments resteranno entità distinte.
 
+`actual_session.athlete_feedback` è la baseline immutabile e autorevole della
+cattura iniziale del feedback. Il suo payload sensibile non sarà duplicato nel
+registro degli eventi: `feedback_ref` sarà l'unico collegamento alla baseline.
+
 Correzioni e cancellazioni del feedback e risoluzioni dei conflitti non
 modificheranno `actual_session`: saranno conservate in registri append-only
 separati e versionati.
@@ -619,21 +630,48 @@ separati e versionati.
 ```yaml
 feedback_event_log:
   schema_version: maintain-plan-feedback-events/1.0.0-draft
-  feedback_ref:
-    session_id: string
-    feedback_id: string
   events:
-    - event_id: string
+    - feedback_event_id: string
+      feedback_ref:
+        session_id: string
+        feedback_id: string
+      actual_session_ref:
+        session_id: string
       event_type: CAPTURED | CORRECTED | DELETED
+      baseline_schema_version: string
+      baseline_payload_hash: string
+      event_sequence: integer
+      stream_version: integer
       occurred_at: datetime
       actor: string
       provenance: object
       schema_version: maintain-plan-feedback-event/1.0.0-draft
-      previous_event_ref: string | null
+      previous_event_id: string | null
       superseded_event_ref: string | null
       corrected_payload: object | null
       deletion_reason_or_ref: string | null
       audit_metadata: object
+      missing_fields: []
+      warnings: []
+
+feedback_projection:
+  projection_id: string
+  projection_version: string
+  feedback_ref:
+    session_id: string
+    feedback_id: string
+  actual_session_ref:
+    session_id: string
+  captured_event_id: string
+  last_applied_event_id: string
+  last_applied_sequence: integer
+  baseline_schema_version: string
+  baseline_payload_hash: string
+  status: ACTIVE | DELETED | INVALID | INSUFFICIENT_DATA
+  projected_payload: object | null
+  provenance: object
+  missing_fields: []
+  warnings: []
 
 source_conflict_resolution_log:
   schema_version: maintain-plan-source-conflict-events/1.0.0-draft
@@ -654,15 +692,58 @@ source_conflict_resolution_log:
       audit_metadata: object
 ```
 
-Una proiezione deterministica e versionata dovrà ricostruire, esclusivamente
-dalla sequenza degli eventi, il feedback e la risoluzione dei conflitti
-applicabili al momento della valutazione. Gli eventi non modificheranno la
-cattura o il conflitto originale. Il payload soggetto a cancellazione seguirà
-la policy privacy; dopo la cancellazione l'audit potrà conservare soltanto i
-metadati non sensibili necessari e il feedback non potrà essere usato in
-valutazioni future o nel learning. Correzioni e cancellazioni non
-reinterpreteranno retroattivamente risultati già pubblicati senza una nuova
-`execution_evaluation` esplicitamente versionata.
+Per ogni lifecycle di feedback dovrà esistere esattamente un evento `CAPTURED`,
+che sarà il primo della catena e avrà `event_sequence: 1` e
+`stream_version: 1` e `previous_event_id: null`. `feedback_ref` dovrà
+identificare esattamente
+`actual_session.athlete_feedback`; session ID, feedback ID,
+`baseline_schema_version` e `baseline_payload_hash` dovranno coincidere con la
+baseline. `CAPTURED` conterrà identificatore dell'evento, riferimenti, metadati
+monotoni di sequenza/versione, timestamp, provenance, missing fields e warning
+applicabili, ma non una seconda copia del payload sensibile.
+
+Ogni evento successivo dovrà appartenere allo stesso feedback e alla stessa
+sessione. L'ordine sarà determinato dalla sequenza/versione monotona e dalla
+catena `previous_event_id`, non dai soli timestamp. Eventi mancanti, duplicati,
+fuori ordine oppure con hash, versione o riferimenti incoerenti renderanno la
+proiezione invalida.
+
+La proiezione deterministica e versionata del feedback verrà ricostruita dalla
+baseline immutabile `actual_session.athlete_feedback`, verificata dall'evento
+`CAPTURED`, e dalla successiva sequenza ordinata degli eventi append-only.
+L'algoritmo normativo dovrà:
+
+1. individuare l'unico evento `CAPTURED`;
+2. dereferenziare `feedback_ref` verso la baseline immutabile;
+3. verificare session ID, feedback ID, schema version e payload hash;
+4. inizializzare la proiezione con i valori della baseline;
+5. applicare in ordine gli eventi `CORRECTED`;
+6. applicare l'eventuale evento `DELETED`;
+7. produrre una proiezione identificata e versionata.
+
+Ogni `CORRECTED.corrected_payload` rappresenterà lo stato completo sostitutivo
+dei campi correggibili per quella versione, non una patch. I campi assenti non
+saranno reinterpretati come cancellazioni implicite: un payload incompleto
+rispetto allo schema applicabile renderà la proiezione invalida o insufficiente.
+
+Quando sarà applicato `DELETED`, la proiezione corrente assumerà stato
+`DELETED` e il payload non sarà più esposto a report, valutazione o learning.
+Saranno conservati soltanto i metadati minimi di audit previsti dalla policy
+privacy già approvata. La baseline immutabile e gli eventi storici non saranno
+modificati direttamente; valutazioni già pubblicate non saranno modificate
+retroattivamente e un eventuale ricalcolo richiederà una nuova versione
+esplicita di `execution_evaluation`.
+
+Se la baseline non esisterà, non sarà accessibile, non coinciderà con il
+riferimento oppure avrà schema version o hash incoerenti, la proiezione sarà
+`INVALID` o `INSUFFICIENT_DATA` secondo lo schema applicabile, senza inventare
+valori. Le parti dipendenti dal feedback non produrranno risultati definitivi;
+warning e provenance saranno conservati e il risultato sarà escluso dal
+learning.
+
+La proiezione deterministica e versionata dei conflitti continuerà invece a
+essere ricostruita dalla sequenza ordinata del relativo registro. Gli eventi
+non modificheranno la cattura o il conflitto originale.
 
 Per i conflitti, «non lo so» manterrà la dimensione interessata
 `INSUFFICIENT_DATA`; una risoluzione ambigua o ritirata non potrà entrare nel
@@ -1176,7 +1257,10 @@ feedback e conflitti effettivamente utilizzate. Un riferimento di proiezione
 presente dovrà avere insieme `projection_id` e `projection_version`; entrambi
 saranno null quando non esisterà una cattura applicabile. In questo modo una
 correzione, cancellazione o risoluzione successiva non modificherà gli input né
-la valutazione già pubblicata.
+la valutazione già pubblicata. In particolare, `execution_evaluation` dovrà
+continuare a registrare l'identificatore e la versione esatti della proiezione
+di feedback effettivamente utilizzata, inclusa una proiezione non valida o
+insufficiente quando questa determina l'assenza di risultati definitivi.
 
 ### 5.3 Identificativo diretto
 
@@ -1785,15 +1869,24 @@ i segnali e non si formulano diagnosi o nuove soglie cliniche. Ambiguità o
 contraddizioni rilevanti richiedono conferma; correzioni successive saranno
 eventi auditabili nel registro append-only separato.
 
-La cattura iniziale immutabile del feedback sarà collegata soltanto all'episodio
-e all'atleta proprietario e conserverà timestamp, provenance e schema version.
-Avrà la stessa retention dell'episodio. Correzione e cancellazione saranno
-possibili su richiesta esclusivamente mediante eventi append-only; la
-proiezione deterministica ricostruirà la versione applicabile. Un dato
-cancellato sarà escluso da uso futuro e learning e il contenuto soggetto a
-cancellazione seguirà la policy privacy, lasciando nell'audit soltanto i
-metadati non sensibili necessari. Le note non saranno inviate a provider
-esterni.
+La cattura iniziale in `actual_session.athlete_feedback` sarà la baseline
+immutabile, collegata soltanto all'episodio e all'atleta proprietario, e
+conserverà timestamp, provenance e schema version. Avrà la stessa retention
+dell'episodio. Il lifecycle inizierà con l'unico evento `CAPTURED`, che
+verificherà per riferimento schema e hash della baseline senza copiarne il
+payload sensibile. Correzione e cancellazione saranno possibili su richiesta
+esclusivamente mediante eventi append-only `CORRECTED` e `DELETED` concatenati
+e ordinati come definito nella sezione 5.1.
+
+La proiezione deterministica e versionata verrà ricostruita dalla baseline
+immutabile `actual_session.athlete_feedback`, verificata dall'evento `CAPTURED`,
+e dalla successiva sequenza ordinata degli eventi append-only. Un dato
+cancellato sarà escluso da uso futuro, report, valutazione e learning; la
+proiezione sarà `DELETED` e nell'audit resteranno soltanto i metadati non
+sensibili minimi previsti dalla policy. La cancellazione non riscriverà la
+baseline né gli eventi storici e non modificherà valutazioni già pubblicate;
+un ricalcolo richiederà una nuova evaluation versionata. Le note non saranno
+inviate a provider esterni.
 
 ## 10. Aggregazione dell'esecuzione
 
@@ -1948,6 +2041,12 @@ in linguaggio comprensibile:
    `EVALUATED`;
 9. indicazioni per la seduta successiva soltanto quando supportate.
 
+Il report userà soltanto la proiezione di feedback identificata e versionata
+riferita da `execution_evaluation`. Non esporrà alcun payload quando la
+proiezione è `DELETED` e non produrrà risultati definitivi nelle parti
+dipendenti dal feedback quando essa è `INVALID` o `INSUFFICIENT_DATA`; in tali
+casi mostrerà gli warning e la provenance applicabili senza inventare valori.
+
 Per la dose, il report e il futuro learning dovranno consumare `status` per la
 valutabilità, `direction` per l'esito direzionale e `severity_band` per la
 fascia, senza usare uno di questi campi come sostituto degli altri.
@@ -2056,7 +2155,10 @@ gate per:
 - conflitto rilevante con impatto `UNRESOLVED`;
 - confirmation mancante o risposta «non lo so»;
 - dato cancellato;
-- proiezione di feedback o conflitto ambigua, ritirata o non risolvibile;
+- proiezione di feedback `DELETED`, `INVALID`, `INSUFFICIENT_DATA`, con baseline
+  assente/inaccessibile/non coincidente, oppure con riferimenti, catena,
+  sequenza, schema version o payload hash incoerenti;
+- proiezione di conflitto ambigua, ritirata o non risolvibile;
 - outcome `INSUFFICIENT_DATA`;
 - dati essenziali insufficienti o dose valutata con metadati policy invalidi;
 - omissione di un componente opzionale, il cui record resta escluso dal
@@ -2170,8 +2272,9 @@ o feedback approvati nel presente draft.
 - [x] direzioni `MIXED` e `UNDETERMINED` definite;
 - [x] stabilità iniziale definita semanticamente;
 - [x] meteo/privacy, conflitti e feedback definiti;
-- [x] registri append-only e proiezioni versionate per feedback e conflitti
-      definiti senza mutare `actual_session`;
+- [x] baseline immutabile del feedback, evento `CAPTURED` senza duplicazione
+      del payload sensibile, invarianti del registro append-only e algoritmo
+      della proiezione versionata definiti senza mutare `actual_session`;
 - [x] report, rollout e learning gates definiti;
 - [x] applicazione ai soli nuovi episodi definita.
 
@@ -2216,9 +2319,21 @@ o feedback approvati nel presente draft.
       overall, dose e risultati dei componenti non supportati;
 - [ ] fixture confermano `MET + IN_LINE` con almeno il 90% delle ripetizioni
       obbligatorie rispettate e l'aggregazione identity completa;
-- [ ] persistenza conserva originali, conflitti, correzioni e cancellazioni;
-- [ ] proiezioni di feedback e conflitti ricostruite deterministicamente e
-      riferite dall'evaluation con la versione effettivamente usata;
+- [ ] persistenza conserva baseline e originali senza duplicare il payload
+      sensibile in `CAPTURED`, oltre a conflitti, correzioni e cancellazioni;
+- [ ] fixture del feedback verificano un solo `CAPTURED` iniziale, riferimenti,
+      hash/schema, sequenza monotona, `previous_event_id`, sostituzioni complete
+      `CORRECTED` e invalidità per eventi mancanti, duplicati o fuori ordine;
+- [ ] proiezioni di feedback ricostruite dalla baseline verificata e dagli
+      eventi successivi, e proiezioni dei conflitti ricostruite dal relativo
+      registro, tutte riferite dall'evaluation con identificatore e versione
+      effettivamente usati;
+- [ ] cancellazione del feedback provata senza esposizione in report,
+      valutazione o learning, con minimizzazione audit e senza riscrittura di
+      baseline, eventi storici o evaluation già pubblicate;
+- [ ] baseline feedback assente, inaccessibile, non coincidente o incoerente
+      produce `INVALID`/`INSUFFICIENT_DATA`, warning e provenance, senza valori
+      inventati né risultati definitivi o learning;
 - [ ] evaluation dell'impatto dei conflitti versionate dopo mapping univoco,
       separate dagli input, con tutte le dimensioni canoniche interessate e
       bloccanti per report e learning se irrisolte;
