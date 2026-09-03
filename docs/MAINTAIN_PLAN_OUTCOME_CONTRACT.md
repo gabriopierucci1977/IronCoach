@@ -231,7 +231,8 @@ Le seguenti decisioni sono **APPROVATE**:
     esplicitamente `UNSUPPORTED` nella v1, senza diventare `NOT_MET` o
     `INSUFFICIENT_DATA`.
 64. **Copertura della valutazione.** La copertura degli obbligatori è
-    `FULLY_SUPPORTED`, `PARTIALLY_UNSUPPORTED` o `UNSUPPORTED` ed è distinta
+    `FULLY_SUPPORTED`, `PARTIALLY_UNSUPPORTED`, `UNSUPPORTED` o
+    `NO_REQUIRED_COMPONENTS` ed è distinta
     dall'aderenza. Soltanto `FULLY_SUPPORTED` consente overall e dose aggregata
     definitivi e l'applicazione della precedenza di aderenza.
 65. **Requiredness dei componenti soltanto osservati.** `requiredness` proviene
@@ -251,6 +252,18 @@ Le seguenti decisioni sono **APPROVATE**:
     senza duplicarne il payload sensibile. La proiezione versionata deriva
     dalla baseline verificata e dagli eventi append-only successivi ordinati;
     una catena incompleta o incoerente è invalida ed esclusa dal learning.
+69. **Copertura senza obbligatori.** Se la prescrizione non contiene componenti
+    `REQUIRED`, la copertura è `NO_REQUIRED_COMPONENTS`: non è né
+    `FULLY_SUPPORTED` per verità vacua né `UNSUPPORTED`, e non produce overall,
+    dose aggregata o learning di sessione.
+70. **Composizione canonica.** Gli extra `OBSERVED_ONLY` non ricevono
+    requiredness o target, ma alimentano un `session_composition_result`
+    persistibile, versionato e auditabile che partecipa all'aggregazione
+    identity e può quindi modificare indirettamente l'overall.
+71. **Proiezione dei conflitti.** Il conflitto immutabile, il registro
+    append-only, la `source_conflict_projection` deterministica versionata,
+    la valutazione d'impatto post-matching e l'execution evaluation restano
+    separati; ogni evaluation conserva le versioni esatte consumate.
 
 ## 3. Prescrizione autorevole e audit
 
@@ -680,6 +693,7 @@ source_conflict_resolution_log:
     conflict_id: string
   events:
     - event_id: string
+      event_sequence: integer
       event_type: RESOLVED | UNKNOWN_ANSWER | RESOLUTION_WITHDRAWN
       selected_value: any | null
       selected_source: string | null
@@ -690,6 +704,26 @@ source_conflict_resolution_log:
       schema_version: maintain-plan-source-conflict-event/1.0.0-draft
       previous_event_ref: string | null
       audit_metadata: object
+
+source_conflict_projection:
+  projection_id: string
+  projection_version: string
+  projection_hash: string
+  source_conflict_id: string
+  actual_session_ref:
+    session_id: string
+  resolution_log_ref: string
+  through_event_id: string | null
+  through_event_sequence: integer | null
+  status: UNRESOLVED | RESOLVED | DONT_KNOW
+  selected_value: any | null
+  selected_source: string | null
+  policy_id: maintain-plan-source-conflict-projection
+  policy_version: 1.0.0-draft
+  provenance: object
+  computed_at: datetime
+  missing_fields: []
+  warnings: []
 ```
 
 Per ogni lifecycle di feedback dovrà esistere esattamente un evento `CAPTURED`,
@@ -741,14 +775,32 @@ valori. Le parti dipendenti dal feedback non produrranno risultati definitivi;
 warning e provenance saranno conservati e il risultato sarà escluso dal
 learning.
 
-La proiezione deterministica e versionata dei conflitti continuerà invece a
-essere ricostruita dalla sequenza ordinata del relativo registro. Gli eventi
-non modificheranno la cattura o il conflitto originale.
+La `source_conflict_projection` canonica sarà ricostruita in modo
+deterministico: (1) caricare il conflitto sorgente immutabile; (2) caricare il
+registro append-only delle risoluzioni; (3) verificare identificatori,
+sessione, sequenza monotona e catena `previous_event_ref`; (4) applicare gli
+eventi fino a `through_event_id` incluso; (5) produrre una nuova versione
+immutabile della proiezione; (6) calcolare `projection_hash` sull'oggetto
+canonico secondo la policy indicata. `through_event_id` e
+`through_event_sequence` sono entrambi null soltanto per la proiezione iniziale
+senza eventi.
 
-Per i conflitti, «non lo so» manterrà la dimensione interessata
-`INSUFFICIENT_DATA`; una risoluzione ambigua o ritirata non potrà entrare nel
-learning. Non saranno ammesse modifiche silenziose o sovrascritture dei valori
-originali.
+Le invarianti sono vincolanti: `UNRESOLVED` ha `selected_value` e
+`selected_source` null; la risposta canonica «non lo so» produce `DONT_KNOW`,
+ancora con entrambi null, e mantiene insufficienti le parti obbligatorie
+interessate; `RESOLVED` richiede valore e sorgente coerenti con l'evento e con
+la provenance. Un evento o una catena mancante, incoerente o non risolvibile
+rende la proiezione invalida e non autorizza valori inventati. Ogni nuova
+risoluzione crea una nuova `projection_version`; le versioni precedenti e le
+evaluation già pubblicate restano immutabili e non sono reinterpretate
+retroattivamente.
+
+Una proiezione assente, invalida, `UNRESOLVED` o `DONT_KNOW` per un conflitto
+che interessa una dimensione obbligatoria rende quella parte
+`INSUFFICIENT_DATA`, ne conserva dettaglio e warning nel report e la esclude
+dal learning. Il conflitto sorgente, il registro eventi, la proiezione, la
+valutazione d'impatto post-matching e l'execution evaluation non si incorporano
+né si sovrascrivono a vicenda.
 
 Il matching dovrà produrre un risultato separato dall'attività osservata:
 
@@ -1035,10 +1087,35 @@ esplicita e visibile nel report e conserverà identificatore, osservazioni,
 provenance, `missing_fields` e warning, senza target pianificati inventati.
 Sarà escluso dai calcoli di completezza dei componenti pianificati,
 requiredness, evaluation coverage e aggregazione delle dimensioni
-obbligatorie. Potrà influire su identity e composition esclusivamente secondo
-le policy già approvate, ma da solo non modificherà l'overall o la dose dei
-componenti pianificati obbligatori e non riceverà valutazioni target-based
-fabbricate. Entrambi i riferimenti null restano invalidi in ogni caso.
+obbligatorie. Non produrrà valutazioni target-based di quantity, intensity,
+structure o dose e non modificherà direttamente la dose dei componenti
+pianificati. Influirà
+però sulla composition tramite il risultato canonico seguente e potrà così
+modificare indirettamente identity e overall. Entrambi i riferimenti null
+restano invalidi in ogni caso.
+
+```yaml
+session_composition_result:
+  composition_result_id: string
+  status: MET | PARTIALLY_MET | NOT_MET | INSUFFICIENT_DATA
+  relevant_planned_component_refs: []
+  observed_component_refs: []
+  extra_observed_component_refs: []
+  missing_planned_component_refs: []
+  policy_id: maintain-plan-session-composition
+  policy_version: 1.0.0-draft
+  evidence: object
+  provenance: object
+  computed_at: datetime
+  missing_fields: []
+  warnings: []
+```
+
+Il risultato è persistibile, versionato e auditabile. Nessun extra e
+composizione coerente produce `MET`; almeno un `OBSERVED_ONLY` con identità
+osservabile e assente dalla prescrizione produce `NOT_MET`; se l'identità di
+un extra non è determinabile produce `INSUFFICIENT_DATA`. Non si inventano
+corrispondenze o target per ottenere una composizione coerente.
 
 ```yaml
 execution_evaluation:
@@ -1052,13 +1129,14 @@ execution_evaluation:
   source_conflict_projection_refs:
     - projection_id: string
       projection_version: string
+      projection_hash: string
   source_conflict_impact_evaluation_refs:
     - conflict_impact_evaluation_id: string
       evaluation_version: string
   component_results:
     - component_evaluation: object
   evaluation_coverage:
-    status: FULLY_SUPPORTED | PARTIALLY_UNSUPPORTED | UNSUPPORTED
+    status: FULLY_SUPPORTED | PARTIALLY_UNSUPPORTED | UNSUPPORTED | NO_REQUIRED_COMPONENTS
     required_supported_component_refs: []
     required_unsupported_component_refs: []
     optional_unsupported_component_refs: []
@@ -1121,6 +1199,8 @@ execution_evaluation:
     result_id: string
     status: MET | PARTIALLY_MET | NOT_MET | INSUFFICIENT_DATA
     component_result_refs: []
+    session_composition_result_ref:
+      composition_result_id: string
     policy_id: maintain-plan-component-aggregation
     policy_version: 1.0.0-draft
   quantity_aggregate:
@@ -1170,6 +1250,13 @@ execution_evaluation:
   provenance: object
 ```
 
+Ogni `source_conflict_projection_refs` dovrà risolvere esattamente una
+`source_conflict_projection` canonica con la stessa tripletta
+`projection_id`/`projection_version`/`projection_hash`. L'evaluation conserva
+esattamente la versione usata: riferimenti mancanti, divergenti o non
+risolvibili invalidano la parte dipendente senza selezionare una versione più
+recente implicitamente.
+
 La dose di ogni componente dovrà valorizzare i riferimenti ai risultati
 quantity e intensity dello stesso componente. La dose aggregata dovrà
 valorizzare i riferimenti agli aggregati quantity e intensity di sessione e
@@ -1205,10 +1292,13 @@ nel report ma non costituirà un risultato valutativo. Nella v1 questo risultato
 non è una quinta dimensione obbligatoria e non modifica overall, dose o
 learning; qualsiasi influenza futura richiederà una nuova decisione approvata.
 
-`evaluation_coverage.status` è calcolato esclusivamente sui componenti
-`REQUIRED`: è `FULLY_SUPPORTED` quando tutti sono `SUPPORTED`,
-`PARTIALLY_UNSUPPORTED` quando sono presenti obbligatori sia `SUPPORTED` sia
-`UNSUPPORTED`, e `UNSUPPORTED` quando nessun obbligatorio è `SUPPORTED`. Un
+`evaluation_coverage.status` è calcolato con questa regola ordinata e
+vincolante: (1) costruire l'insieme dei componenti pianificati `REQUIRED`; (2)
+se è vuoto, produrre `NO_REQUIRED_COMPONENTS`; (3) soltanto se non è vuoto,
+produrre `FULLY_SUPPORTED` quando tutti sono `SUPPORTED`,
+`PARTIALLY_UNSUPPORTED` quando alcuni sono `SUPPORTED` e altri `UNSUPPORTED`,
+oppure `UNSUPPORTED` quando nessuno è `SUPPORTED`. L'insieme vuoto non è
+`FULLY_SUPPORTED` per verità vacua e non è `UNSUPPORTED`. Un
 componente opzionale `UNSUPPORTED` resta nei risultati e nel report ma, da
 solo, non impedisce l'overall degli obbligatori supportati. I componenti
 `OBSERVED_ONLY`, la cui `requiredness` è null, e gli
@@ -1221,6 +1311,14 @@ sono entrambi `null` secondo lo schema (non oggetti `INSUFFICIENT_DATA` e non
 risultati falliti). La sessione completa non riceve quindi un overall o una
 dose definitiva e viene esclusa dal learning. Tutti i componenti non supportati
 e la relativa `capability_policy` versionata devono essere elencati nel report.
+Con `NO_REQUIRED_COMPONENTS` i componenti opzionali pianificati e osservati
+restano conservati e riportati: gli `OPTIONAL + MATCHED` possono mantenere i
+risultati di dettaglio consentiti dalle policy, mentre gli opzionali omessi
+restano `NOT_APPLICABLE`. Nessun opzionale, supportato o meno, cambia lo stato
+di copertura. Non si applica la precedenza degli outcome obbligatori
+all'insieme vuoto, non si produce un overall o una dose aggregata definitivi e
+la sessione non contribuisce al learning. Il report dichiara esplicitamente
+che la prescrizione non contiene componenti obbligatori.
 
 Gli identificatori osservati avranno questi scope canonici: `block_id` sarà
 univoco nel componente osservato, `repetition_id` sarà univoco nel blocco
@@ -1549,7 +1647,7 @@ Le regole di aderenza seguenti si applicano soltanto con
 obbligatori. La copertura non è uno stato di aderenza e non entra in questa
 precedenza.
 
-Per identity, quantity, intensity e structure dei componenti obbligatori, la futura
+Per quantity, intensity e structure dei componenti obbligatori, la futura
 implementazione dovrà applicare in ordine:
 
 1. almeno un componente `INSUFFICIENT_DATA` → aggregato `INSUFFICIENT_DATA`;
@@ -1559,25 +1657,27 @@ implementazione dovrà applicare in ordine:
 
 Ogni aggregato conserverà i riferimenti ai risultati per componente. Non
 duplicherà target o osservazioni. In particolare,
-`execution_evaluation.identity_aggregate` dovrà applicare lo stesso ordine di
-precedenza vincolante:
+`execution_evaluation.identity_aggregate` dovrà consumare i risultati identity
+dei componenti pianificati applicabili e il `session_composition_result`,
+applicando a tutti lo stesso ordine di precedenza vincolante:
 
-1. almeno un risultato identity di componente `INSUFFICIENT_DATA` produrrà
+1. almeno un input identity o composition `INSUFFICIENT_DATA` produrrà
    `identity_aggregate: INSUFFICIENT_DATA`;
-2. altrimenti almeno un risultato identity `NOT_MET` produrrà
+2. altrimenti almeno un input identity o composition `NOT_MET` produrrà
    `identity_aggregate: NOT_MET`;
-3. altrimenti almeno un risultato identity `PARTIALLY_MET` produrrà
+3. altrimenti almeno un input identity o composition `PARTIALLY_MET` produrrà
    `identity_aggregate: PARTIALLY_MET`;
-4. altrimenti tutti i risultati identity saranno `MET` e produrranno
+4. altrimenti tutti gli input identity e composition saranno `MET` e produrranno
    `identity_aggregate: MET`.
 
 Nessun componente potrà compensarne un altro. I componenti
 `REQUIRED + PLANNED_ONLY` useranno gli esiti normativi della sezione 5.2 e
 saranno inclusi negli aggregati; gli `OPTIONAL + PLANNED_ONLY` saranno esclusi
 dagli aggregati con risultati dimensionali null. Gli `OBSERVED_ONLY` resteranno
-evidenza esplicita ma non definiranno la completezza dei componenti pianificati
-obbligatori e saranno esclusi dalle aggregazioni obbligatorie. Non saranno ammesse
-inferenze o aggregazioni alternative. L'overall dell'esecuzione dovrà consumare
+evidenza esplicita e non definiranno completezza o copertura dei pianificati,
+ma alimenteranno esclusivamente `session_composition_result`; non entreranno
+direttamente come risultati target-based. Non saranno ammesse inferenze o
+aggregazioni alternative. L'overall dell'esecuzione dovrà consumare
 l'`identity_aggregate` ottenuto esclusivamente con questa regola.
 
 Lo `status` e la `direction` dell'intensità aggregata resteranno separati. Lo
@@ -1650,12 +1750,34 @@ componente `UNDETERMINED → UNDETERMINED`; almeno un componente obbligatorio
   applicano normalmente aggregati, dose e precedenza overall. Eventuali dati
   mancanti sono poi trattati come `INSUFFICIENT_DATA`, non come supporto
   mancante.
+- **Solo RUN opzionale eseguita:** copertura `NO_REQUIRED_COMPONENTS`; RUN
+  `OPTIONAL + MATCHED` conserva i dettagli consentiti, ma overall e dose
+  aggregata sono null e non vi è learning.
+- **Solo RUN opzionale omessa:** copertura `NO_REQUIRED_COMPONENTS`; il record
+  è `NOT_APPLICABLE`, il report indica sia l'omissione sia l'assenza di
+  obbligatori, e overall e dose aggregata sono null.
+- **Più componenti tutti opzionali:** matched, omessi e non supportati restano
+  distinti e visibili, ma nessuno cambia `NO_REQUIRED_COMPONENTS`; non si
+  applica una precedenza a un insieme obbligatorio vuoto.
+- **Confronto con almeno un obbligatorio:** una RUN `REQUIRED + SUPPORTED` e
+  qualsiasi componente opzionale producono `FULLY_SUPPORTED`; soltanto la RUN
+  determina la coverage, mentre gli opzionali seguono le proprie policy.
 
 ### 6.7 Identità sportiva e obiettivo
 
 Il confronto valuta composition e componenti in ordine. Per ciascun componente
 confronta discipline, environment e mode. Una compatibilità automatica richiede
 coincidenza o sostituzione esplicitamente autorizzata.
+
+Esempi normativi di composizione: RUN prescritta e RUN osservata senza extra
+produce `session_composition_result: MET`; RUN prescritta e osservata con una
+BIKE `OBSERVED_ONLY` identificabile produce `NOT_MET`, quindi
+`identity_aggregate: NOT_MET` e, in assenza di condizioni con precedenza
+superiore, overall `DIFFERENT`. Quantity, intensity, structure e dose della
+BIKE extra non sono prodotti e la dose RUN non viene alterata. Un Brick
+RUN+BIKE prescritto e corrispondente senza extra produce composition `MET`.
+Un extra la cui identità non è determinabile produce composition e identity
+aggregate `INSUFFICIENT_DATA`.
 
 Environment o mode mancanti rendono non valutabile la parte corrispondente, ma
 non impediscono il matching. Dopo direct ID o conferma, mismatch e sostituzioni
@@ -1896,7 +2018,8 @@ Policy approvata in versione draft:
 Prima dell'aderenza si calcola `evaluation_coverage.status`. La precedenza
 `INSUFFICIENT_DATA → DIFFERENT → PARTIALLY_IN_LINE → IN_LINE` qui definita è
 applicabile soltanto quando la copertura è `FULLY_SUPPORTED`. Con copertura
-`PARTIALLY_UNSUPPORTED` o `UNSUPPORTED`, `overall` è `null`/non prodotto: non
+`PARTIALLY_UNSUPPORTED`, `UNSUPPORTED` o `NO_REQUIRED_COMPONENTS`, `overall`
+è `null`/non prodotto: non
 sarà sintetizzato come fallimento né come osservazione insufficiente. Gli
 aggregati di dettaglio eventualmente calcolabili sui componenti supportati
 restano pubblicabili, ma non rappresentano l'intera sessione.
@@ -2014,7 +2137,8 @@ non un giudizio sull'atleta. Meteo missing e obiettivo descrittivo non producono
 `INSUFFICIENT_DATA`.
 
 La matrice finale presuppone `evaluation_coverage.status: FULLY_SUPPORTED`.
-Quando la copertura non è completa, l'overall d'esecuzione e la dose aggregata
+Quando la copertura non è completa, incluso `NO_REQUIRED_COMPONENTS`,
+l'overall d'esecuzione e la dose aggregata
 sono null e non viene pubblicato un outcome definitivo dell'intera sessione;
 la sessione non è classificata `NEGATIVE` né `INSUFFICIENT_DATA` per il solo
 mancato supporto e resta esclusa dal learning.
@@ -2034,6 +2158,8 @@ in linguaggio comprensibile:
    warning dei componenti soltanto osservati;
 6. `evaluation_coverage.status`, tutti i componenti `UNSUPPORTED` e la
    capability policy/versione che determina ciascun mancato supporto;
+   con `NO_REQUIRED_COMPONENTS` deve inoltre dichiarare esplicitamente che la
+   prescrizione non contiene componenti obbligatori;
 7. obiettivo `CONTEXT_ONLY` come solo contesto oppure risultato strutturato con
    lo stesso codice e la stessa coppia policy/versione non null della
    prescrizione, quando validamente prodotto;
@@ -2056,7 +2182,8 @@ definitivo se una dimensione obbligatoria è non valutabile. Dovrà indicare se
 uno scostamento di intensità è prevalentemente sopra o sotto il target. Una
 interruzione di sicurezza dovrà usare testo neutro.
 
-Con copertura non completa il report conserverà tutti i dettagli valutativi dei
+Con copertura non completa, incluso `NO_REQUIRED_COMPONENTS`, il report
+conserverà tutti i dettagli valutativi dei
 componenti supportati e mostrerà esplicitamente `overall: null` e
 `dose_aggregate: null`; non descriverà la sessione completa come fallita o
 insufficientemente osservata. Un solo componente opzionale non supportato non
@@ -2153,6 +2280,8 @@ gate per:
 - ambiguità aperta;
 - mapping non confermato;
 - conflitto rilevante con impatto `UNRESOLVED`;
+- proiezione di conflitto assente, invalida, `UNRESOLVED` o `DONT_KNOW` per
+  una dimensione obbligatoria;
 - confirmation mancante o risposta «non lo so»;
 - dato cancellato;
 - proiezione di feedback `DELETED`, `INVALID`, `INSUFFICIENT_DATA`, con baseline
@@ -2163,8 +2292,8 @@ gate per:
 - dati essenziali insufficienti o dose valutata con metadati policy invalidi;
 - omissione di un componente opzionale, il cui record resta escluso dal
   learning anche quando la copertura degli obbligatori è completa;
-- copertura non completamente supportata (`PARTIALLY_UNSUPPORTED` o
-  `UNSUPPORTED`);
+- copertura non completamente supportata (`PARTIALLY_UNSUPPORTED`,
+  `UNSUPPORTED` o `NO_REQUIRED_COMPONENTS`);
 - episodio precedente all'effective date.
 
 Versione definitiva ed effective date saranno assegnate soltanto dopo
@@ -2258,12 +2387,18 @@ o feedback approvati nel presente draft.
       non supportata e riferimenti valutativi null definiti;
 - [x] copertura del supporto, blocco di overall/dose aggregata e casi normativi
       per componenti obbligatori e opzionali definiti;
+- [x] `NO_REQUIRED_COMPONENTS`, ordine non vacuo della coverage, null di
+      overall/dose, report, learning gate ed esempi solo opzionali definiti;
+- [x] `session_composition_result` persistibile e consumo nell'identity
+      aggregate, inclusi extra osservabili e insufficienti, definiti;
 - [x] metadati della matrice obbligatori per ogni dose `EVALUATED`, di
       componente e aggregata, definiti;
 - [x] impatto dei conflitti separato dagli input grezzi e valutato dopo il
       mapping con stato `UNRESOLVED` definito;
 - [x] dimensioni canoniche complete dell'impatto dei conflitti e propagazione
       di `INSUFFICIENT_DATA` sulle dimensioni obbligatorie interessate definite;
+- [x] `source_conflict_projection` canonica, algoritmo, hash, versioni
+      immutabili e riferimenti esatti nell'execution evaluation definiti;
 - [x] aggregazione totale della direction della dose composta ed esempi
       normativi definiti;
 - [x] direzione aggregata dell'intensità per sessioni composte definita con
@@ -2297,6 +2432,10 @@ o feedback approvati nel presente draft.
 - [ ] fixture coprono `REQUIRED + PLANNED_ONLY`, `OPTIONAL + PLANNED_ONLY`,
       `OPTIONAL + MATCHED` e `OBSERVED_ONLY`, inclusi requiredness e riferimenti
       null validi e invalidi;
+- [ ] fixture coprono i quattro casi `NO_REQUIRED_COMPONENTS`, null di overall
+      e dose aggregata e neutralità degli opzionali sulla coverage;
+- [ ] fixture coprono composition RUN, RUN con BIKE extra, Brick RUN+BIKE ed
+      extra con identità insufficiente senza target inventati;
 - [ ] fixture coprono la precedenza overall con deviazioni accertate insieme a
       dimensioni insufficienti;
 - [ ] fixture coprono la fascia peggiore di dose per componente e aggregata;
@@ -2328,6 +2467,9 @@ o feedback approvati nel presente draft.
       eventi successivi, e proiezioni dei conflitti ricostruite dal relativo
       registro, tutte riferite dall'evaluation con identificatore e versione
       effettivamente usati;
+- [ ] proiezioni dei conflitti verificano catena e sequenza, conservano hash e
+      versione esatti e propagano proiezioni assenti/invalide/`UNRESOLVED`/
+      `DONT_KNOW` senza reinterpretare evaluation pubblicate;
 - [ ] cancellazione del feedback provata senza esposizione in report,
       valutazione o learning, con minimizzazione audit e senza riscrittura di
       baseline, eventi storici o evaluation già pubblicate;
