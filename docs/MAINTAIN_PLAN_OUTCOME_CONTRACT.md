@@ -166,6 +166,17 @@ Le seguenti decisioni sono **APPROVATE**:
     sessione; il report dettaglia ciascun componente e la relativa struttura;
     il meteo è separato per componente outdoor e `NOT_APPLICABLE` per ciascun
     componente indoor. Non si sommano unità incompatibili.
+47. **Indipendenza dell'attività osservata.** `actual_session` è un input
+    canonico immutabile costruibile senza prescrizione o mapping; il risultato
+    del matching conserva separatamente il mapping soltanto quando risolto in
+    modo automatico univoco o confermato dall'atleta.
+48. **Direzione degli intervalli in fascia principale.** Almeno il 90% delle
+    ripetizioni obbligatorie rispettate produce sempre `MET + IN_LINE`; la
+    direzione degli scostamenti è calcolata soltanto nelle fasce
+    `PARTIALLY_MET` e `NOT_MET`.
+49. **Aggregazione identity.** L'identità dei componenti usa, senza
+    compensazioni, la precedenza `INSUFFICIENT_DATA`, `NOT_MET`,
+    `PARTIALLY_MET`, quindi `MET`.
 
 ## 3. Prescrizione autorevole e audit
 
@@ -346,6 +357,8 @@ Fino alla risposta, la futura implementazione dovrà garantire che:
 - il caso non dovrà entrare nel learning né modificare la confidence;
 - per la decisione successiva dovranno essere usati soltanto dati non
   controversi.
+- l'eventuale `prescription_mapping` resterà `null` finché l'associazione non
+  sarà confermata in modo esplicito e univoco.
 
 La risposta dovrà chiarire l'interpretazione e dovrà aggiungere una relazione
 auditabile, senza riscrivere o cancellare i dati originali, gli ID o la
@@ -363,21 +376,12 @@ significa «nessun problema noto», non certificazione medica.
 actual_session:
   contract_version: maintain-plan/1.0.0-draft
   session_id: string
-  prescription_relation:
-    direct_prescription_id: string | null
-    relation_source: DIRECT_ID | AUTOMATIC | ATHLETE_CONFIRMATION | null
-    status: MATCHED | CONFIRMATION_REQUIRED | NOT_EVALUABLE
-    confirmation_ref: string | null
-    policy_id: maintain-plan-matching
-    policy_version: 1.0.0-draft
   source_activities:
     - source: string
       original_activity_id: string
       returned_prescription_id: string | null
       raw_ids: object
       provenance: object
-  candidate_set: []
-  candidate_evidence: object
   start: datetime
   end: datetime | null
   timezone: string
@@ -385,50 +389,29 @@ actual_session:
   components:
     - component_id: string
       component_index: integer
-      prescription_component_ref: string
       discipline: RUN | BIKE | SWIM | STRENGTH | null
       environment: INDOOR | OUTDOOR | null
       mode: ROAD | TRAIL | TRACK | TREADMILL | GRAVEL | MOUNTAIN_BIKE | INDOOR_TRAINER | POOL | OPEN_WATER | null
-      requiredness: REQUIRED
-      applicability: REQUIRED
-      identity_policy:
-        policy_id: maintain-plan-sport-taxonomy
-        policy_version: 1.0.0-draft
       source_activity_refs: []
       source_segment_refs: []
       start: datetime | null
       end: datetime | null
       quantity:
-        applicability: REQUIRED
         primary_metric: string | null
         observation: object | null
         unit: string | null
         secondary_metrics: []
-        policy_id: maintain-plan-quantity
-        policy_version: 1.0.0-draft
       intensity:
-        applicability: REQUIRED
         methods: []
         observations: object | null
         temporal_coverage: object | null
-        policy_id: maintain-plan-continuous-intensity | maintain-plan-interval-intensity
-        policy_version: 1.0.0-draft
       structure:
-        applicability: REQUIRED
-        policy_id: maintain-plan-structure
-        policy_version: 1.0.0-draft
         blocks:
           - block_id: string
-            planned_block_ref:
-              prescription_snapshot_id: string
-              planned_component_id: string
-              planned_block_id: string
             block_index: integer
             block_type: WARMUP | MAIN_SET | WORK | RECOVERY | COOLDOWN | OTHER
             quantity_observation: object | null
             intensity_observation: object | null
-            policy_id: maintain-plan-structure | null
-            policy_version: 1.0.0-draft | null
             provenance: object
             missing_fields: []
             warnings: []
@@ -455,9 +438,6 @@ actual_session:
       start: datetime | null
       end: datetime | null
       duration_minutes: number | null
-      applicable_limit_minutes: number
-      policy_id: maintain-plan-brick-consecutivity
-      policy_version: 1.0.0-draft
       provenance: object
       missing_fields: []
       warnings: []
@@ -511,7 +491,6 @@ actual_session:
       retention_policy:
         policy_id: maintain-plan-weather-privacy
         policy_version: 1.0.0-draft
-  confirmations: []
   source_conflicts:
     - schema_version: maintain-plan-source-conflict/1.0.0-draft
       field_path: string
@@ -540,36 +519,99 @@ actual_session:
 ```
 
 Missingness resta esplicita e non diventa zero. Ogni attività sorgente conserva
-tutti gli ID originali e la provenienza.
+tutti gli ID originali e la provenienza. Un `returned_prescription_id`
+acquisito dalla sorgente sarà soltanto evidence grezza per il matching: non
+costituirà un riferimento da `actual_session` a una prescrizione selezionata.
 
-`actual_session` sarà un input immutabile e conterrà esclusivamente attività
+`actual_session` sarà un input canonico immutabile, valido e costruibile anche
+senza una prescrizione selezionata e senza alcun mapping. Conterrà esclusivamente attività
 sorgente, componenti, blocchi e ripetizioni osservati, transizioni osservate,
-feedback, meteo, conflitti, identificatori, riferimenti alla prescrizione,
-provenance, missingness, warning e qualità dei dati. Non conterrà risultati,
-aggregati né riferimenti a risultati futuri. Transizioni, componenti sportivi,
+feedback, meteo, conflitti, identificatori, provenance, missingness, warning e
+qualità dei dati. Componenti, blocchi, ripetizioni e transizioni conterranno
+soltanto identità e dati osservati: nessun elemento di `actual_session` punterà
+a una prescrizione o a un risultato futuro. Transizioni, componenti sportivi,
 recovery blocks e source segments resteranno entità distinte.
 
-`planned_block_ref` sarà obbligatorio, immutabile e completamente qualificato
-rispetto a snapshot, componente e blocco pianificato. Risolverà l'intero
-contratto pianificato del blocco: requiredness, target di quantità e intensità,
-method, unit, range, evaluation window, coverage requirement, planned
-repetitions, recovery target e order constraints. Il blocco osservato non
-duplicherà tali target e vincoli, ma aggiungerà identificazione e indice
-osservato, tipo osservato, osservazioni, ripetizioni, coppia
-`policy_id`/`policy_version`, provenance, `missing_fields` e `warnings`. La
-coppia di policy dovrà essere interamente valorizzata oppure interamente null.
-`planned_block_ref` sarà destinato esclusivamente a collegare il blocco
-osservato al contratto pianificato e non sarà un riferimento valutativo.
-Se il blocco pianificato non sarà risolvibile in modo
-univoco, il blocco interessato resterà `INSUFFICIENT_DATA`; non saranno ammessi
-abbinamenti impliciti.
+Il matching dovrà produrre un risultato separato dall'attività osservata:
 
-Ogni ripetizione osservata dovrà riferire il proprio blocco osservato e,
-attraverso il relativo `planned_block_ref`, risolvere anche il contratto di
-recovery pianificato. Quando tale recovery sarà `REQUIRED`, un'osservazione
-necessaria ma mancante produrrà `INSUFFICIENT_DATA`; quando sarà
-`NOT_APPLICABLE`, l'assenza dell'osservazione non sarà trattata come
-missingness.
+```yaml
+matching_result:
+  matching_result_id: string
+  status: MATCHED | CONFIRMATION_REQUIRED | NOT_EVALUABLE
+  candidate_set: []
+  candidate_evidence: object
+  prescription_mapping: prescription_mapping | null
+  confirmation_ref: string | null
+  policy_id: maintain-plan-matching
+  policy_version: 1.0.0-draft
+  provenance: object
+  missing_fields: []
+  warnings: []
+
+prescription_mapping:
+  mapping_id: string
+  prescription_snapshot_ref: string
+  actual_session_ref: string
+  resolution_method: AUTOMATIC | ATHLETE_CONFIRMATION
+  component_mappings:
+    - planned_component_ref:
+        prescription_snapshot_id: string
+        component_id: string
+      observed_component_ref:
+        session_id: string
+        component_id: string
+  block_mappings:
+    - planned_block_ref:
+        prescription_snapshot_id: string
+        component_id: string
+        block_id: string
+      observed_block_ref:
+        session_id: string
+        component_id: string
+        block_id: string
+  repetition_mappings:
+    - planned_repetition_ref:
+        prescription_snapshot_id: string
+        component_id: string
+        block_id: string
+        repetition_index: integer
+      observed_repetition_ref:
+        session_id: string
+        component_id: string
+        block_id: string
+        repetition_id: string
+  transition_mappings:
+    - planned_transition_ref:
+        prescription_snapshot_id: string
+        transition_id: string
+      observed_transition_ref:
+        session_id: string
+        transition_id: string
+  confirmation_audit:
+    confirmation_ref: string | null
+    actor: string | null
+    confirmed_at: datetime | null
+  created_at: datetime
+  provenance: object
+  missing_fields: []
+  warnings: []
+```
+
+`prescription_mapping` sarà un risultato immutabile del matching e sarà
+presente soltanto dopo un'associazione automatica unica e valida oppure dopo
+una conferma esplicita dell'atleta. Con `CONFIRMATION_REQUIRED`,
+`NOT_EVALUABLE`, nessuna candidata o candidate ambigue, il mapping dovrà essere
+`null`, mentre `actual_session` resterà valido e immutabile. Ogni associazione
+nel mapping dovrà essere completamente qualificata e risolversi univocamente;
+non saranno ammessi abbinamenti impliciti.
+
+Quando sarà prodotta una valutazione, il mapping dovrà rendere obbligatorio e
+univoco il riferimento pianificato pertinente. In particolare,
+`planned_block_ref` resterà immutabile e completamente qualificato nel mapping
+e nei risultati valutativi e risolverà l'intero contratto pianificato del
+blocco: requiredness, target, method, unit, range, evaluation window, coverage
+requirement, planned repetitions, recovery target e order constraints. Non
+sarà invece richiesto per costruire il blocco osservato prima del matching.
 
 ### 5.2 Risultati canonici e ownership della valutazione
 
@@ -610,7 +652,7 @@ component_evaluation:
   component_result_id: string
   planned_component_ref:
     prescription_snapshot_id: string
-    planned_component_id: string
+    component_id: string
   observed_component_ref:
     session_id: string
     component_id: string
@@ -653,6 +695,7 @@ component_evaluation:
 ```yaml
 execution_evaluation:
   evaluation_id: string
+  prescription_mapping_ref: string
   prescription_snapshot_ref: string
   actual_session_ref: string
   component_results:
@@ -665,8 +708,8 @@ execution_evaluation:
         block_id: string
       planned_block_ref:
         prescription_snapshot_id: string
-        planned_component_id: string
-        planned_block_id: string
+        component_id: string
+        block_id: string
       status: MET | PARTIALLY_MET | NOT_MET | INSUFFICIENT_DATA
       policy_id: maintain-plan-structure
       policy_version: 1.0.0-draft
@@ -685,9 +728,9 @@ execution_evaluation:
         block_id: string
       planned_context:
         prescription_snapshot_id: string
-        planned_component_id: string
-        planned_block_id: string
-        planned_repetition_index: integer | null
+        component_id: string
+        block_id: string
+        repetition_index: integer | null
       status: MET | PARTIALLY_MET | NOT_MET | INSUFFICIENT_DATA
       policy_id: maintain-plan-continuous-intensity | maintain-plan-interval-intensity
       policy_version: 1.0.0-draft
@@ -702,9 +745,9 @@ execution_evaluation:
         to_component_ref: string
       planned_transition_ref:  # l'intero oggetto è null quando non applicabile
         prescription_snapshot_id: string
-        planned_transition_id: string
-        from_planned_component_id: string
-        to_planned_component_id: string
+        transition_id: string
+        from_component_id: string
+        to_component_id: string
       status: MET | PARTIALLY_MET | NOT_MET | INSUFFICIENT_DATA
       policy_id: maintain-plan-brick-consecutivity | null
       policy_version: 1.0.0-draft | null
@@ -787,6 +830,13 @@ l'`actual_session` valutati e riferirà gli identificatori osservati e pianifica
 necessari; gli oggetti immutabili di input non conterranno riferimenti ai
 risultati futuri.
 
+`execution_evaluation` potrà essere prodotta soltanto quando
+`prescription_mapping_ref` risolverà un mapping immutabile, univoco e già
+risolto. Dovrà riferire coerentemente quel mapping, lo snapshot e la sessione
+osservata. Se il mapping richiesto sarà assente, la valutazione non sarà
+pubblicabile oppure produrrà `INSUFFICIENT_DATA`; non potrà contribuire al
+learning prima dell'eventuale conferma necessaria.
+
 ### 5.3 Identificativo diretto
 
 Un ID della prescrizione inviato al dispositivo e restituito dall'attività
@@ -827,6 +877,12 @@ Non dovranno essere usati spareggi impliciti basati su durata, distanza, nome,
 carico o somiglianza. Candidate set, evidence, provenance e stato della
 conferma dovranno essere conservati. Nessun learning sarà ammesso prima della
 conferma.
+
+Il `matching_result` dovrà mantenere `prescription_mapping: null` quando lo
+stato sarà `CONFIRMATION_REQUIRED` o `NOT_EVALUABLE`, oppure quando non vi sarà
+alcuna candidata o il candidate set resterà ambiguo. Soltanto un match
+automatico unico e valido o una conferma esplicita potranno produrre il mapping
+immutabile descritto nella sezione 5.1.
 
 ### 5.5 Zero candidate
 
@@ -979,7 +1035,7 @@ Per ogni ripetizione:
 Per il main set:
 
 - fascia principale: almeno 90% delle ripetizioni obbligatorie rispetta il
-  target;
+  target e produce `status: MET` con `direction: IN_LINE`;
 - fascia secondaria: dal 70% a meno del 90%;
 - fuori fascia: meno del 70%.
 
@@ -988,11 +1044,17 @@ l'evaluation window mancherà o non sarà ricostruibile, dovrà essere chiesta
 conferma quando possibile oppure la dimensione resterà non valutabile. Una
 media complessiva corretta non dovrà compensare ripetizioni fuori target.
 
-La direzione degli intervalli è `IN_LINE` quando tutte le ripetizioni sono
-rispettate, `HIGHER` quando gli scostamenti sono prevalentemente sopra,
-`LOWER` quando sono prevalentemente sotto, `MIXED` quando sono presenti
-entrambe le direzioni senza una direzione unica e `UNDETERMINED` quando non è
-possibile determinarla.
+Quando almeno il 90% delle ripetizioni obbligatorie sarà rispettato, le
+eventuali ripetizioni residue non conformi non potranno trasformare la fascia
+principale in `HIGHER`, `LOWER` o `MIXED`: il risultato sarà sempre
+`MET + IN_LINE`. Soltanto con risultato complessivo `PARTIALLY_MET` o `NOT_MET`
+la direzione sarà derivata dalle ripetizioni non conformi valutabili:
+prevalentemente sopra produrrà `HIGHER`, prevalentemente sotto produrrà
+`LOWER`, entrambe le direzioni senza direzione unica produrranno `MIXED` e dati
+insufficienti a determinarla produrranno `UNDETERMINED`. La dose dovrà usare
+questa direzione; un'intensità `MET` nella fascia principale contribuirà come
+`IN_LINE`. Di conseguenza, nove ripetizioni obbligatorie rispettate su dieci
+produrranno `MET + IN_LINE`.
 
 ### 6.4 Struttura
 
@@ -1034,7 +1096,7 @@ prescrizione dichiara requiredness e order constraints.
 
 Policy draft: `maintain-plan-component-aggregation/1.0.0-draft`.
 
-Per quantity, intensity e structure dei componenti obbligatori, la futura
+Per identity, quantity, intensity e structure dei componenti obbligatori, la futura
 implementazione dovrà applicare in ordine:
 
 1. almeno un componente `INSUFFICIENT_DATA` → aggregato `INSUFFICIENT_DATA`;
@@ -1043,7 +1105,23 @@ implementazione dovrà applicare in ordine:
 4. altrimenti → aggregato `MET`.
 
 Ogni aggregato conserverà i riferimenti ai risultati per componente. Non
-duplicherà target o osservazioni.
+duplicherà target o osservazioni. In particolare,
+`execution_evaluation.identity_aggregate` dovrà applicare lo stesso ordine di
+precedenza vincolante:
+
+1. almeno un risultato identity di componente `INSUFFICIENT_DATA` produrrà
+   `identity_aggregate: INSUFFICIENT_DATA`;
+2. altrimenti almeno un risultato identity `NOT_MET` produrrà
+   `identity_aggregate: NOT_MET`;
+3. altrimenti almeno un risultato identity `PARTIALLY_MET` produrrà
+   `identity_aggregate: PARTIALLY_MET`;
+4. altrimenti tutti i risultati identity saranno `MET` e produrranno
+   `identity_aggregate: MET`.
+
+Nessun componente potrà compensarne un altro. Componenti mancanti o non
+associabili resteranno `INSUFFICIENT_DATA`; non saranno ammesse inferenze o
+aggregazioni alternative. L'overall dell'esecuzione dovrà consumare
+l'`identity_aggregate` ottenuto esclusivamente con questa regola.
 
 ### 6.6 Identità sportiva e obiettivo
 
@@ -1091,6 +1169,11 @@ Matrice approvata:
   della dose e produce dose `UNDETERMINED`;
 - se una dimensione obbligatoria non è valutabile → `INSUFFICIENT_DATA`;
 - i riferimenti ai risultati quantity/intensity sono sempre conservati.
+
+Per gli intervalli, un'intensità nella fascia principale con `status: MET`
+dovrà avere `direction: IN_LINE` e contribuirà alla matrice della dose come
+`IN_LINE`; le ripetizioni residue non conformi entro quella fascia non
+potranno modificarne la direzione.
 
 Una durata più breve e intensità maggiore, o viceversa, non sono equivalenti.
 Il meteo non corregge matematicamente la dose. La dose non è una quinta
@@ -1466,6 +1549,10 @@ o feedback approvati nel presente draft.
       definiti;
 - [x] ownership separata di snapshot, attività osservata ed evaluation
       definita documentalmente;
+- [x] `actual_session` indipendente dalla prescrizione e costruibile prima del
+      matching definita documentalmente;
+- [x] `prescription_mapping` separato, immutabile e assente per matching non
+      risolti definito;
 - [x] riferimenti ai risultati confinati a `execution_evaluation` e
       correlazione unidirezionale definita;
 - [x] scope e forma completamente qualificata dei riferimenti osservati e
@@ -1479,6 +1566,8 @@ o feedback approvati nel presente draft.
 - [x] metriche e fasce quantitative iniziali definite;
 - [x] intensità continuous/intervals e coverage definite;
 - [x] struttura e aggregazione dell'esecuzione definite;
+- [x] precedenza completa dell'aggregazione identity, senza compensazioni,
+      definita;
 - [x] matrice completa della dose definita;
 - [x] unico tipo canonico `dose_evaluation` incorporato nella evaluation
       definito;
@@ -1497,14 +1586,18 @@ o feedback approvati nel presente draft.
 - [ ] riferimenti, versioni, audit e provenance verificabili end-to-end;
 - [ ] unicità e risoluzione dei riferimenti qualificati e dei `dose_result_id`
       verificate end-to-end;
-- [ ] ownership unidirezionale e risoluzione immutabile di
-      `planned_block_ref` verificate end-to-end;
+- [ ] ownership unidirezionale, indipendenza di `actual_session` e produzione
+      condizionata a un mapping univoco verificate end-to-end;
+- [ ] risoluzione immutabile di `planned_block_ref` nel mapping e nei risultati
+      valutativi verificata end-to-end;
 - [ ] invarianti di `recovery.applicability` e `recovery.target` validate con
       fixture sintetiche;
 - [ ] matching e confirmation coperti per zero/una/più candidate e direct ID;
 - [ ] casi Brick/multisport coperti, inclusi componenti mancanti, fuori ordine,
       sovrapposti, interposti e oltre 15 minuti;
 - [ ] fixture coprono tutte le fasce quantitative e d'intensità;
+- [ ] fixture confermano `MET + IN_LINE` con almeno il 90% delle ripetizioni
+      obbligatorie rispettate e l'aggregazione identity completa;
 - [ ] persistenza conserva originali, conflitti, correzioni e cancellazioni;
 - [ ] feature flag e shadow provati senza modificare outcome, report, confidence
       o learning;
