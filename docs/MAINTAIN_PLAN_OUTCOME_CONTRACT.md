@@ -232,9 +232,9 @@ Le seguenti decisioni sono **APPROVATE**:
     `INSUFFICIENT_DATA`.
 64. **Copertura della valutazione.** La copertura degli obbligatori è
     `FULLY_SUPPORTED`, `PARTIALLY_UNSUPPORTED`, `UNSUPPORTED` o
-    `NO_REQUIRED_COMPONENTS` ed è distinta
-    dall'aderenza. Soltanto `FULLY_SUPPORTED` consente overall e dose aggregata
-    definitivi e l'applicazione della precedenza di aderenza.
+    `NO_REQUIRED_COMPONENTS` ed è distinta dall'aderenza. Soltanto
+    `FULLY_SUPPORTED` consente i quattro aggregati dimensionali, overall e dose
+    aggregata definitivi e l'applicazione della precedenza di aderenza.
 65. **Requiredness dei componenti soltanto osservati.** `requiredness` proviene
     esclusivamente dalla prescrizione: è quindi `null` per `OBSERVED_ONLY` e
     non può essere inventata a partire dall'attività osservata.
@@ -268,6 +268,22 @@ Le seguenti decisioni sono **APPROVATE**:
     `DONT_KNOW` e `INVALID`, e ogni evaluation conserva ID, versioni e hash
     esatti consumati. `RESOLUTION_WITHDRAWN` riporta una risoluzione o risposta
     valida a `UNRESOLVED` senza reinterpretare versioni già pubblicate.
+72. **Hash canonico senza autoriferimento.** La proiezione usa SHA-256 su una
+    serializzazione canonica UTF-8 versionata che esclude sempre il proprio
+    `projection_hash`; evaluation e audit conservano algoritmo, policy,
+    versione e digest esatti.
+73. **Versione distinta dallo stato.** Ogni ritiro valido crea una nuova
+    `projection_version` immutabile e distinta con `status: UNRESOLVED`; una
+    versione non contiene mai un valore dello status enum.
+74. **Valutabilità delle ripetizioni.** Qualsiasi ripetizione obbligatoria
+    `UNEVALUABLE` rende l'intensità dell'intervallo `INSUFFICIENT_DATA` e non è
+    mai conteggiata come miss né usata in un denominatore.
+75. **Quantità continua distance-based.** RUN, BIKE e SWIM/open-water continui
+    distance-based richiedono una policy quantitativa esplicita e versionata;
+    nessuna fascia o conversione è riutilizzata implicitamente.
+76. **Nullabilità degli aggregati.** I quattro aggregati dimensionali di
+    sessione esistono soltanto con coverage `FULLY_SUPPORTED`; negli altri tre
+    stati sono tutti null, pur conservando i dettagli supportati.
 
 ## 3. Prescrizione autorevole e audit
 
@@ -319,6 +335,9 @@ planned_workout:
         secondary_metrics: []
         policy_id: maintain-plan-quantity
         policy_version: 1.0.0-draft
+        quantity_band_policy_ref:  # obbligatorio per continuous distance-based; null altrimenti
+          policy_id: string
+          policy_version: string
       intensity:
         applicability: REQUIRED
         primary_method: HR | POWER | PACE_SPEED | RPE
@@ -721,6 +740,9 @@ source_conflict_projection:
   projection_id: string
   projection_version: string
   projection_hash: string
+  projection_hash_algorithm: SHA-256
+  projection_serialization_policy_id: maintain-plan-source-conflict-projection-canonical-json
+  projection_serialization_policy_version: 1.0.0-draft
   source_conflict_id: string
   actual_session_ref:
     session_id: string
@@ -809,10 +831,23 @@ l'unico registro append-only mediante tutti i campi di `resolution_log_ref`;
 obbligatori; (4) verificare una sequenza completa, non duplicata e strettamente
 monotona e la catena `previous_event_id`; (5) inizializzare lo stato a
 `UNRESOLVED`; (6) applicare, soltanto se riconosciuti e validi per lo stato
-corrente, gli eventi fino a `through_event_id` incluso; (7) produrre una nuova
-versione immutabile; (8) calcolare `projection_hash` sull'oggetto canonico
-secondo la policy indicata. `through_event_id` e `through_event_sequence` sono
-entrambi null soltanto per la proiezione iniziale senza eventi.
+corrente, gli eventi fino a `through_event_id` incluso; (7) assegnare un nuovo
+`projection_version` immutabile e distinto per ogni nuova proiezione; (8)
+costruire l'oggetto canonico escludendo completamente `projection_hash` e ogni
+campo estraneo allo schema canonico; (9) serializzarlo secondo la policy
+`maintain-plan-source-conflict-projection-canonical-json/1.0.0-draft`, con
+codifica UTF-8, chiavi degli oggetti in ordine lessicografico, nessuno spazio
+non significativo, ordine degli array preservato e valori null esplicitamente
+conservati; (10) calcolare SHA-256 sui byte UTF-8 serializzati; (11) assegnare
+il digest in esadecimale minuscolo a `projection_hash`; (12) usare
+`projection_id`, `projection_version`, algoritmo, ID e versione della policy di
+serializzazione e hash esatti dentro `execution_evaluation`. L'identificativo e la
+versione della policy di serializzazione e `projection_hash_algorithm: SHA-256`
+sono parte dell'oggetto canonico, mentre `projection_hash` non appartiene mai
+al proprio preimage. Campi di estensione o non appartenenti allo schema
+canonico sono esclusi dal preimage. `through_event_id` e
+`through_event_sequence` sono entrambi null soltanto per la proiezione iniziale
+senza eventi.
 
 La macchina a stati normativa è completa:
 
@@ -842,9 +877,11 @@ Due ritiri consecutivi senza una nuova risoluzione, un ritiro senza
 registro o sessione sono transizioni invalide e producono `INVALID`. Quando un
 `RESOLUTION_WITHDRAWN` valido viene applicato, `selected_value` e
 `selected_source` diventano null, la proiezione conserva `through_event_id` e
-`through_event_sequence` del ritiro e la nuova `projection_version` è
-`UNRESOLVED`. Eventi, proiezioni e valutazioni precedenti restano immutabili;
-nessuna evaluation già pubblicata viene reinterpretata retroattivamente.
+`through_event_sequence` del ritiro, `status` diventa `UNRESOLVED` e la nuova
+`projection_version` riceve un identificatore/versione immutabile e distinto.
+`projection_version` non contiene mai valori dello status enum. Eventi,
+proiezioni e valutazioni precedenti restano immutabili; nessuna evaluation già
+pubblicata viene reinterpretata retroattivamente.
 
 Le invarianti degli stati sono vincolanti. `UNRESOLVED` indica una catena
 valida senza risoluzione corrente e impone valore e sorgente null.
@@ -875,8 +912,8 @@ Esempi normativi:
 | nessun evento | `UNRESOLVED`, cursore e selezione null |
 | `RESOLVED` valido | `RESOLVED`, valore e sorgente selezionati |
 | `UNKNOWN_ANSWER` valido | `DONT_KNOW`, selezione null |
-| `RESOLVED` seguito dal relativo `RESOLUTION_WITHDRAWN` | `UNRESOLVED`, selezione null e cursore sul ritiro |
-| `UNKNOWN_ANSWER` seguito dal relativo `RESOLUTION_WITHDRAWN` | `UNRESOLVED`, selezione null e cursore sul ritiro |
+| `RESOLVED` seguito dal relativo `RESOLUTION_WITHDRAWN` | `status: UNRESOLVED`, selezione null, cursore sul ritiro e nuova `projection_version` immutabile distinta |
+| `UNKNOWN_ANSWER` seguito dal relativo `RESOLUTION_WITHDRAWN` | `status: UNRESOLVED`, selezione null, cursore sul ritiro e nuova `projection_version` immutabile distinta |
 | `RESOLUTION_WITHDRAWN` senza risoluzione precedente | `INVALID` |
 | ritiro valido seguito da un nuovo `RESOLVED` | nuova versione `RESOLVED` |
 | sequenza duplicata o catena `previous_event_id` incoerente | `INVALID` |
@@ -1215,6 +1252,9 @@ execution_evaluation:
     - projection_id: string
       projection_version: string
       projection_hash: string
+      projection_hash_algorithm: SHA-256
+      projection_serialization_policy_id: string
+      projection_serialization_policy_version: string
   source_conflict_impact_evaluation_refs:
     - conflict_impact_evaluation_id: string
       evaluation_version: string
@@ -1258,11 +1298,15 @@ execution_evaluation:
         component_id: string
         block_id: string
         repetition_index: integer | null
+      evaluability: EVALUABLE | UNEVALUABLE
+      unevaluable_reason: string | null
       status: MET | PARTIALLY_MET | NOT_MET | INSUFFICIENT_DATA
       policy_id: maintain-plan-continuous-intensity | maintain-plan-interval-intensity
       policy_version: 1.0.0-draft
       evidence: object
       provenance: object
+      missing_fields: []
+      warnings: []
   transition_results:
     - result_id: string
       observed_transition_ref:
@@ -1280,7 +1324,7 @@ execution_evaluation:
       policy_version: 1.0.0-draft | null
       evidence: object
       provenance: object
-  identity_aggregate:
+  identity_aggregate:  # object | null; null se coverage non FULLY_SUPPORTED
     result_id: string
     status: MET | PARTIALLY_MET | NOT_MET | INSUFFICIENT_DATA
     component_result_refs: []
@@ -1288,20 +1332,20 @@ execution_evaluation:
       composition_result_id: string
     policy_id: maintain-plan-component-aggregation
     policy_version: 1.0.0-draft
-  quantity_aggregate:
+  quantity_aggregate:  # object | null; null se coverage non FULLY_SUPPORTED
     result_id: string
     status: MET | PARTIALLY_MET | NOT_MET | INSUFFICIENT_DATA
     component_result_refs: []
     policy_id: maintain-plan-component-aggregation
     policy_version: 1.0.0-draft
-  intensity_aggregate:
+  intensity_aggregate:  # object | null; null se coverage non FULLY_SUPPORTED
     result_id: string
     status: MET | PARTIALLY_MET | NOT_MET | INSUFFICIENT_DATA
     direction: LOWER | IN_LINE | HIGHER | MIXED | UNDETERMINED | null
     component_result_refs: []
     policy_id: maintain-plan-component-aggregation
     policy_version: 1.0.0-draft
-  structure_aggregate:
+  structure_aggregate:  # object | null; null se coverage non FULLY_SUPPORTED
     result_id: string
     status: MET | PARTIALLY_MET | NOT_MET | INSUFFICIENT_DATA
     component_result_refs: []
@@ -1394,11 +1438,28 @@ solo, non impedisce l'overall degli obbligatori supportati. I componenti
 `OPTIONAL + SUPPORTED + PLANNED_ONLY` non partecipano al calcolo; l'omissione
 di questi ultimi non rende incompleta la copertura degli obbligatori.
 
-Quando la copertura non è `FULLY_SUPPORTED`, i risultati dei componenti
-supportati restano pubblicati nel dettaglio, ma `overall` e `dose_aggregate`
-sono entrambi `null` secondo lo schema (non oggetti `INSUFFICIENT_DATA` e non
-risultati falliti). La sessione completa non riceve quindi un overall o una
-dose definitiva e viene esclusa dal learning. Tutti i componenti non supportati
+La matrice di nullabilità è vincolante:
+
+| `evaluation_coverage.status` | Aggregati dimensionali di sessione |
+|---|---|
+| `FULLY_SUPPORTED` | `identity_aggregate`, `quantity_aggregate`, `intensity_aggregate` e `structure_aggregate` tutti obbligatori e non null |
+| `PARTIALLY_UNSUPPORTED` | tutti e quattro null |
+| `UNSUPPORTED` | tutti e quattro null |
+| `NO_REQUIRED_COMPONENTS` | tutti e quattro null |
+
+Quando la copertura non è `FULLY_SUPPORTED`, i risultati dettagliati dei
+componenti supportati e applicabili restano pubblicati e
+`session_composition_result` resta conservato quando producibile come dettaglio,
+ma i quattro aggregati dimensionali, `overall` e `dose_aggregate` sono `null`
+secondo lo schema. Non si inventano `MET`, `NOT_MET`, `PARTIALLY_MET` o
+`INSUFFICIENT_DATA` per un aggregato privo di input canonici completi. La
+sessione completa non riceve un overall, una dose o learning aggregato; il
+report spiega la ragione tramite `evaluation_coverage`. Al contrario, dati
+insufficienti dentro l'insieme canonico completo di componenti supportati
+mantengono coverage `FULLY_SUPPORTED` e producono l'aggregato non null con
+`status: INSUFFICIENT_DATA`; questa insufficienza non equivale a mancato
+supporto. La precedenza `INSUFFICIENT_DATA → NOT_MET → PARTIALLY_MET → MET` si
+applica agli aggregati soltanto nel caso `FULLY_SUPPORTED`. Tutti i componenti non supportati
 e la relativa `capability_policy` versionata devono essere elencati nel report.
 Con `NO_REQUIRED_COMPONENTS` i componenti opzionali pianificati e osservati
 restano conservati e riportati: gli `OPTIONAL + MATCHED` possono mantenere i
@@ -1443,8 +1504,10 @@ La valutazione dovrà registrare i riferimenti e le versioni delle proiezioni di
 feedback e conflitti effettivamente utilizzate. Un riferimento di feedback
 presente dovrà avere insieme `projection_id` e `projection_version`; entrambi
 saranno null quando non esisterà una cattura applicabile. Ogni riferimento di
-conflitto avrà invece sempre la tripletta non null `projection_id`,
-`projection_version` e `projection_hash`. In questo modo una
+conflitto avrà invece sempre non null `projection_id`, `projection_version`,
+`projection_hash_algorithm`, `projection_serialization_policy_id`,
+`projection_serialization_policy_version` e `projection_hash`. Audit ed
+evaluation conserveranno esattamente questi valori. In questo modo una
 correzione, cancellazione o risoluzione successiva non modificherà gli input né
 la valutazione già pubblicata. In particolare, `execution_evaluation` dovrà
 continuare a registrare l'identificatore e la versione esatti della proiezione
@@ -1600,6 +1663,27 @@ Metriche primarie approvate:
 
 La metrica primaria mancante non dovrà essere sostituita automaticamente.
 
+Ogni prescrizione continua RUN, BIKE o SWIM/open-water con quantità
+`distance-based` deve valorizzare `quantity_band_policy_ref` con una coppia
+esplicita e versionata. Il riferimento deve risolvere una policy che dichiari
+almeno `policy_id`, `policy_version`, disciplina e modalità applicabili,
+`metric: DISTANCE`, unità canonica, target, confini inferiore e superiore della
+fascia principale, confini inferiore e superiore della fascia secondaria,
+condizioni fuori fascia, regole `LOWER`/`IN_LINE`/`HIGHER` e inclusività di ogni
+confine. Una prescrizione continua distance-based priva di tale policy è
+invalida: non produce quantity result, dose o overall, non contribuisce al
+learning, mentre `actual_session` resta evidence grezza valida e immutabile.
+Non si riutilizzano automaticamente né le fasce duration-based né quelle dello
+SWIM strutturato; non si converte distanza in durata o viceversa e non si
+inventano soglie o equivalenze.
+
+Esempi normativi: una RUN continua distance-based con riferimento esplicito e
+risolvibile usa esclusivamente i confini di quella policy; una BIKE continua
+distance-based senza policy è prescrizione invalida e non produce quantity,
+dose, overall o learning; uno SWIM/open-water distance-based con policy usa
+l'unità e i confini dichiarati da quella policy; nessuna delle tre discipline
+può adottare automaticamente le righe duration-based della tabella seguente.
+
 #### Fasce quantitative approvate
 
 | Ambito | Fascia principale | Secondaria inferiore | Secondaria superiore | Fuori fascia |
@@ -1659,7 +1743,12 @@ produce `UNDETERMINED`.
 
 Policy draft: `maintain-plan-interval-intensity/1.0.0-draft`.
 
-Per ogni ripetizione:
+Prima di applicare qualsiasi fascia, ogni ripetizione obbligatoria attraversa
+una fase di valutabilità. Il risultato conserva `evaluability: EVALUABLE |
+UNEVALUABLE`; per `UNEVALUABLE` conserva una ragione, `missing_fields`, warning
+e provenance applicabili e non la classifica come miss o non conforme.
+
+Per ogni ripetizione `EVALUABLE`:
 
 - almeno 80% della evaluation window deve avere dati validi;
 - almeno 70% della evaluation window deve essere nel target;
@@ -1669,12 +1758,20 @@ Per ogni ripetizione:
   `recovery.applicability` sarà `REQUIRED` e il target esplicito sarà
   valorizzato; `NOT_APPLICABLE` non sarà interpretato come target mancante.
 
-Per il main set:
+Se almeno una ripetizione obbligatoria è `UNEVALUABLE`, la dimensione
+d'intensità dell'intervallo è `INSUFFICIENT_DATA`, con `direction: null` e
+band/severity applicabile null. Non si applicano le soglie 90%/70%, la
+ripetizione non valutabile non entra in alcun denominatore e non produce un
+risultato definitivo o learning per la dimensione interessata.
 
-- fascia principale: almeno 90% delle ripetizioni obbligatorie rispetta il
-  target e produce `status: MET` con `direction: IN_LINE`;
-- fascia secondaria: dal 70% a meno del 90%;
-- fuori fascia: meno del 70%.
+Soltanto quando tutte le ripetizioni obbligatorie sono `EVALUABLE`, il
+denominatore è il loro numero totale e una ripetizione valutabile fuori target
+conta come miss osservato. Per il main set:
+
+- fascia principale: almeno 90% conforme produce `MET + IN_LINE`;
+- fascia secondaria: dal 70% incluso a meno del 90%, secondo le regole già
+  approvate;
+- fuori fascia: meno del 70%, secondo le regole già approvate.
 
 Per HR non dovrà essere presunto che l'intera ripetizione sia valutabile. Se
 l'evaluation window mancherà o non sarà ricostruibile, dovrà essere chiesta
@@ -1690,8 +1787,12 @@ prevalentemente sopra produrrà `HIGHER`, prevalentemente sotto produrrà
 `LOWER`, entrambe le direzioni senza direzione unica produrranno `MIXED` e dati
 insufficienti a determinarla produrranno `UNDETERMINED`. La dose dovrà usare
 questa direzione; un'intensità `MET` nella fascia principale contribuirà come
-`IN_LINE`. Di conseguenza, nove ripetizioni obbligatorie rispettate su dieci
-produrranno `MET + IN_LINE`.
+`IN_LINE`. Esempi normativi: otto ripetizioni conformi e due non ricostruibili producono
+`INSUFFICIENT_DATA`, non `PARTIALLY_MET`; nove conformi e un miss osservato,
+tutte valutabili, producono `MET + IN_LINE`; otto conformi e due miss osservati,
+tutte valutabili, producono la fascia secondaria; con tutte le ripetizioni
+valutabili e meno del 70% conforme si produce la fascia fuori fascia secondo le
+regole approvate.
 
 ### 6.4 Struttura
 
@@ -1824,12 +1925,14 @@ componente `UNDETERMINED → UNDETERMINED`; almeno un componente obbligatorio
 
 - **Sessione solo STRENGTH:** il componente resta `REQUIRED` e matched o
   planned-only secondo l'evidence, ma è `support_status: UNSUPPORTED` con
-  capability policy versionata; `evaluation_coverage.status: UNSUPPORTED`,
-  `overall: null`, `dose_aggregate: null`, nessun risultato dimensionale e
+  capability policy versionata; `evaluation_coverage.status: UNSUPPORTED`, i
+  quattro aggregati dimensionali, `overall` e `dose_aggregate` sono null,
+  nessun risultato dimensionale e
   nessun learning.
 - **Brick RUN + STRENGTH obbligatoria:** RUN è `SUPPORTED`, STRENGTH resta
   `REQUIRED + UNSUPPORTED`; la copertura è `PARTIALLY_UNSUPPORTED`. I risultati
-  RUN sono conservati e pubblicati, mentre overall e dose aggregata sono null;
+  RUN sono conservati e pubblicati, mentre i quattro aggregati dimensionali,
+  overall e dose aggregata sono null;
   la sessione non è classificata fallita o insufficientemente osservata e non
   entra nel learning.
 - **STRENGTH opzionale:** RUN obbligatoria supportata e STRENGTH
@@ -1842,11 +1945,12 @@ componente `UNDETERMINED → UNDETERMINED`; almeno un componente obbligatorio
   mancanti sono poi trattati come `INSUFFICIENT_DATA`, non come supporto
   mancante.
 - **Solo RUN opzionale eseguita:** copertura `NO_REQUIRED_COMPONENTS`; RUN
-  `OPTIONAL + MATCHED` conserva i dettagli consentiti, ma overall e dose
-  aggregata sono null e non vi è learning.
+  `OPTIONAL + MATCHED` conserva i dettagli consentiti, ma i quattro aggregati
+  dimensionali, overall e dose aggregata sono null e non vi è learning.
 - **Solo RUN opzionale omessa:** copertura `NO_REQUIRED_COMPONENTS`; il record
   è `NOT_APPLICABLE`, il report indica sia l'omissione sia l'assenza di
-  obbligatori, e overall e dose aggregata sono null.
+  obbligatori, e i quattro aggregati dimensionali, overall e dose aggregata
+  sono null.
 - **Più componenti tutti opzionali:** matched, omessi e non supportati restano
   distinti e visibili, ma nessuno cambia `NO_REQUIRED_COMPONENTS`; non si
   applica una precedenza a un insieme obbligatorio vuoto.
@@ -2112,9 +2216,9 @@ Prima dell'aderenza si calcola `evaluation_coverage.status`. La precedenza
 applicabile soltanto quando la copertura è `FULLY_SUPPORTED`. Con copertura
 `PARTIALLY_UNSUPPORTED`, `UNSUPPORTED` o `NO_REQUIRED_COMPONENTS`, `overall`
 è `null`/non prodotto: non
-sarà sintetizzato come fallimento né come osservazione insufficiente. Gli
-aggregati di dettaglio eventualmente calcolabili sui componenti supportati
-restano pubblicabili, ma non rappresentano l'intera sessione.
+sarà sintetizzato come fallimento né come osservazione insufficiente. I risultati dettagliati dei componenti supportati e applicabili restano
+pubblicabili, ma tutti e quattro gli aggregati dimensionali di sessione sono
+`null` e non rappresentano l'intera sessione.
 
 Le dimensioni obbligatorie sono:
 
@@ -2229,8 +2333,8 @@ non un giudizio sull'atleta. Meteo missing e obiettivo descrittivo non producono
 `INSUFFICIENT_DATA`.
 
 La matrice finale presuppone `evaluation_coverage.status: FULLY_SUPPORTED`.
-Quando la copertura non è completa, incluso `NO_REQUIRED_COMPONENTS`,
-l'overall d'esecuzione e la dose aggregata
+Quando la copertura non è completa, incluso `NO_REQUIRED_COMPONENTS`, i
+quattro aggregati dimensionali, l'overall d'esecuzione e la dose aggregata
 sono null e non viene pubblicato un outcome definitivo dell'intera sessione;
 la sessione non è classificata `NEGATIVE` né `INSUFFICIENT_DATA` per il solo
 mancato supporto e resta esclusa dal learning.
@@ -2266,8 +2370,9 @@ dipendenti dal feedback quando essa è `INVALID` o `INSUFFICIENT_DATA`; in tali
 casi mostrerà gli warning e la provenance applicabili senza inventare valori.
 
 Per i conflitti il report userà soltanto le proiezioni identificate da
-`projection_id`, `projection_version` e `projection_hash` in
-`execution_evaluation`. Mostrerà stato, conflitto, registro e cursore
+`projection_id`, `projection_version`, `projection_hash_algorithm`,
+`projection_serialization_policy_id`, `projection_serialization_policy_version`
+e `projection_hash` in `execution_evaluation`. Mostrerà stato, conflitto, registro e cursore
 qualificati e conserverà missing fields e warning. Per `INVALID`,
 `UNRESOLVED` o `DONT_KNOW` non mostrerà una selezione precedente come corrente
 e non presenterà come valutata alcuna dimensione obbligatoria interessata.
@@ -2283,8 +2388,9 @@ interruzione di sicurezza dovrà usare testo neutro.
 
 Con copertura non completa, incluso `NO_REQUIRED_COMPONENTS`, il report
 conserverà tutti i dettagli valutativi dei
-componenti supportati e mostrerà esplicitamente `overall: null` e
-`dose_aggregate: null`; non descriverà la sessione completa come fallita o
+componenti supportati e il `session_composition_result` producibile, e mostrerà
+esplicitamente i quattro aggregati dimensionali, `overall` e `dose_aggregate`
+come `null`; non descriverà la sessione completa come fallita o
 insufficientemente osservata. Un solo componente opzionale non supportato non
 bloccherà invece overall e dose degli obbligatori supportati.
 
@@ -2390,7 +2496,10 @@ gate per:
   ritiro valido, oppure registro con ID, riferimenti, eventi, sequenza, catena,
   hash, versione o provenance obbligatoria incoerenti;
 - outcome `INSUFFICIENT_DATA`;
-- dati essenziali insufficienti o dose valutata con metadati policy invalidi;
+- dati essenziali insufficienti, almeno una ripetizione obbligatoria
+  `UNEVALUABLE` o dose valutata con metadati policy invalidi;
+- prescrizione continua distance-based priva di `quantity_band_policy_ref`
+  esplicito, versionato e risolvibile;
 - omissione di un componente opzionale, il cui record resta escluso dal
   learning anche quando la copertura degli obbligatori è completa;
 - copertura non completamente supportata (`PARTIALLY_UNSUPPORTED`,
@@ -2454,9 +2563,13 @@ o feedback approvati nel presente draft.
 - [x] direct ID e separazione matching/aderenza definiti;
 - [x] Brick/multisport e policy dei 15 minuti definiti;
 - [x] metriche e fasce quantitative iniziali definite;
+- [x] policy quantitativa esplicita e versionata obbligatoria per ogni
+      prescrizione continua distance-based, senza riuso o conversioni, definita;
 - [x] ogni quantità in fascia `MAIN`, inclusi i confini, definita come
       `MET + IN_LINE` e consumo coerente nella dose definito;
 - [x] intensità continuous/intervals e coverage definite;
+- [x] fase di valutabilità delle ripetizioni obbligatorie separata dai miss,
+      con insufficienza bloccante ed esempi normativi, definita;
 - [x] struttura e aggregazione dell'esecuzione definite;
 - [x] precedenza completa dell'aggregazione identity, senza compensazioni,
       definita;
@@ -2489,7 +2602,10 @@ o feedback approvati nel presente draft.
 - [x] copertura del supporto, blocco di overall/dose aggregata e casi normativi
       per componenti obbligatori e opzionali definiti;
 - [x] `NO_REQUIRED_COMPONENTS`, ordine non vacuo della coverage, null di
-      overall/dose, report, learning gate ed esempi solo opzionali definiti;
+      tutti e quattro gli aggregati dimensionali, overall/dose, report,
+      learning gate ed esempi solo opzionali definiti;
+- [x] matrice di nullabilità degli aggregati per ogni coverage e distinzione da
+      `INSUFFICIENT_DATA` dentro un insieme pienamente supportato definite;
 - [x] `session_composition_result` persistibile e consumo nell'identity
       aggregate, inclusi extra osservabili e insufficienti, definiti;
 - [x] metadati della matrice obbligatori per ogni dose `EVALUATED`, di
@@ -2498,12 +2614,14 @@ o feedback approvati nel presente draft.
       mapping con stato `UNRESOLVED` definito;
 - [x] dimensioni canoniche complete dell'impatto dei conflitti e propagazione
       di `INSUFFICIENT_DATA` sulle dimensioni obbligatorie interessate definite;
-- [x] `source_conflict_projection` canonica, algoritmo, hash, versioni
+- [x] `source_conflict_projection` canonica, serializzazione versionata,
+      esclusione del hash dal proprio preimage, algoritmo, hash, versioni
       immutabili e riferimenti esatti nell'execution evaluation definiti;
 - [x] ID stabile del registro di risoluzione, riferimenti completamente
       qualificati e coincidenza di registro, conflitto e sessione definiti;
 - [x] stati `UNRESOLVED`, `RESOLVED`, `DONT_KNOW` e `INVALID`, macchina a stati
-      completa, ritiro della risoluzione ed esempi normativi definiti;
+      completa, ritiro con nuova versione distinta dallo status ed esempi
+      normativi definiti;
 - [x] aggregazione totale della direction della dose composta ed esempi
       normativi definiti;
 - [x] direzione aggregata dell'intensità per sessioni composte definita con
@@ -2537,8 +2655,9 @@ o feedback approvati nel presente draft.
 - [ ] fixture coprono `REQUIRED + PLANNED_ONLY`, `OPTIONAL + PLANNED_ONLY`,
       `OPTIONAL + MATCHED` e `OBSERVED_ONLY`, inclusi requiredness e riferimenti
       null validi e invalidi;
-- [ ] fixture coprono i quattro casi `NO_REQUIRED_COMPONENTS`, null di overall
-      e dose aggregata e neutralità degli opzionali sulla coverage;
+- [ ] fixture coprono tutti gli stati di coverage, con i quattro aggregati,
+      overall e dose aggregata null salvo `FULLY_SUPPORTED`, e la neutralità
+      degli opzionali sulla coverage;
 - [ ] fixture coprono composition RUN, RUN con BIKE extra, Brick RUN+BIKE ed
       extra con identità insufficiente senza target inventati;
 - [ ] fixture coprono la precedenza overall con deviazioni accertate insieme a
@@ -2555,6 +2674,10 @@ o feedback approvati nel presente draft.
 - [ ] fixture rifiutano ogni obiettivo `STRUCTURED` con coppia policy/versione
       assente o parziale e risultati con coppia diversa dalla prescrizione;
 - [ ] fixture coprono tutte le fasce quantitative e d'intensità;
+- [ ] fixture rifiutano continuous distance-based senza policy esplicita e
+      impediscono riuso di fasce o conversioni duration/distance;
+- [ ] fixture separano ripetizioni `UNEVALUABLE` dai miss osservati e coprono i
+      quattro esempi normativi delle soglie 90%/70%;
 - [ ] fixture coprono `MET + IN_LINE` per ogni valore quantitativo in `MAIN`,
       inclusi entrambi i confini e il caso RUN al 95%, e `LOWER`/`HIGHER` solo
       fuori dai confini applicabili;
