@@ -201,6 +201,23 @@ Le seguenti decisioni sono **APPROVATE**:
     per obiettivi `STRUCTURED`, da criteri prescritti osservabili e policy
     versionata. Non è una quinta dimensione e nella v1 non modifica overall,
     dose o learning.
+57. **Codice dell'obiettivo strutturato.** Ogni obiettivo `STRUCTURED` ha un
+    `code` non null, stabile e utilizzabile nel riferimento canonico; senza
+    codice l'input è invalido e non può produrre `objective_result`. Il codice
+    non è mai inferito dal testo libero.
+58. **Policy della dose valutata.** Ogni dose `EVALUATED`, di componente o
+    aggregata, identifica con `policy_id` e `policy_version` non null la matrice
+    versionata effettivamente usata. Per `INSUFFICIENT_DATA` entrambi sono null;
+    una coppia parziale o assente rende la dose invalida e non pubblicabile né
+    utilizzabile per report o learning.
+59. **Impatto dei conflitti dopo il matching.** I conflitti sorgente grezzi non
+    dipendono dalla prescrizione e non classificano il proprio impatto. Una
+    evaluation separata, versionata e auditabile ne determina l'impatto solo
+    dopo un mapping risolto e univoco; mapping mancante, ambiguo o non
+    confermato impone `UNRESOLVED`.
+60. **Direzione della dose composta.** La dose aggregata di Brick e multisport
+    applica la precedenza totale della sezione 7 a tutte le dosi dei componenti
+    obbligatori, senza compensazioni né selezione arbitraria.
 
 ## 3. Prescrizione autorevole e audit
 
@@ -297,7 +314,7 @@ planned_workout:
       applicable_limit_minutes: number
   objective:
     evaluability: STRUCTURED | CONTEXT_ONLY | NOT_APPLICABLE
-    code: string | null
+    code: string | null  # obbligatorio e stabile per STRUCTURED
     success_criteria: []
     context_text: string | null
     policy_id: string | null
@@ -318,6 +335,13 @@ Per ogni coppia `policy_id`/`policy_version`, entrambi i valori devono essere
 valorizzati oppure entrambi null. Sono obbligatori per una dimensione
 `REQUIRED` e valutabile. La prescrizione seleziona esplicitamente la policy
 continuous o intervals in base al `session_type` dichiarato.
+
+Quando `objective.evaluability` è `STRUCTURED`, `objective.code` dovrà essere
+non null, stabile nello snapshot e utilizzabile come chiave nel riferimento
+canonico. Un obiettivo `STRUCTURED` senza codice è input invalido e non potrà
+produrre `objective_result`. Per `CONTEXT_ONLY` il testo resterà soltanto
+contesto di report e non produrrà un risultato valutativo. Non sarà mai
+inferito un codice o un risultato da `context_text` o da altro testo libero.
 
 Per una seduta continua `structure.blocks` può contenere un solo `MAIN_SET`,
 oltre a eventuali `WARMUP` e `COOLDOWN`. Per Brick e multisport i blocchi
@@ -519,8 +543,10 @@ actual_session:
         - value: any
           source: string
           provenance: object
-      affects_decision: boolean
+          source_version: string | null
+          observed_at: datetime | null
       provenance: object
+      captured_at: datetime
       missing_fields: []
       warnings: []
       policy_id: maintain-plan-source-conflicts
@@ -671,6 +697,38 @@ prescription_mapping:
   warnings: []
 ```
 
+Il conflitto grezzo conserverà soltanto identificatore, campo, valori e
+sorgenti discordanti, provenance, versioni, timestamp, missing fields e
+warning. Non conterrà `affects_decision` né classificazioni che richiedano la
+prescrizione selezionata. La valutazione dell'impatto sarà un oggetto separato:
+
+```yaml
+source_conflict_impact_evaluation:
+  conflict_impact_evaluation_id: string
+  evaluation_version: string
+  source_conflict_id: string
+  prescription_mapping_ref: string | null
+  status: EVALUATED | UNRESOLVED
+  affected_dimensions: [BAND | DOSE | STRUCTURE | DECISION]
+  policy_id: maintain-plan-source-conflict-impact
+  policy_version: 1.0.0-draft
+  provenance: object
+  evaluated_at: datetime
+  missing_fields: []
+  warnings: []
+```
+
+Questa evaluation potrà essere `EVALUATED` soltanto dopo che
+`prescription_mapping_ref` risolve un mapping univoco e confermato quando
+necessario. Sarà `UNRESOLVED` se il mapping manca, è ambiguo o non confermato;
+in tal caso `affected_dimensions` conterrà solo dimensioni accertabili senza
+inventare un booleano. Resterà separata sia dagli input immutabili sia dal
+registro append-only di risoluzione. Un impatto irrisolto su una decisione
+obbligatoria produrrà `INSUFFICIENT_DATA` nella parte interessata e ne impedirà
+il learning. Una nuova classificazione richiederà una nuova
+`evaluation_version`: le evaluation già pubblicate non saranno reinterpretate
+retroattivamente.
+
 `prescription_mapping` sarà un risultato immutabile del matching e sarà
 presente soltanto dopo un'associazione automatica unica e valida oppure dopo
 una conferma esplicita dell'atleta. Con `CONFIRMATION_REQUIRED`,
@@ -710,7 +768,12 @@ dose_evaluation:
 ```
 
 La coppia `policy_id`/`policy_version` del tipo dovrà essere interamente
-valorizzata oppure interamente null. `status` rappresenterà esclusivamente la
+valorizzata oppure interamente null. Per ogni dose, di componente o aggregata,
+`EVALUATED` imporrà entrambi i campi non null e la coppia identificherà la
+matrice versionata effettivamente applicata; `INSUFFICIENT_DATA` imporrà
+entrambi null. Valorizzarne uno solo non sarà valido. Una dose `EVALUATED` con
+metadati assenti o parziali sarà invalida e non potrà essere pubblicata,
+riportata o usata per il learning. `status` rappresenterà esclusivamente la
 valutabilità: `EVALUATED` richiederà una `direction` non null, mentre
 `INSUFFICIENT_DATA` imporrà `direction: null`. `LOWER`, `IN_LINE`, `HIGHER`,
 `MIXED` e `UNDETERMINED` saranno esclusivamente valori di `direction`, mai di
@@ -810,6 +873,9 @@ execution_evaluation:
   source_conflict_projection_refs:
     - projection_id: string
       projection_version: string
+  source_conflict_impact_evaluation_refs:
+    - conflict_impact_evaluation_id: string
+      evaluation_version: string
   component_results:
     - component_evaluation: object
   block_results:
@@ -938,7 +1004,11 @@ duplicato o non risolvibile renderà la dose aggregata
 Quando `objective.evaluability` è `STRUCTURED`, `objective_result` sarà un
 risultato canonico persistibile e verrà prodotto esclusivamente applicando i
 criteri osservabili prescritti e la policy versionata riferita dalla
-prescrizione. Criteri obbligatori mancanti o non osservabili produrranno
+prescrizione. `planned_objective_ref.objective_code` dovrà coincidere
+esattamente con il `objective.code` non null e stabile dello snapshot. Un
+obiettivo `STRUCTURED` senza codice o con codice non coincidente sarà input
+invalido e non produrrà `objective_result`. Criteri obbligatori mancanti o non
+osservabili produrranno
 `status: INSUFFICIENT_DATA` e saranno elencati in `missing_fields`; il testo
 libero non sarà mai usato per inferire un esito. Per `CONTEXT_ONLY` (e
 `NOT_APPLICABLE`) `objective_result` sarà `null`: il contesto resterà visibile
@@ -1374,11 +1444,30 @@ Il meteo non corregge matematicamente la dose. La dose non è una quinta
 dimensione dell'aggregazione dell'esecuzione.
 
 Per Brick e multisport la futura implementazione dovrà calcolare una dose per
-ogni componente. Un componente obbligatorio non valutabile produrrà dose di
-sessione con `status: INSUFFICIENT_DATA` e `direction: null`; componenti con la
-stessa direzione manterranno quella direzione e la fascia peggiore; componenti
-inferiori e superiori produrranno `direction: MIXED`. Non sarà calcolato alcun
-saldo e il report dovrà mostrare sempre separatamente valutabilità (`status`),
+ogni componente e aggregare tutte le dosi dei componenti obbligatori. La prima
+condizione applicabile della seguente precedenza ordinata, totale e
+deterministica prevarrà:
+
+1. almeno una dose `INSUFFICIENT_DATA` → dose aggregata
+   `INSUFFICIENT_DATA`, con `direction: null` e `severity_band: null`;
+2. altrimenti almeno una direction `UNDETERMINED` → `UNDETERMINED`;
+3. altrimenti almeno una direction `MIXED` → `MIXED`;
+4. altrimenti presenza sia di `HIGHER` sia di `LOWER` → `MIXED`;
+5. altrimenti almeno una `HIGHER` → `HIGHER`;
+6. altrimenti almeno una `LOWER` → `LOWER`;
+7. altrimenti, quando tutte sono `IN_LINE` → `IN_LINE`.
+
+`IN_LINE` sarà neutro. Esempi normativi: `IN_LINE + LOWER → LOWER`;
+`IN_LINE + HIGHER → HIGHER`; `LOWER + HIGHER → MIXED`;
+`MIXED + IN_LINE → MIXED`; `UNDETERMINED + HIGHER → UNDETERMINED`; tutte
+`IN_LINE → IN_LINE`; almeno un componente obbligatorio insufficiente → dose
+aggregata `INSUFFICIENT_DATA` con direction e severity null.
+
+Per ogni dose aggregata `EVALUATED`, `severity_band` sarà la fascia peggiore
+fra tutti gli input valutati secondo `MAIN < SECONDARY < OUT_OF_BAND`, anche
+con direction `MIXED` o `UNDETERMINED`. Non saranno ammessi compensazione,
+saldo tra componenti o selezione arbitraria di un solo componente. Il report
+dovrà mostrare sempre separatamente valutabilità (`status`),
 esito direzionale (`direction`) e fascia (`severity_band`), oltre al dettaglio
 per componente. Il futuro learning dovrà consumare gli stessi tre campi senza
 confonderne le semantiche. Un dubbio capace di cambiare la decisione richiederà
@@ -1453,10 +1542,14 @@ La gerarchia non autorizza sovrascritture silenziose. Moving time ed elapsed
 time restano distinti; valori comparabili discordanti sono entrambi conservati
 con provenance. Non si calcolano medie o fusioni automatiche.
 
-Se il conflitto potrà cambiare matching, fascia, dose, struttura, stabilità o
-decisione, la futura implementazione dovrà chiedere conferma. Se non potrà
-cambiare la valutazione, dovrà usare la sorgente prioritaria conservando il
-conflitto. La selezione e «non lo so» saranno registrati soltanto nel registro
+Solo dopo un `prescription_mapping` risolto e univoco, la evaluation separata
+dell'impatto stabilirà in modo versionato e auditabile se siano interessate
+band, dose, structure o decision. Se l'impatto resta `UNRESOLVED` su una
+decisione obbligatoria, la parte interessata sarà `INSUFFICIENT_DATA`, non
+sarà pubblicata come valutata e non contribuirà al learning. Se l'impatto
+valutato potrà cambiare il risultato, la futura implementazione dovrà chiedere
+conferma; altrimenti userà la sorgente prioritaria conservando il conflitto.
+La selezione e «non lo so» saranno registrati soltanto nel registro
 append-only di risoluzione: la proiezione versionata selezionerà il dato per la
 valutazione senza modificare gli originali, mentre «non lo so» renderà la
 dimensione non valutabile. `execution_evaluation` conserverà la versione della
@@ -1620,8 +1713,10 @@ in linguaggio comprensibile:
 4. contesto e conflitti rilevanti;
 5. componenti `PLANNED_ONLY` e `OBSERVED_ONLY`, senza osservazioni o target
    inventati;
-6. obiettivo `CONTEXT_ONLY` oppure risultato strutturato, quando prodotto;
-7. dose complessiva;
+6. obiettivo `CONTEXT_ONLY` come solo contesto oppure risultato strutturato con
+   lo stesso codice canonico non null, quando validamente prodotto;
+7. dose complessiva, pubblicabile solo con coppia policy/version valida se
+   `EVALUATED`;
 8. indicazioni per la seduta successiva soltanto quando supportate.
 
 Per la dose, il report e il futuro learning dovranno consumare `status` per la
@@ -1723,10 +1818,12 @@ gate per:
 - shadow;
 - ambiguità aperta;
 - mapping non confermato;
+- conflitto rilevante con impatto `UNRESOLVED`;
 - confirmation mancante o risposta «non lo so»;
 - dato cancellato;
 - proiezione di feedback o conflitto ambigua, ritirata o non risolvibile;
 - outcome `INSUFFICIENT_DATA`;
+- dati essenziali insufficienti o dose valutata con metadati policy invalidi;
 - episodio precedente all'effective date.
 
 Versione definitiva ed effective date saranno assegnate soltanto dopo
@@ -1804,6 +1901,14 @@ o feedback approvati nel presente draft.
       `MIXED` e `UNDETERMINED`, definita;
 - [x] risultato canonico dell'obiettivo `STRUCTURED` ed esclusione valutativa
       degli obiettivi `CONTEXT_ONLY` definiti;
+- [x] codice non null e stabile obbligatorio per gli obiettivi `STRUCTURED` e
+      coerenza del riferimento canonico definiti;
+- [x] metadati della matrice obbligatori per ogni dose `EVALUATED`, di
+      componente e aggregata, definiti;
+- [x] impatto dei conflitti separato dagli input grezzi e valutato dopo il
+      mapping con stato `UNRESOLVED` definito;
+- [x] aggregazione totale della direction della dose composta ed esempi
+      normativi definiti;
 - [x] direzione aggregata dell'intensità per sessioni composte definita con
       precedenza deterministica ed esempi normativi;
 - [x] applicability delle dimensioni obbligatorie definita;
@@ -1836,6 +1941,12 @@ o feedback approvati nel presente draft.
 - [ ] fixture coprono la precedenza overall con deviazioni accertate insieme a
       dimensioni insufficienti;
 - [ ] fixture coprono la fascia peggiore di dose per componente e aggregata;
+- [ ] fixture rifiutano obiettivi `STRUCTURED` senza codice o con riferimento
+      incoerente e non inferiscono codice o risultato dal testo libero;
+- [ ] fixture rifiutano dosi `EVALUATED` senza la coppia policy/version e dosi
+      `INSUFFICIENT_DATA` che la valorizzano;
+- [ ] fixture coprono l'intera precedenza della direction aggregata della dose,
+      inclusi neutralità di `IN_LINE`, `MIXED`, `UNDETERMINED` e insufficienza;
 - [ ] fixture coprono obiettivi `STRUCTURED` e `CONTEXT_ONLY` senza inferenze
       dal testo libero;
 - [ ] fixture coprono tutte le fasce quantitative e d'intensità;
@@ -1844,6 +1955,8 @@ o feedback approvati nel presente draft.
 - [ ] persistenza conserva originali, conflitti, correzioni e cancellazioni;
 - [ ] proiezioni di feedback e conflitti ricostruite deterministicamente e
       riferite dall'evaluation con la versione effettivamente usata;
+- [ ] evaluation dell'impatto dei conflitti versionate dopo mapping univoco,
+      separate dagli input e bloccanti per report e learning se irrisolte;
 - [ ] feature flag e shadow provati senza modificare outcome, report, confidence
       o learning;
 - [ ] verifiche con dati reali autorizzate e completate;
