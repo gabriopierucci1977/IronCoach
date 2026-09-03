@@ -177,6 +177,15 @@ Le seguenti decisioni sono **APPROVATE**:
 49. **Aggregazione identity.** L'identità dei componenti usa, senza
     compensazioni, la precedenza `INSUFFICIENT_DATA`, `NOT_MET`,
     `PARTIALLY_MET`, quindi `MET`.
+50. **Semantica della dose.** `dose_evaluation.status` esprime soltanto
+    `EVALUATED` o `INSUFFICIENT_DATA`; la direzione e la fascia restano campi
+    separati.
+51. **Direzione d'intensità composta.** Brick e multisport aggregano la
+    direzione d'intensità con una precedenza deterministica distinta dallo
+    status e senza compensazioni.
+52. **Lifecycle append-only.** Correzioni/cancellazioni del feedback e
+    risoluzioni dei conflitti sono eventi separati e versionati; non modificano
+    l'`actual_session` immutabile.
 
 ## 3. Prescrizione autorevole e audit
 
@@ -446,6 +455,7 @@ actual_session:
     interruption_reason: string | null
     safety_interruption: boolean | null
   athlete_feedback:
+    feedback_id: string
     schema_version: maintain-plan-subjective-feedback/1.0.0-draft
     rpe: number | null
     pain: number | null
@@ -455,13 +465,8 @@ actual_session:
     note: string | null
     captured_at: datetime | null
     provenance: object
-    correction_audit_ref: string | null
-    deletion_status: ACTIVE | DELETED
-    deleted_at: datetime | null
-    learning_eligible: boolean
-    retention_policy:
-      policy_id: maintain-plan-subjective-feedback
-      policy_version: 1.0.0-draft
+    missing_fields: []
+    warnings: []
   weather_context:
     - component_ref: string
       applicability: OPTIONAL | NOT_APPLICABLE
@@ -492,19 +497,16 @@ actual_session:
         policy_id: maintain-plan-weather-privacy
         policy_version: 1.0.0-draft
   source_conflicts:
-    - schema_version: maintain-plan-source-conflict/1.0.0-draft
+    - conflict_id: string
+      schema_version: maintain-plan-source-conflict/1.0.0-draft
       field_path: string
       values:
         - value: any
           source: string
           provenance: object
       affects_decision: boolean
-      confirmation_ref: string | null
-      selected_value: any | null
-      selected_source: string | null
-      resolution_status: OPEN | RESOLVED | UNKNOWN_ANSWER
-      detected_at: datetime
-      resolved_at: datetime | null
+      provenance: object
+      missing_fields: []
       warnings: []
       policy_id: maintain-plan-source-conflicts
       policy_version: 1.0.0-draft
@@ -531,6 +533,63 @@ qualità dei dati. Componenti, blocchi, ripetizioni e transizioni conterranno
 soltanto identità e dati osservati: nessun elemento di `actual_session` punterà
 a una prescrizione o a un risultato futuro. Transizioni, componenti sportivi,
 recovery blocks e source segments resteranno entità distinte.
+
+Correzioni e cancellazioni del feedback e risoluzioni dei conflitti non
+modificheranno `actual_session`: saranno conservate in registri append-only
+separati e versionati.
+
+```yaml
+feedback_event_log:
+  schema_version: maintain-plan-feedback-events/1.0.0-draft
+  feedback_ref:
+    session_id: string
+    feedback_id: string
+  events:
+    - event_id: string
+      event_type: CAPTURED | CORRECTED | DELETED
+      occurred_at: datetime
+      actor: string
+      provenance: object
+      schema_version: maintain-plan-feedback-event/1.0.0-draft
+      previous_event_ref: string | null
+      superseded_event_ref: string | null
+      corrected_payload: object | null
+      deletion_reason_or_ref: string | null
+      audit_metadata: object
+
+source_conflict_resolution_log:
+  schema_version: maintain-plan-source-conflict-events/1.0.0-draft
+  conflict_ref:
+    session_id: string
+    conflict_id: string
+  events:
+    - event_id: string
+      event_type: RESOLVED | UNKNOWN_ANSWER | RESOLUTION_WITHDRAWN
+      selected_value: any | null
+      selected_source: string | null
+      unknown_answer: boolean
+      actor: string
+      occurred_at: datetime
+      provenance: object
+      schema_version: maintain-plan-source-conflict-event/1.0.0-draft
+      previous_event_ref: string | null
+      audit_metadata: object
+```
+
+Una proiezione deterministica e versionata dovrà ricostruire, esclusivamente
+dalla sequenza degli eventi, il feedback e la risoluzione dei conflitti
+applicabili al momento della valutazione. Gli eventi non modificheranno la
+cattura o il conflitto originale. Il payload soggetto a cancellazione seguirà
+la policy privacy; dopo la cancellazione l'audit potrà conservare soltanto i
+metadati non sensibili necessari e il feedback non potrà essere usato in
+valutazioni future o nel learning. Correzioni e cancellazioni non
+reinterpreteranno retroattivamente risultati già pubblicati senza una nuova
+`execution_evaluation` esplicitamente versionata.
+
+Per i conflitti, «non lo so» manterrà la dimensione interessata
+`INSUFFICIENT_DATA`; una risoluzione ambigua o ritirata non potrà entrare nel
+learning. Non saranno ammesse modifiche silenziose o sovrascritture dei valori
+originali.
 
 Il matching dovrà produrre un risultato separato dall'attività osservata:
 
@@ -622,7 +681,7 @@ persistito autonomamente né una seconda fonte autorevole.
 ```yaml
 dose_evaluation:
   dose_result_id: string
-  status: IN_LINE | LOWER | HIGHER | MIXED | UNDETERMINED | INSUFFICIENT_DATA
+  status: EVALUATED | INSUFFICIENT_DATA
   direction: LOWER | IN_LINE | HIGHER | MIXED | UNDETERMINED | null
   severity_band: MAIN | SECONDARY | OUT_OF_BAND | null
   quantity_result_ref: string | null
@@ -636,11 +695,16 @@ dose_evaluation:
 ```
 
 La coppia `policy_id`/`policy_version` del tipo dovrà essere interamente
-valorizzata oppure interamente null. `status: INSUFFICIENT_DATA` imporrà
-`direction: null`: la missingness non dovrà essere trasformata in
-`UNDETERMINED`. `UNDETERMINED` sarà ammesso soltanto quando i dati saranno
+valorizzata oppure interamente null. `status` rappresenterà esclusivamente la
+valutabilità: `EVALUATED` richiederà una `direction` non null, mentre
+`INSUFFICIENT_DATA` imporrà `direction: null`. `LOWER`, `IN_LINE`, `HIGHER`,
+`MIXED` e `UNDETERMINED` saranno esclusivamente valori di `direction`, mai di
+`status`. `UNDETERMINED` sarà una direzione valutata: i dati saranno
 sufficienti a riconoscere uno scostamento, ma non a determinarne una direzione
-univoca.
+univoca. `severity_band` resterà separata da status e direction; anche
+l'applicability resterà separata dalla valutabilità. Per le sessioni supportate
+nella v1 la dose resterà `REQUIRED`. Riferimenti mancanti o non risolvibili
+produrranno `status: INSUFFICIENT_DATA` e `direction: null`.
 
 Il seguente `component_evaluation` sarà usato esclusivamente come elemento di
 `execution_evaluation.component_results`; non costituirà un oggetto autorevole
@@ -698,6 +762,12 @@ execution_evaluation:
   prescription_mapping_ref: string
   prescription_snapshot_ref: string
   actual_session_ref: string
+  feedback_projection_ref:
+    projection_id: string | null
+    projection_version: string | null
+  source_conflict_projection_refs:
+    - projection_id: string
+      projection_version: string
   component_results:
     - component_evaluation: object
   block_results:
@@ -805,7 +875,8 @@ riferire esclusivamente i `dose_result_id` delle dosi dei componenti, mai i
 `component_result_id`, e ogni riferimento dovrà risolversi esattamente a una
 dose canonica. La dose aggregata non dovrà selezionare implicitamente una
 proprietà interna di un risultato di componente. Un riferimento mancante,
-duplicato o non risolvibile renderà la dose aggregata `INSUFFICIENT_DATA`.
+duplicato o non risolvibile renderà la dose aggregata
+`status: INSUFFICIENT_DATA` con `direction: null`.
 
 Gli identificatori osservati avranno questi scope canonici: `block_id` sarà
 univoco nel componente osservato, `repetition_id` sarà univoco nel blocco
@@ -836,6 +907,13 @@ risolto. Dovrà riferire coerentemente quel mapping, lo snapshot e la sessione
 osservata. Se il mapping richiesto sarà assente, la valutazione non sarà
 pubblicabile oppure produrrà `INSUFFICIENT_DATA`; non potrà contribuire al
 learning prima dell'eventuale conferma necessaria.
+
+La valutazione dovrà registrare i riferimenti e le versioni delle proiezioni di
+feedback e conflitti effettivamente utilizzate. Un riferimento di proiezione
+presente dovrà avere insieme `projection_id` e `projection_version`; entrambi
+saranno null quando non esisterà una cattura applicabile. In questo modo una
+correzione, cancellazione o risoluzione successiva non modificherà gli input né
+la valutazione già pubblicata.
 
 ### 5.3 Identificativo diretto
 
@@ -1123,6 +1201,35 @@ associabili resteranno `INSUFFICIENT_DATA`; non saranno ammesse inferenze o
 aggregazioni alternative. L'overall dell'esecuzione dovrà consumare
 l'`identity_aggregate` ottenuto esclusivamente con questa regola.
 
+Lo `status` e la `direction` dell'intensità aggregata resteranno separati. Lo
+`status` continuerà a usare la precedenza appena definita. Per
+`intensity_aggregate.direction` la futura implementazione dovrà applicare, in
+ordine:
+
+1. almeno un componente obbligatorio con intensity `INSUFFICIENT_DATA` →
+   `direction: null`;
+2. altrimenti `intensity_aggregate.status: MET` → `direction: IN_LINE`;
+3. altrimenti, considerando le direzioni dei componenti valutabili:
+   - almeno una `UNDETERMINED` → `UNDETERMINED`;
+   - altrimenti almeno una `MIXED` → `MIXED`;
+   - altrimenti presenza sia di `HIGHER` sia di `LOWER` → `MIXED`;
+   - altrimenti presenza di `HIGHER`, con le altre `HIGHER` o `IN_LINE` →
+     `HIGHER`;
+   - altrimenti presenza di `LOWER`, con le altre `LOWER` o `IN_LINE` →
+     `LOWER`;
+   - altrimenti tutte `IN_LINE` → `IN_LINE`.
+
+Un componente valutabile dovrà avere direzione non null; `direction: null`
+sarà ammesso soltanto per dati obbligatori insufficienti. Nessun componente
+potrà compensarne un altro e nessuna direzione sarà scelta usando soltanto il
+“componente peggiore”. Il report dovrà mostrare questo aggregato e la dose
+dovrà consumarlo secondo le proprie regole, senza compensazioni.
+
+Esempi normativi: `HIGHER + LOWER → MIXED`; `HIGHER + IN_LINE → HIGHER`;
+`LOWER + IN_LINE → LOWER`; tutti i componenti `MET → IN_LINE`; almeno un
+componente `UNDETERMINED → UNDETERMINED`; almeno un componente obbligatorio
+`INSUFFICIENT_DATA → direction: null`.
+
 ### 6.6 Identità sportiva e obiettivo
 
 Il confronto valuta composition e componenti in ordine. Per ciascun componente
@@ -1158,16 +1265,18 @@ sia per la dose aggregata di sessione.
 
 Matrice approvata:
 
-- entrambe in linea → dose `IN_LINE`;
-- nessuna superiore e almeno una inferiore → dose `LOWER`;
-- nessuna inferiore e almeno una superiore → dose `HIGHER`;
-- una inferiore e l'altra superiore → dose `MIXED`, senza compensazione;
+- con quantità e intensità valutabili → `status: EVALUATED`;
+- entrambe in linea → `direction: IN_LINE`;
+- nessuna superiore e almeno una inferiore → `direction: LOWER`;
+- nessuna inferiore e almeno una superiore → `direction: HIGHER`;
+- una inferiore e l'altra superiore → `direction: MIXED`, senza compensazione;
 - nella stessa direzione la gravità usa la fascia peggiore;
 - nella dose mista non si calcola un saldo;
-- una direzione d'intensità `MIXED` produce dose `MIXED`;
+- una direzione d'intensità `MIXED` produce `direction: MIXED`;
 - una direzione d'intensità `UNDETERMINED` impedisce una direzione definitiva
-  della dose e produce dose `UNDETERMINED`;
-- se una dimensione obbligatoria non è valutabile → `INSUFFICIENT_DATA`;
+  della dose e produce `direction: UNDETERMINED` con `status: EVALUATED`;
+- se una dimensione obbligatoria non è valutabile →
+  `status: INSUFFICIENT_DATA` e `direction: null`;
 - i riferimenti ai risultati quantity/intensity sono sempre conservati.
 
 Per gli intervalli, un'intensità nella fascia principale con `status: MET`
@@ -1181,11 +1290,14 @@ dimensione dell'aggregazione dell'esecuzione.
 
 Per Brick e multisport la futura implementazione dovrà calcolare una dose per
 ogni componente. Un componente obbligatorio non valutabile produrrà dose di
-sessione `INSUFFICIENT_DATA`; componenti con la stessa direzione manterranno
-quella direzione e la fascia peggiore; componenti inferiori e superiori
-produrranno `MIXED`. Non sarà calcolato alcun saldo e il report dovrà mostrare
-sempre il dettaglio per componente. Un dubbio capace di cambiare la decisione
-richiederà confirmation.
+sessione con `status: INSUFFICIENT_DATA` e `direction: null`; componenti con la
+stessa direzione manterranno quella direzione e la fascia peggiore; componenti
+inferiori e superiori produrranno `direction: MIXED`. Non sarà calcolato alcun
+saldo e il report dovrà mostrare sempre separatamente valutabilità (`status`),
+esito direzionale (`direction`) e fascia (`severity_band`), oltre al dettaglio
+per componente. Il futuro learning dovrà consumare gli stessi tre campi senza
+confonderne le semantiche. Un dubbio capace di cambiare la decisione richiederà
+confirmation.
 
 ## 8. Meteo contestuale e privacy
 
@@ -1259,8 +1371,12 @@ con provenance. Non si calcolano medie o fusioni automatiche.
 Se il conflitto potrà cambiare matching, fascia, dose, struttura, stabilità o
 decisione, la futura implementazione dovrà chiedere conferma. Se non potrà
 cambiare la valutazione, dovrà usare la sorgente prioritaria conservando il
-conflitto. La conferma selezionerà il dato per la valutazione senza modificare
-gli originali; «non lo so» renderà la dimensione non valutabile.
+conflitto. La selezione e «non lo so» saranno registrati soltanto nel registro
+append-only di risoluzione: la proiezione versionata selezionerà il dato per la
+valutazione senza modificare gli originali, mentre «non lo so» renderà la
+dimensione non valutabile. `execution_evaluation` conserverà la versione della
+proiezione usata; una risoluzione ambigua o ritirata resterà esclusa dal
+learning.
 
 ### 9.2 Feedback soggettivo
 
@@ -1278,14 +1394,18 @@ Campi facoltativi:
 Nessun questionario è obbligatorio. L'assenza completa significa «nessun
 problema noto» e non certificazione medica. Non si convertono automaticamente
 i segnali e non si formulano diagnosi o nuove soglie cliniche. Ambiguità o
-contraddizioni rilevanti richiedono conferma; correzioni successive sono
-auditabili.
+contraddizioni rilevanti richiedono conferma; correzioni successive saranno
+eventi auditabili nel registro append-only separato.
 
-Il feedback è collegato soltanto all'episodio e all'atleta proprietario e
-conserva timestamp, provenance e schema version. Ha la stessa retention
-dell'episodio. Correzione e cancellazione sono possibili su richiesta; un dato
-cancellato è escluso da uso futuro e learning. Le note non sono inviate a
-provider esterni.
+La cattura iniziale immutabile del feedback sarà collegata soltanto all'episodio
+e all'atleta proprietario e conserverà timestamp, provenance e schema version.
+Avrà la stessa retention dell'episodio. Correzione e cancellazione saranno
+possibili su richiesta esclusivamente mediante eventi append-only; la
+proiezione deterministica ricostruirà la versione applicabile. Un dato
+cancellato sarà escluso da uso futuro e learning e il contenuto soggetto a
+cancellazione seguirà la policy privacy, lasciando nell'audit soltanto i
+metadati non sensibili necessari. Le note non saranno inviate a provider
+esterni.
 
 ## 10. Aggregazione dell'esecuzione
 
@@ -1411,6 +1531,10 @@ in linguaggio comprensibile:
 5. dose complessiva;
 6. indicazioni per la seduta successiva soltanto quando supportate.
 
+Per la dose, il report e il futuro learning dovranno consumare `status` per la
+valutabilità, `direction` per l'esito direzionale e `severity_band` per la
+fascia, senza usare uno di questi campi come sostituto degli altri.
+
 Il report dovrà procedere con missingness isolata, ma non formulare un outcome
 definitivo se una dimensione obbligatoria è non valutabile. Dovrà indicare se
 uno scostamento di intensità è prevalentemente sopra o sotto il target. Una
@@ -1507,6 +1631,7 @@ gate per:
 - ambiguità aperta;
 - confirmation mancante o risposta «non lo so»;
 - dato cancellato;
+- proiezione di feedback o conflitto ambigua, ritirata o non risolvibile;
 - outcome `INSUFFICIENT_DATA`;
 - episodio precedente all'effective date.
 
@@ -1520,6 +1645,9 @@ aperte, senza autorizzare comportamenti impliciti:
 
 - progettazione tecnica dei tipi, validator, storage, migrazioni additive,
   servizi di confirmation e interfacce fra moduli;
+- progettazione tecnica dei registri append-only, delle proiezioni versionate e
+  della minimizzazione dei metadati audit dopo cancellazione, nel rispetto
+  delle invarianti approvate;
 - mapping documentato dei payload delle singole sorgenti verso tassonomia,
   target, unità, evaluation window, componenti e provenance;
 - formato tecnico definitivo degli identificativi, candidate set, evidence e
@@ -1572,10 +1700,16 @@ o feedback approvati nel presente draft.
 - [x] unico tipo canonico `dose_evaluation` incorporato nella evaluation
       definito;
 - [x] `dose_result_id` e destinazione di `component_dose_result_refs` definiti;
+- [x] valutabilità, direzione, fascia e applicability della dose mantenute
+      semanticamente separate;
+- [x] direzione aggregata dell'intensità per sessioni composte definita con
+      precedenza deterministica ed esempi normativi;
 - [x] applicability delle dimensioni obbligatorie definita;
 - [x] direzioni `MIXED` e `UNDETERMINED` definite;
 - [x] stabilità iniziale definita semanticamente;
 - [x] meteo/privacy, conflitti e feedback definiti;
+- [x] registri append-only e proiezioni versionate per feedback e conflitti
+      definiti senza mutare `actual_session`;
 - [x] report, rollout e learning gates definiti;
 - [x] applicazione ai soli nuovi episodi definita.
 
@@ -1599,6 +1733,8 @@ o feedback approvati nel presente draft.
 - [ ] fixture confermano `MET + IN_LINE` con almeno il 90% delle ripetizioni
       obbligatorie rispettate e l'aggregazione identity completa;
 - [ ] persistenza conserva originali, conflitti, correzioni e cancellazioni;
+- [ ] proiezioni di feedback e conflitti ricostruite deterministicamente e
+      riferite dall'evaluation con la versione effettivamente usata;
 - [ ] feature flag e shadow provati senza modificare outcome, report, confidence
       o learning;
 - [ ] verifiche con dati reali autorizzate e completate;
