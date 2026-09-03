@@ -263,7 +263,11 @@ Le seguenti decisioni sono **APPROVATE**:
 71. **Proiezione dei conflitti.** Il conflitto immutabile, il registro
     append-only, la `source_conflict_projection` deterministica versionata,
     la valutazione d'impatto post-matching e l'execution evaluation restano
-    separati; ogni evaluation conserva le versioni esatte consumate.
+    separati; il registro ha un ID stabile e riferimenti completamente
+    qualificati, la proiezione distingue `UNRESOLVED`, `RESOLVED`,
+    `DONT_KNOW` e `INVALID`, e ogni evaluation conserva ID, versioni e hash
+    esatti consumati. `RESOLUTION_WITHDRAWN` riporta una risoluzione o risposta
+    valida a `UNRESOLVED` senza reinterpretare versioni già pubblicate.
 
 ## 3. Prescrizione autorevole e audit
 
@@ -687,12 +691,19 @@ feedback_projection:
   warnings: []
 
 source_conflict_resolution_log:
+  resolution_log_id: string
   schema_version: maintain-plan-source-conflict-events/1.0.0-draft
   conflict_ref:
     session_id: string
     conflict_id: string
+  actual_session_ref:
+    session_id: string
   events:
     - event_id: string
+      resolution_log_id: string
+      source_conflict_id: string
+      actual_session_ref:
+        session_id: string
       event_sequence: integer
       event_type: RESOLVED | UNKNOWN_ANSWER | RESOLUTION_WITHDRAWN
       selected_value: any | null
@@ -702,7 +713,8 @@ source_conflict_resolution_log:
       occurred_at: datetime
       provenance: object
       schema_version: maintain-plan-source-conflict-event/1.0.0-draft
-      previous_event_ref: string | null
+      previous_event_id: string | null
+      withdrawn_event_ref: string | null
       audit_metadata: object
 
 source_conflict_projection:
@@ -712,10 +724,13 @@ source_conflict_projection:
   source_conflict_id: string
   actual_session_ref:
     session_id: string
-  resolution_log_ref: string
+  resolution_log_ref:
+    resolution_log_id: string
+    source_conflict_id: string
+    session_id: string
   through_event_id: string | null
   through_event_sequence: integer | null
-  status: UNRESOLVED | RESOLVED | DONT_KNOW
+  status: UNRESOLVED | RESOLVED | DONT_KNOW | INVALID
   selected_value: any | null
   selected_source: string | null
   policy_id: maintain-plan-source-conflict-projection
@@ -775,32 +790,96 @@ valori. Le parti dipendenti dal feedback non produrranno risultati definitivi;
 warning e provenance saranno conservati e il risultato sarà escluso dal
 learning.
 
+Ogni `source_conflict_resolution_log` avrà un `resolution_log_id` stabile, non
+null e immutabile, univoco almeno nel contesto della sessione e del conflitto
+sorgente. Tutti i suoi eventi apparterranno allo stesso `resolution_log_id`,
+`source_conflict_id` e `actual_session_ref`; tali valori, esplicitamente
+presenti in ogni evento, dovranno coincidere con `resolution_log_id`,
+`conflict_ref` e con il conflitto immutabile. Nessun riferimento potrà
+essere ricavato implicitamente dalla posizione nel documento o dall'ordine
+degli eventi. Il `resolution_log_ref` completamente qualificato dovrà
+risolvere esattamente un registro: riferimenti mancanti, ambigui, non
+risolvibili o incoerenti per ID di registro, conflitto o sessione produrranno
+una proiezione `INVALID`.
+
 La `source_conflict_projection` canonica sarà ricostruita in modo
-deterministico: (1) caricare il conflitto sorgente immutabile; (2) caricare il
-registro append-only delle risoluzioni; (3) verificare identificatori,
-sessione, sequenza monotona e catena `previous_event_ref`; (4) applicare gli
-eventi fino a `through_event_id` incluso; (5) produrre una nuova versione
-immutabile della proiezione; (6) calcolare `projection_hash` sull'oggetto
-canonico secondo la policy indicata. `through_event_id` e
-`through_event_sequence` sono entrambi null soltanto per la proiezione iniziale
-senza eventi.
+deterministico: (1) caricare il conflitto sorgente immutabile; (2) risolvere
+l'unico registro append-only mediante tutti i campi di `resolution_log_ref`;
+(3) verificare identificatori, sessione, schema, versioni, hash e provenance
+obbligatori; (4) verificare una sequenza completa, non duplicata e strettamente
+monotona e la catena `previous_event_id`; (5) inizializzare lo stato a
+`UNRESOLVED`; (6) applicare, soltanto se riconosciuti e validi per lo stato
+corrente, gli eventi fino a `through_event_id` incluso; (7) produrre una nuova
+versione immutabile; (8) calcolare `projection_hash` sull'oggetto canonico
+secondo la policy indicata. `through_event_id` e `through_event_sequence` sono
+entrambi null soltanto per la proiezione iniziale senza eventi.
 
-Le invarianti sono vincolanti: `UNRESOLVED` ha `selected_value` e
-`selected_source` null; la risposta canonica «non lo so» produce `DONT_KNOW`,
-ancora con entrambi null, e mantiene insufficienti le parti obbligatorie
-interessate; `RESOLVED` richiede valore e sorgente coerenti con l'evento e con
-la provenance. Un evento o una catena mancante, incoerente o non risolvibile
-rende la proiezione invalida e non autorizza valori inventati. Ogni nuova
-risoluzione crea una nuova `projection_version`; le versioni precedenti e le
-evaluation già pubblicate restano immutabili e non sono reinterpretate
-retroattivamente.
+La macchina a stati normativa è completa:
 
-Una proiezione assente, invalida, `UNRESOLVED` o `DONT_KNOW` per un conflitto
-che interessa una dimensione obbligatoria rende quella parte
-`INSUFFICIENT_DATA`, ne conserva dettaglio e warning nel report e la esclude
-dal learning. Il conflitto sorgente, il registro eventi, la proiezione, la
-valutazione d'impatto post-matching e l'execution evaluation non si incorporano
-né si sovrascrivono a vicenda.
+| Stato corrente | Evento | Stato successivo | Vincoli |
+|---|---|---|---|
+| `UNRESOLVED` | `RESOLVED` | `RESOLVED` | valore e sorgente selezionati non null e provenance coerente |
+| `UNRESOLVED` | `UNKNOWN_ANSWER` | `DONT_KNOW` | risposta esplicita valida; valore e sorgente null |
+| `RESOLVED` | `RESOLUTION_WITHDRAWN` | `UNRESOLVED` | `withdrawn_event_ref` identifica la risoluzione corrente nello stesso registro, conflitto e sessione |
+| `DONT_KNOW` | `RESOLUTION_WITHDRAWN` | `UNRESOLVED` | `withdrawn_event_ref` identifica la risposta corrente nello stesso registro, conflitto e sessione |
+| `UNRESOLVED` dopo un ritiro | `RESOLVED` | `RESOLVED` | crea una nuova versione risolta valida |
+| `UNRESOLVED` dopo un ritiro | `UNKNOWN_ANSWER` | `DONT_KNOW` | crea una nuova versione di risposta esplicita valida |
+| `UNRESOLVED` | `RESOLUTION_WITHDRAWN` | `INVALID` | nessuna risoluzione o risposta corrente da ritirare |
+| qualsiasi | evento non riconosciuto o non valido per lo stato | `INVALID` | nessun valore precedente viene recuperato |
+| qualsiasi | sequenza, catena o riferimenti incoerenti | `INVALID` | il dettaglio dell'errore resta in missing fields, warning e audit |
+
+Per `RESOLVED`, `selected_value` e `selected_source` sono non null,
+`unknown_answer` è false e `withdrawn_event_ref` è null. Per
+`UNKNOWN_ANSWER`, selezione e `withdrawn_event_ref` sono null e
+`unknown_answer` è true. Per `RESOLUTION_WITHDRAWN`, selezione è null,
+`unknown_answer` è false e `withdrawn_event_ref` è non null e risolve
+esattamente l'evento corrente revocato. Il primo evento ha
+`previous_event_id: null`; ogni evento successivo indica l'evento precedente
+dello stesso registro.
+
+Due ritiri consecutivi senza una nuova risoluzione, un ritiro senza
+`withdrawn_event_ref`, oppure un ritiro riferito a un altro conflitto,
+registro o sessione sono transizioni invalide e producono `INVALID`. Quando un
+`RESOLUTION_WITHDRAWN` valido viene applicato, `selected_value` e
+`selected_source` diventano null, la proiezione conserva `through_event_id` e
+`through_event_sequence` del ritiro e la nuova `projection_version` è
+`UNRESOLVED`. Eventi, proiezioni e valutazioni precedenti restano immutabili;
+nessuna evaluation già pubblicata viene reinterpretata retroattivamente.
+
+Le invarianti degli stati sono vincolanti. `UNRESOLVED` indica una catena
+valida senza risoluzione corrente e impone valore e sorgente null.
+`UNKNOWN_ANSWER` è l'evento che produce lo stato `DONT_KNOW`, cioè una risposta
+esplicita e valida «non lo so», anch'essa con valore e sorgente null.
+`RESOLVED` richiede valore e sorgente non null coerenti con evento e
+provenance. `INVALID` indica catena o riferimenti non validi e impone valore e
+sorgente null. Producono almeno `INVALID`: registro o conflitto mancanti;
+riferimento non risolvibile o ambiguo; sessione o conflict ID incoerenti;
+sequenza mancante, duplicata o non monotona; catena `previous_event_id`
+interrotta; evento non valido per lo stato corrente; hash, versione o
+provenance obbligatoria incoerenti; evento non riconosciuto.
+
+Per `INVALID`, `missing_fields` e `warnings` descriveranno il motivo, report e
+audit ne conserveranno il dettaglio e nessun valore precedente sarà
+riutilizzato implicitamente. Una proiezione assente, `INVALID`, `UNRESOLVED` o
+`DONT_KNOW` per un conflitto che interessa una dimensione obbligatoria rende
+ogni dimensione obbligatoria interessata `INSUFFICIENT_DATA`, la esclude dal
+learning e non può essere trattata come risolta da `execution_evaluation`. Il
+conflitto sorgente, il registro eventi, la proiezione, la valutazione d'impatto
+post-matching e l'execution evaluation non si incorporano né si sovrascrivono
+a vicenda.
+
+Esempi normativi:
+
+| Eventi applicati | Proiezione |
+|---|---|
+| nessun evento | `UNRESOLVED`, cursore e selezione null |
+| `RESOLVED` valido | `RESOLVED`, valore e sorgente selezionati |
+| `UNKNOWN_ANSWER` valido | `DONT_KNOW`, selezione null |
+| `RESOLVED` seguito dal relativo `RESOLUTION_WITHDRAWN` | `UNRESOLVED`, selezione null e cursore sul ritiro |
+| `UNKNOWN_ANSWER` seguito dal relativo `RESOLUTION_WITHDRAWN` | `UNRESOLVED`, selezione null e cursore sul ritiro |
+| `RESOLUTION_WITHDRAWN` senza risoluzione precedente | `INVALID` |
+| ritiro valido seguito da un nuovo `RESOLVED` | nuova versione `RESOLVED` |
+| sequenza duplicata o catena `previous_event_id` incoerente | `INVALID` |
 
 Il matching dovrà produrre un risultato separato dall'attività osservata:
 
@@ -885,7 +964,9 @@ prescrizione selezionata. La valutazione dell'impatto sarà un oggetto separato:
 source_conflict_impact_evaluation:
   conflict_impact_evaluation_id: string
   evaluation_version: string
-  source_conflict_id: string
+  source_conflict_ref:
+    session_id: string
+    conflict_id: string
   prescription_mapping_ref: string | null
   status: EVALUATED | UNRESOLVED
   affected_dimensions: [IDENTITY | QUANTITY | INTENSITY | STRUCTURE | DOSE | DECISION]
@@ -910,6 +991,10 @@ struttura include `STRUCTURE`. Se cambia la dose risultante si aggiunge
 `DOSE`; se cambia una decisione finale si aggiunge `DECISION`. Lo stesso
 conflitto può elencare più dimensioni e `DECISION` non sostituisce mai la
 dimensione direttamente interessata.
+
+`source_conflict_ref` dovrà risolvere esattamente il conflitto canonico nella
+sessione indicata; non sarà ammessa una risoluzione implicita basata sul solo
+ordine o su un conflict ID appartenente a un'altra sessione.
 
 Ogni dimensione obbligatoria direttamente interessata da un conflitto
 rilevante `UNRESOLVED` produrrà `INSUFFICIENT_DATA`; il dettaglio del conflitto
@@ -1255,7 +1340,11 @@ Ogni `source_conflict_projection_refs` dovrà risolvere esattamente una
 `projection_id`/`projection_version`/`projection_hash`. L'evaluation conserva
 esattamente la versione usata: riferimenti mancanti, divergenti o non
 risolvibili invalidano la parte dipendente senza selezionare una versione più
-recente implicitamente.
+recente implicitamente. Una proiezione con stato `INVALID`, `UNRESOLVED` o
+`DONT_KNOW` non potrà essere trattata come `RESOLVED`: renderà
+`INSUFFICIENT_DATA` ogni dimensione obbligatoria interessata e impedirà il
+learning. L'audit dell'evaluation conserverà la tripletta esatta e il dettaglio
+di registro, conflitto, sessione, cursore, missing fields e warning applicabili.
 
 La dose di ogni componente dovrà valorizzare i riferimenti ai risultati
 quantity e intensity dello stesso componente. La dose aggregata dovrà
@@ -1351,9 +1440,11 @@ pubblicabile oppure produrrà `INSUFFICIENT_DATA`; non potrà contribuire al
 learning prima dell'eventuale conferma necessaria.
 
 La valutazione dovrà registrare i riferimenti e le versioni delle proiezioni di
-feedback e conflitti effettivamente utilizzate. Un riferimento di proiezione
+feedback e conflitti effettivamente utilizzate. Un riferimento di feedback
 presente dovrà avere insieme `projection_id` e `projection_version`; entrambi
-saranno null quando non esisterà una cattura applicabile. In questo modo una
+saranno null quando non esisterà una cattura applicabile. Ogni riferimento di
+conflitto avrà invece sempre la tripletta non null `projection_id`,
+`projection_version` e `projection_hash`. In questo modo una
 correzione, cancellazione o risoluzione successiva non modificherà gli input né
 la valutazione già pubblicata. In particolare, `execution_evaluation` dovrà
 continuare a registrare l'identificatore e la versione esatti della proiezione
@@ -1968,9 +2059,10 @@ conferma; altrimenti userà la sorgente prioritaria conservando il conflitto.
 La selezione e «non lo so» saranno registrati soltanto nel registro
 append-only di risoluzione: la proiezione versionata selezionerà il dato per la
 valutazione senza modificare gli originali, mentre «non lo so» renderà la
-dimensione non valutabile. `execution_evaluation` conserverà la versione della
-proiezione usata; una risoluzione ambigua o ritirata resterà esclusa dal
-learning.
+dimensione non valutabile. `execution_evaluation` conserverà ID, versione e
+hash della proiezione usata; una proiezione `INVALID`, `UNRESOLVED` (anche dopo
+un ritiro valido) o `DONT_KNOW` resterà esclusa dal learning e non sarà
+reinterpretata come risolta.
 
 ### 9.2 Feedback soggettivo
 
@@ -2173,6 +2265,13 @@ proiezione è `DELETED` e non produrrà risultati definitivi nelle parti
 dipendenti dal feedback quando essa è `INVALID` o `INSUFFICIENT_DATA`; in tali
 casi mostrerà gli warning e la provenance applicabili senza inventare valori.
 
+Per i conflitti il report userà soltanto le proiezioni identificate da
+`projection_id`, `projection_version` e `projection_hash` in
+`execution_evaluation`. Mostrerà stato, conflitto, registro e cursore
+qualificati e conserverà missing fields e warning. Per `INVALID`,
+`UNRESOLVED` o `DONT_KNOW` non mostrerà una selezione precedente come corrente
+e non presenterà come valutata alcuna dimensione obbligatoria interessata.
+
 Per la dose, il report e il futuro learning dovranno consumare `status` per la
 valutabilità, `direction` per l'esito direzionale e `severity_band` per la
 fascia, senza usare uno di questi campi come sostituto degli altri.
@@ -2280,14 +2379,16 @@ gate per:
 - ambiguità aperta;
 - mapping non confermato;
 - conflitto rilevante con impatto `UNRESOLVED`;
-- proiezione di conflitto assente, invalida, `UNRESOLVED` o `DONT_KNOW` per
+- proiezione di conflitto assente, `INVALID`, `UNRESOLVED` o `DONT_KNOW` per
   una dimensione obbligatoria;
 - confirmation mancante o risposta «non lo so»;
 - dato cancellato;
 - proiezione di feedback `DELETED`, `INVALID`, `INSUFFICIENT_DATA`, con baseline
   assente/inaccessibile/non coincidente, oppure con riferimenti, catena,
   sequenza, schema version o payload hash incoerenti;
-- proiezione di conflitto ambigua, ritirata o non risolvibile;
+- proiezione di conflitto ambigua, non risolvibile o resa `UNRESOLVED` da un
+  ritiro valido, oppure registro con ID, riferimenti, eventi, sequenza, catena,
+  hash, versione o provenance obbligatoria incoerenti;
 - outcome `INSUFFICIENT_DATA`;
 - dati essenziali insufficienti o dose valutata con metadati policy invalidi;
 - omissione di un componente opzionale, il cui record resta escluso dal
@@ -2399,6 +2500,10 @@ o feedback approvati nel presente draft.
       di `INSUFFICIENT_DATA` sulle dimensioni obbligatorie interessate definite;
 - [x] `source_conflict_projection` canonica, algoritmo, hash, versioni
       immutabili e riferimenti esatti nell'execution evaluation definiti;
+- [x] ID stabile del registro di risoluzione, riferimenti completamente
+      qualificati e coincidenza di registro, conflitto e sessione definiti;
+- [x] stati `UNRESOLVED`, `RESOLVED`, `DONT_KNOW` e `INVALID`, macchina a stati
+      completa, ritiro della risoluzione ed esempi normativi definiti;
 - [x] aggregazione totale della direction della dose composta ed esempi
       normativi definiti;
 - [x] direzione aggregata dell'intensità per sessioni composte definita con
@@ -2470,6 +2575,9 @@ o feedback approvati nel presente draft.
 - [ ] proiezioni dei conflitti verificano catena e sequenza, conservano hash e
       versione esatti e propagano proiezioni assenti/invalide/`UNRESOLVED`/
       `DONT_KNOW` senza reinterpretare evaluation pubblicate;
+- [ ] fixture dei conflitti verificano ID stabile e riferimenti qualificati,
+      tutte le transizioni, ritiri validi e invalidi, eventi non riconosciuti e
+      stato `INVALID` senza riuso di valori né contributi al learning;
 - [ ] cancellazione del feedback provata senza esposizione in report,
       valutazione o learning, con minimizzazione audit e senza riscrittura di
       baseline, eventi storici o evaluation già pubblicate;
