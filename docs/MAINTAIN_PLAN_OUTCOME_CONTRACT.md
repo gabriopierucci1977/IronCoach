@@ -218,6 +218,22 @@ Le seguenti decisioni sono **APPROVATE**:
 60. **Direzione della dose composta.** La dose aggregata di Brick e multisport
     applica la precedenza totale della sezione 7 a tutte le dosi dei componenti
     obbligatori, senza compensazioni né selezione arbitraria.
+61. **Direzione della quantità in fascia principale.** Qualsiasi risultato
+    quantitativo nella fascia `MAIN`, inclusi entrambi i confini, è sempre
+    `MET + IN_LINE`; `LOWER` e `HIGHER` descrivono soltanto valori esterni ai
+    confini applicabili e non sono derivati da differenze interne alla fascia.
+62. **Policy degli obiettivi strutturati.** Ogni obiettivo `STRUCTURED` deve
+    prescrivere una coppia completa e non null `policy_id`/`policy_version`,
+    oltre al codice stabile; il risultato deve riportare la stessa coppia.
+63. **Supporto separato dalla prescrizione.** `requiredness` dichiara se il
+    componente è obbligatorio o opzionale, mentre `support_status` dichiara se
+    la versione corrente dell'evaluatore può valutarlo. `STRENGTH` è
+    esplicitamente `UNSUPPORTED` nella v1, senza diventare `NOT_MET` o
+    `INSUFFICIENT_DATA`.
+64. **Copertura della valutazione.** La copertura degli obbligatori è
+    `FULLY_SUPPORTED`, `PARTIALLY_UNSUPPORTED` o `UNSUPPORTED` ed è distinta
+    dall'aderenza. Soltanto `FULLY_SUPPORTED` consente overall e dose aggregata
+    definitivi e l'applicazione della precedenza di aderenza.
 
 ## 3. Prescrizione autorevole e audit
 
@@ -251,7 +267,11 @@ planned_workout:
       discipline: RUN | BIKE | SWIM | STRENGTH
       environment: INDOOR | OUTDOOR | null
       mode: ROAD | TRAIL | TRACK | TREADMILL | GRAVEL | MOUNTAIN_BIKE | INDOOR_TRAINER | POOL | OPEN_WATER | null
-      requiredness: REQUIRED
+      requiredness: REQUIRED | OPTIONAL
+      support_status: SUPPORTED | UNSUPPORTED
+      capability_policy:
+        policy_id: maintain-plan-evaluator-capability
+        policy_version: 1.0.0-draft
       applicability: REQUIRED
       allowed_substitutions: []
       identity_policy:
@@ -336,12 +356,18 @@ valorizzati oppure entrambi null. Sono obbligatori per una dimensione
 `REQUIRED` e valutabile. La prescrizione seleziona esplicitamente la policy
 continuous o intervals in base al `session_type` dichiarato.
 
-Quando `objective.evaluability` è `STRUCTURED`, `objective.code` dovrà essere
-non null, stabile nello snapshot e utilizzabile come chiave nel riferimento
-canonico. Un obiettivo `STRUCTURED` senza codice è input invalido e non potrà
-produrre `objective_result`. Per `CONTEXT_ONLY` il testo resterà soltanto
-contesto di report e non produrrà un risultato valutativo. Non sarà mai
-inferito un codice o un risultato da `context_text` o da altro testo libero.
+Quando `objective.evaluability` è `STRUCTURED`, `objective.code`,
+`objective.policy_id` e `objective.policy_version` dovranno essere tutti non
+null. Il codice sarà stabile nello snapshot e utilizzabile come chiave nel
+riferimento canonico; la coppia completa identificherà la policy versionata che
+il futuro `objective_result` dovrà usare. L'obbligo della coppia vale
+indipendentemente dalla `requiredness` e dall'applicabilità delle dimensioni:
+valorizzare soltanto uno dei due campi non sarà valido. Un obiettivo
+`STRUCTURED` senza codice o senza la coppia completa è input invalido e non
+potrà produrre un risultato canonico. Per `CONTEXT_ONLY` e `NOT_APPLICABLE`,
+`policy_id` e `policy_version` dovranno essere entrambi null e nessun risultato
+valutativo sarà prodotto. Non sarà mai inferito un codice, una policy o un
+risultato da `context_text` o da altro testo libero.
 
 Per una seduta continua `structure.blocks` può contenere un solo `MAIN_SET`,
 oltre a eventuali `WARMUP` e `COOLDOWN`. Per Brick e multisport i blocchi
@@ -660,6 +686,15 @@ prescription_mapping:
       observed_component_ref:
         session_id: string
         component_id: string
+      requiredness: REQUIRED | OPTIONAL
+      support_status: SUPPORTED | UNSUPPORTED
+      capability_policy:
+        policy_id: maintain-plan-evaluator-capability
+        policy_version: 1.0.0-draft
+      evidence: object
+      provenance: object
+      missing_fields: []
+      warnings: []
   block_mappings:
     - planned_block_ref:
         prescription_snapshot_id: string
@@ -795,18 +830,23 @@ separato. Il campo `dose` incorporerà senza variazioni il tipo canonico
 component_evaluation:
   component_result_id: string
   match_status: MATCHED | PLANNED_ONLY | OBSERVED_ONLY
+  requiredness: REQUIRED | OPTIONAL
+  support_status: SUPPORTED | UNSUPPORTED
+  capability_policy:
+    policy_id: maintain-plan-evaluator-capability
+    policy_version: 1.0.0-draft
   planned_component_ref:  # oggetto nullable
     prescription_snapshot_id: string
     component_id: string
   observed_component_ref:  # oggetto nullable
     session_id: string
     component_id: string
-  identity:
+  identity:  # object | null; null quando support_status: UNSUPPORTED
     status: MET | PARTIALLY_MET | NOT_MET | INSUFFICIENT_DATA
     policy_id: maintain-plan-sport-taxonomy
     policy_version: 1.0.0-draft
     evidence: object
-  quantity:
+  quantity:  # object | null; null quando support_status: UNSUPPORTED
     result_id: string
     status: MET | PARTIALLY_MET | NOT_MET | INSUFFICIENT_DATA
     direction: LOWER | IN_LINE | HIGHER | null
@@ -814,7 +854,7 @@ component_evaluation:
     policy_id: maintain-plan-quantity
     policy_version: 1.0.0-draft
     evidence: object
-  intensity:
+  intensity:  # object | null; null quando support_status: UNSUPPORTED
     result_id: string
     status: MET | PARTIALLY_MET | NOT_MET | INSUFFICIENT_DATA
     direction: LOWER | IN_LINE | HIGHER | MIXED | UNDETERMINED | null
@@ -822,7 +862,7 @@ component_evaluation:
     policy_id: maintain-plan-continuous-intensity | maintain-plan-interval-intensity
     policy_version: 1.0.0-draft
     evidence: object
-  structure:
+  structure:  # object | null; null quando support_status: UNSUPPORTED
     result_id: string
     status: MET | PARTIALLY_MET | NOT_MET | INSUFFICIENT_DATA
     policy_id: maintain-plan-structure
@@ -831,7 +871,7 @@ component_evaluation:
     repetition_result_refs: []
     transition_result_refs: []
     evidence: object
-  dose: dose_evaluation
+  dose: dose_evaluation | null  # null quando support_status: UNSUPPORTED
   provenance: object
   missing_fields: []
   warnings: []
@@ -854,6 +894,22 @@ Entrambi i riferimenti null sono sempre invalidi. Ogni componente pianificato
 `INSUFFICIENT_DATA` e dose `INSUFFICIENT_DATA` con `direction: null` e
 `severity_band: null`. L'assenza non sarà convertita in quantità zero né in
 una falsa osservazione.
+
+`requiredness` e `support_status` sono ortogonali: il primo conserva la
+prescrizione, il secondo la capacità della versione corrente dell'evaluatore.
+Un componente `UNSUPPORTED` può quindi restare `REQUIRED` oppure `OPTIONAL`.
+Può essere acquisito, conservato, associato dal matching e mostrato nel report;
+conserva i riferimenti pianificati e osservati applicabili, evidence,
+provenance, `missing_fields` e warning. `capability_policy` deve contenere una
+coppia completa policy/versione che determina lo stato `UNSUPPORTED`.
+
+La regola unica per i risultati non supportati è: `identity`, `quantity`,
+`intensity`, `structure` e `dose` sono tutti `null`; non si producono quindi
+risultati definitivi né relativi riferimenti valutativi. Il componente non sarà
+trasformato in una falsa osservazione, quantità zero, `NOT_MET` o
+`INSUFFICIENT_DATA`: questi ultimi significano rispettivamente deviazione
+accertata e dati necessari mancanti, non incapacità della policy. `STRENGTH`
+deve usare `support_status: UNSUPPORTED` nella v1 e non contribuirà al learning.
 
 Un componente `OBSERVED_ONLY` resterà evidenza esplicita e visibile nel
 report, senza target pianificati inventati. Potrà influire su identity e
@@ -878,6 +934,13 @@ execution_evaluation:
       evaluation_version: string
   component_results:
     - component_evaluation: object
+  evaluation_coverage:
+    status: FULLY_SUPPORTED | PARTIALLY_UNSUPPORTED | UNSUPPORTED
+    required_supported_component_refs: []
+    required_unsupported_component_refs: []
+    optional_unsupported_component_refs: []
+    policy_id: maintain-plan-evaluator-capability
+    policy_version: 1.0.0-draft
   block_results:
     - result_id: string
       observed_block_ref:
@@ -959,7 +1022,7 @@ execution_evaluation:
     transition_result_refs: []
     policy_id: maintain-plan-component-aggregation
     policy_version: 1.0.0-draft
-  dose_aggregate:
+  dose_aggregate:  # object | null; null se coverage non FULLY_SUPPORTED
     evaluation: dose_evaluation
     component_dose_result_refs: []
   objective_result:  # null salvo objective.evaluability: STRUCTURED
@@ -977,7 +1040,7 @@ execution_evaluation:
     computed_at: datetime
     missing_fields: []
     warnings: []
-  overall:
+  overall:  # object | null; null se coverage non FULLY_SUPPORTED
     status: IN_LINE | PARTIALLY_IN_LINE | DIFFERENT | INSUFFICIENT_DATA
   policy_id: maintain-plan-execution-aggregation
   policy_version: 1.0.0-draft
@@ -1006,8 +1069,11 @@ risultato canonico persistibile e verrà prodotto esclusivamente applicando i
 criteri osservabili prescritti e la policy versionata riferita dalla
 prescrizione. `planned_objective_ref.objective_code` dovrà coincidere
 esattamente con il `objective.code` non null e stabile dello snapshot. Un
-obiettivo `STRUCTURED` senza codice o con codice non coincidente sarà input
-invalido e non produrrà `objective_result`. Criteri obbligatori mancanti o non
+obiettivo `STRUCTURED` senza codice, con codice non coincidente o senza la
+coppia policy/versione completa sarà input invalido e non produrrà
+`objective_result`. `objective_result.policy_id` e `policy_version` dovranno
+coincidere esattamente con quelli dello snapshot: una coppia parziale o diversa
+sarà invalida. Criteri obbligatori mancanti o non
 osservabili produrranno
 `status: INSUFFICIENT_DATA` e saranno elencati in `missing_fields`; il testo
 libero non sarà mai usato per inferire un esito. Per `CONTEXT_ONLY` (e
@@ -1015,6 +1081,20 @@ libero non sarà mai usato per inferire un esito. Per `CONTEXT_ONLY` (e
 nel report ma non costituirà un risultato valutativo. Nella v1 questo risultato
 non è una quinta dimensione obbligatoria e non modifica overall, dose o
 learning; qualsiasi influenza futura richiederà una nuova decisione approvata.
+
+`evaluation_coverage.status` è calcolato esclusivamente sui componenti
+`REQUIRED`: è `FULLY_SUPPORTED` quando tutti sono `SUPPORTED`,
+`PARTIALLY_UNSUPPORTED` quando sono presenti obbligatori sia `SUPPORTED` sia
+`UNSUPPORTED`, e `UNSUPPORTED` quando nessun obbligatorio è `SUPPORTED`. Un
+componente opzionale `UNSUPPORTED` resta nei risultati e nel report ma, da
+solo, non impedisce l'overall degli obbligatori supportati.
+
+Quando la copertura non è `FULLY_SUPPORTED`, i risultati dei componenti
+supportati restano pubblicati nel dettaglio, ma `overall` e `dose_aggregate`
+sono entrambi `null` secondo lo schema (non oggetti `INSUFFICIENT_DATA` e non
+risultati falliti). La sessione completa non riceve quindi un overall o una
+dose definitiva e viene esclusa dal learning. Tutti i componenti non supportati
+e la relativa `capability_policy` versionata devono essere elencati nel report.
 
 Gli identificatori osservati avranno questi scope canonici: `block_id` sarà
 univoco nel componente osservato, `repetition_id` sarà univoco nel blocco
@@ -1174,8 +1254,15 @@ non richiesto e altri campi dichiarati facoltativi. `INSUFFICIENT_DATA`
 significa che un dato necessario non è valutabile; `NOT_MET` richiede invece
 evidenza sufficiente di uno scostamento.
 
-`STRENGTH` e le tipologie fuori scope sono `UNSUPPORTED`: non producono outcome
-definitivo e non entrano nel learning.
+`requiredness: REQUIRED | OPTIONAL` descrive esclusivamente la prescrizione;
+`support_status: SUPPORTED | UNSUPPORTED` descrive esclusivamente la capacità
+della versione corrente dell'evaluatore. `STRENGTH`, pur ammessa come input,
+deve essere rappresentata esplicitamente come `UNSUPPORTED` nella v1. Non sarà
+usato `NOT_MET` (deviazione accertata) né `INSUFFICIENT_DATA` (dati necessari
+mancanti) per rappresentare una disciplina che la policy corrente non valuta.
+I componenti non supportati non producono risultati identity, quantity,
+intensity, structure o dose, ma restano acquisibili, associabili e visibili
+come definito nella sezione 5.2; non entrano nel learning.
 
 ### 6.1 Quantità di lavoro
 
@@ -1207,6 +1294,22 @@ La metrica primaria mancante non dovrà essere sostituita automaticamente.
 La fascia principale corrisponde a `MET`, una fascia secondaria a
 `PARTIALLY_MET` e fuori fascia a `NOT_MET`; direzione e fascia rimangono
 comunque conservate separatamente.
+
+Per ogni risultato quantitativo la regola è vincolante: qualunque valore nella
+fascia `MAIN` produce sempre `status: MET` e `direction: IN_LINE`, anche se non
+coincide esattamente con il target. Entrambi i confini inclusi della fascia
+principale producono `IN_LINE`. Un valore sotto il confine inferiore
+applicabile produce `LOWER`; un valore sopra il confine superiore applicabile
+produce `HIGHER`. `LOWER` e `HIGHER` non devono mai essere derivati per valori
+che restano in `MAIN`. `direction` descrive il verso, mentre `band` descrive la
+gravità: i due campi rimangono semanticamente separati.
+
+Esempi normativi, usando soltanto i confini della tabella: per una RUN continua
+duration-based con target di 100 minuti, 95 minuti (95% del target) produce
+`MET + IN_LINE + MAIN`; anche 90 e 105 minuti, confini inclusi, producono
+`MET + IN_LINE + MAIN`; 89 minuti produce `PARTIALLY_MET + LOWER + SECONDARY`;
+106 minuti produce `PARTIALLY_MET + HIGHER + SECONDARY`. La differenza di 5
+minuti fra 95 e 100 non autorizza a derivare `LOWER` dentro `MAIN`.
 
 Per gli intervalli dovrà essere usata la stessa unità della prescrizione.
 Warmup e cooldown aggiuntivi non dovranno compensare un main set incompleto;
@@ -1312,6 +1415,11 @@ prescrizione dichiara requiredness e order constraints.
 
 Policy draft: `maintain-plan-component-aggregation/1.0.0-draft`.
 
+Le regole di aderenza seguenti si applicano soltanto con
+`evaluation_coverage.status: FULLY_SUPPORTED` e includono i componenti
+obbligatori. La copertura non è uno stato di aderenza e non entra in questa
+precedenza.
+
 Per identity, quantity, intensity e structure dei componenti obbligatori, la futura
 implementazione dovrà applicare in ordine:
 
@@ -1370,7 +1478,29 @@ Esempi normativi: `HIGHER + LOWER → MIXED`; `HIGHER + IN_LINE → HIGHER`;
 componente `UNDETERMINED → UNDETERMINED`; almeno un componente obbligatorio
 `INSUFFICIENT_DATA → direction: null`.
 
-### 6.6 Identità sportiva e obiettivo
+### 6.6 Esempi normativi di copertura del supporto
+
+- **Sessione solo STRENGTH:** il componente resta `REQUIRED` e matched o
+  planned-only secondo l'evidence, ma è `support_status: UNSUPPORTED` con
+  capability policy versionata; `evaluation_coverage.status: UNSUPPORTED`,
+  `overall: null`, `dose_aggregate: null`, nessun risultato dimensionale e
+  nessun learning.
+- **Brick RUN + STRENGTH obbligatoria:** RUN è `SUPPORTED`, STRENGTH resta
+  `REQUIRED + UNSUPPORTED`; la copertura è `PARTIALLY_UNSUPPORTED`. I risultati
+  RUN sono conservati e pubblicati, mentre overall e dose aggregata sono null;
+  la sessione non è classificata fallita o insufficientemente osservata e non
+  entra nel learning.
+- **STRENGTH opzionale:** RUN obbligatoria supportata e STRENGTH
+  `OPTIONAL + UNSUPPORTED` producono `FULLY_SUPPORTED`; STRENGTH resta visibile
+  con capability policy e risultati valutativi null, ma non impedisce overall
+  e dose degli obbligatori supportati.
+- **Tutti gli obbligatori supportati:** una sessione RUN, BIKE o SWIM i cui
+  componenti `REQUIRED` sono tutti `SUPPORTED` produce `FULLY_SUPPORTED`; si
+  applicano normalmente aggregati, dose e precedenza overall. Eventuali dati
+  mancanti sono poi trattati come `INSUFFICIENT_DATA`, non come supporto
+  mancante.
+
+### 6.7 Identità sportiva e obiettivo
 
 Il confronto valuta composition e componenti in ordine. Per ciascun componente
 confronta discipline, environment e mode. Una compatibilità automatica richiede
@@ -1381,9 +1511,13 @@ non impediscono il matching. Dopo direct ID o conferma, mismatch e sostituzioni
 non autorizzate restano scostamenti di esecuzione.
 
 L'obiettivo è valutabile solo con criteri strutturati, osservabili e associati
-a policy versionata, producendo il risultato canonico della sezione 5.2. Se
+a policy versionata prescritta mediante coppia completa e non null, producendo
+il risultato canonico della sezione 5.2 con la medesima coppia. L'obbligo vale
+per ogni `STRUCTURED` indipendentemente da requiredness e applicabilità delle
+dimensioni; una coppia parziale invalida l'input. Se
 generico o testuale è `CONTEXT_ONLY`, resta visibile nel report, non produce un
-risultato valutativo e non entra nell'aggregazione. Criteri strutturati
+risultato valutativo, ha coppia policy null e non entra nell'aggregazione. Lo
+stesso vale per `NOT_APPLICABLE`. Criteri strutturati
 obbligatori mancanti o non osservabili producono `INSUFFICIENT_DATA`; non si
 inferisce mai un esito dal testo libero.
 
@@ -1423,6 +1557,11 @@ Matrice approvata:
   `status: INSUFFICIENT_DATA`, `direction: null` e `severity_band: null`;
 - i riferimenti ai risultati quantity/intensity sono sempre conservati.
 
+La dose deve consumare ogni quantità `MET/MAIN` come `direction: IN_LINE`,
+senza ricalcolare il verso dalla differenza puntuale dal target. La direction
+della quantità e la `severity_band` della dose restano campi semanticamente
+distinti.
+
 Per gli intervalli, un'intensità nella fascia principale con `status: MET`
 dovrà avere `direction: IN_LINE` e contribuirà alla matrice della dose come
 `IN_LINE`; le ripetizioni residue non conformi entro quella fascia non
@@ -1444,7 +1583,10 @@ Il meteo non corregge matematicamente la dose. La dose non è una quinta
 dimensione dell'aggregazione dell'esecuzione.
 
 Per Brick e multisport la futura implementazione dovrà calcolare una dose per
-ogni componente e aggregare tutte le dosi dei componenti obbligatori. La prima
+ogni componente supportato. La dose aggregata dell'intera sessione sarà
+prodotta soltanto con copertura `FULLY_SUPPORTED` e aggregherà tutte le dosi
+dei componenti obbligatori; altrimenti sarà `null`, pur conservando le dosi di
+dettaglio supportate. La prima
 condizione applicabile della seguente precedenza ordinata, totale e
 deterministica prevarrà:
 
@@ -1590,6 +1732,14 @@ esterni.
 Policy approvata in versione draft:
 `maintain-plan-execution-aggregation/1.0.0-draft`.
 
+Prima dell'aderenza si calcola `evaluation_coverage.status`. La precedenza
+`INSUFFICIENT_DATA → DIFFERENT → PARTIALLY_IN_LINE → IN_LINE` qui definita è
+applicabile soltanto quando la copertura è `FULLY_SUPPORTED`. Con copertura
+`PARTIALLY_UNSUPPORTED` o `UNSUPPORTED`, `overall` è `null`/non prodotto: non
+sarà sintetizzato come fallimento né come osservazione insufficiente. Gli
+aggregati di dettaglio eventualmente calcolabili sui componenti supportati
+restano pubblicabili, ma non rappresentano l'intera sessione.
+
 Le dimensioni obbligatorie sono:
 
 - sport/componenti;
@@ -1702,6 +1852,12 @@ Un'esecuzione diversa con stabilità descrive una differenza dalla prescrizione,
 non un giudizio sull'atleta. Meteo missing e obiettivo descrittivo non producono
 `INSUFFICIENT_DATA`.
 
+La matrice finale presuppone `evaluation_coverage.status: FULLY_SUPPORTED`.
+Quando la copertura non è completa, l'overall d'esecuzione e la dose aggregata
+sono null e non viene pubblicato un outcome definitivo dell'intera sessione;
+la sessione non è classificata `NEGATIVE` né `INSUFFICIENT_DATA` per il solo
+mancato supporto e resta esclusa dal learning.
+
 ## 12. Report e tempistiche
 
 Il report dovrà essere prodotto subito dopo la sincronizzazione e presentare
@@ -1713,11 +1869,14 @@ in linguaggio comprensibile:
 4. contesto e conflitti rilevanti;
 5. componenti `PLANNED_ONLY` e `OBSERVED_ONLY`, senza osservazioni o target
    inventati;
-6. obiettivo `CONTEXT_ONLY` come solo contesto oppure risultato strutturato con
-   lo stesso codice canonico non null, quando validamente prodotto;
-7. dose complessiva, pubblicabile solo con coppia policy/version valida se
+6. `evaluation_coverage.status`, tutti i componenti `UNSUPPORTED` e la
+   capability policy/versione che determina ciascun mancato supporto;
+7. obiettivo `CONTEXT_ONLY` come solo contesto oppure risultato strutturato con
+   lo stesso codice e la stessa coppia policy/versione non null della
+   prescrizione, quando validamente prodotto;
+8. dose complessiva, pubblicabile solo con coppia policy/version valida se
    `EVALUATED`;
-8. indicazioni per la seduta successiva soltanto quando supportate.
+9. indicazioni per la seduta successiva soltanto quando supportate.
 
 Per la dose, il report e il futuro learning dovranno consumare `status` per la
 valutabilità, `direction` per l'esito direzionale e `severity_band` per la
@@ -1727,6 +1886,12 @@ Il report dovrà procedere con missingness isolata, ma non formulare un outcome
 definitivo se una dimensione obbligatoria è non valutabile. Dovrà indicare se
 uno scostamento di intensità è prevalentemente sopra o sotto il target. Una
 interruzione di sicurezza dovrà usare testo neutro.
+
+Con copertura non completa il report conserverà tutti i dettagli valutativi dei
+componenti supportati e mostrerà esplicitamente `overall: null` e
+`dose_aggregate: null`; non descriverà la sessione completa come fallita o
+insufficientemente osservata. Un solo componente opzionale non supportato non
+bloccherà invece overall e dose degli obbligatori supportati.
 
 Il recovery successivo e i trend a 72h/7d dovranno restare interni. Allenamenti
 intervenuti impediranno attribuzioni causali alla singola seduta. Aggiornamenti
@@ -1824,6 +1989,8 @@ gate per:
 - proiezione di feedback o conflitto ambigua, ritirata o non risolvibile;
 - outcome `INSUFFICIENT_DATA`;
 - dati essenziali insufficienti o dose valutata con metadati policy invalidi;
+- copertura non completamente supportata (`PARTIALLY_UNSUPPORTED` o
+  `UNSUPPORTED`);
 - episodio precedente all'effective date.
 
 Versione definitiva ed effective date saranno assegnate soltanto dopo
@@ -1883,6 +2050,8 @@ o feedback approvati nel presente draft.
 - [x] direct ID e separazione matching/aderenza definiti;
 - [x] Brick/multisport e policy dei 15 minuti definiti;
 - [x] metriche e fasce quantitative iniziali definite;
+- [x] ogni quantità in fascia `MAIN`, inclusi i confini, definita come
+      `MET + IN_LINE` e consumo coerente nella dose definito;
 - [x] intensità continuous/intervals e coverage definite;
 - [x] struttura e aggregazione dell'esecuzione definite;
 - [x] precedenza completa dell'aggregazione identity, senza compensazioni,
@@ -1903,6 +2072,13 @@ o feedback approvati nel presente draft.
       degli obiettivi `CONTEXT_ONLY` definiti;
 - [x] codice non null e stabile obbligatorio per gli obiettivi `STRUCTURED` e
       coerenza del riferimento canonico definiti;
+- [x] coppia policy/versione completa obbligatoria per ogni obiettivo
+      `STRUCTURED`, coincidenza nel risultato e null per gli altri obiettivi
+      definite;
+- [x] `requiredness` e `support_status` separati, `STRENGTH` esplicitamente
+      non supportata e riferimenti valutativi null definiti;
+- [x] copertura del supporto, blocco di overall/dose aggregata e casi normativi
+      per componenti obbligatori e opzionali definiti;
 - [x] metadati della matrice obbligatori per ogni dose `EVALUATED`, di
       componente e aggregata, definiti;
 - [x] impatto dei conflitti separato dagli input grezzi e valutato dopo il
@@ -1949,7 +2125,15 @@ o feedback approvati nel presente draft.
       inclusi neutralità di `IN_LINE`, `MIXED`, `UNDETERMINED` e insufficienza;
 - [ ] fixture coprono obiettivi `STRUCTURED` e `CONTEXT_ONLY` senza inferenze
       dal testo libero;
+- [ ] fixture rifiutano ogni obiettivo `STRUCTURED` con coppia policy/versione
+      assente o parziale e risultati con coppia diversa dalla prescrizione;
 - [ ] fixture coprono tutte le fasce quantitative e d'intensità;
+- [ ] fixture coprono `MET + IN_LINE` per ogni valore quantitativo in `MAIN`,
+      inclusi entrambi i confini e il caso RUN al 95%, e `LOWER`/`HIGHER` solo
+      fuori dai confini applicabili;
+- [ ] fixture coprono STRENGTH-only, Brick RUN+STRENGTH obbligatoria,
+      STRENGTH opzionale e tutti gli obbligatori supportati, inclusi null di
+      overall, dose e risultati dei componenti non supportati;
 - [ ] fixture confermano `MET + IN_LINE` con almeno il 90% delle ripetizioni
       obbligatorie rispettate e l'aggregazione identity completa;
 - [ ] persistenza conserva originali, conflitti, correzioni e cancellazioni;
