@@ -186,6 +186,21 @@ Le seguenti decisioni sono **APPROVATE**:
 52. **Lifecycle append-only.** Correzioni/cancellazioni del feedback e
     risoluzioni dei conflitti sono eventi separati e versionati; non modificano
     l'`actual_session` immutabile.
+53. **Copertura dei componenti.** Ogni associazione dichiara `MATCHED`,
+    `PLANNED_ONLY` oppure `OBSERVED_ONLY`. Ogni componente pianificato
+    obbligatorio produce un risultato riferito dagli aggregati anche se non ha
+    una controparte osservata; i componenti soltanto osservati restano evidenza
+    visibile, senza target inventati.
+54. **Precedenza overall.** Le quattro dimensioni obbligatorie usano, senza
+    compensazioni, la precedenza vincolante `INSUFFICIENT_DATA`, `NOT_MET`,
+    `PARTIALLY_MET`, quindi `MET`, secondo la sezione 10.
+55. **Gravità della dose.** Ogni dose valutata, per componente o aggregata,
+    usa sempre la fascia peggiore degli input nell'ordine `MAIN < SECONDARY <
+    OUT_OF_BAND`, indipendentemente dalla direzione.
+56. **Risultato dell'obiettivo.** Un risultato canonico è prodotto soltanto
+    per obiettivi `STRUCTURED`, da criteri prescritti osservabili e policy
+    versionata. Non è una quinta dimensione e nella v1 non modifica overall,
+    dose o learning.
 
 ## 3. Prescrizione autorevole e audit
 
@@ -704,7 +719,9 @@ sufficienti a riconoscere uno scostamento, ma non a determinarne una direzione
 univoca. `severity_band` resterà separata da status e direction; anche
 l'applicability resterà separata dalla valutabilità. Per le sessioni supportate
 nella v1 la dose resterà `REQUIRED`. Riferimenti mancanti o non risolvibili
-produrranno `status: INSUFFICIENT_DATA` e `direction: null`.
+produrranno `status: INSUFFICIENT_DATA`, `direction: null` e
+`severity_band: null`. Ogni dose `EVALUATED` richiederà invece una
+`severity_band` non null, determinata con la regola della sezione 7.
 
 Il seguente `component_evaluation` sarà usato esclusivamente come elemento di
 `execution_evaluation.component_results`; non costituirà un oggetto autorevole
@@ -714,10 +731,11 @@ separato. Il campo `dose` incorporerà senza variazioni il tipo canonico
 ```yaml
 component_evaluation:
   component_result_id: string
-  planned_component_ref:
+  match_status: MATCHED | PLANNED_ONLY | OBSERVED_ONLY
+  planned_component_ref:  # oggetto nullable
     prescription_snapshot_id: string
     component_id: string
-  observed_component_ref:
+  observed_component_ref:  # oggetto nullable
     session_id: string
     component_id: string
   identity:
@@ -755,6 +773,30 @@ component_evaluation:
   missing_fields: []
   warnings: []
 ```
+
+I riferimenti del componente sono nullable con una matrice di validità
+vincolante:
+
+| `match_status` | `planned_component_ref` | `observed_component_ref` |
+|---|---|---|
+| `MATCHED` | obbligatorio | obbligatorio |
+| `PLANNED_ONLY` | obbligatorio | `null` |
+| `OBSERVED_ONLY` | `null` | obbligatorio |
+
+Entrambi i riferimenti null sono sempre invalidi. Ogni componente pianificato
+`REQUIRED` dovrà avere un proprio `component_result_id` e comparire nei
+`component_result_refs` di **tutti** gli aggregati applicabili, anche quando è
+`PLANNED_ONLY`. In tale caso i risultati saranno esattamente: identity
+`NOT_MET`, structure `NOT_MET`, quantity `INSUFFICIENT_DATA`, intensity
+`INSUFFICIENT_DATA` e dose `INSUFFICIENT_DATA` con `direction: null` e
+`severity_band: null`. L'assenza non sarà convertita in quantità zero né in
+una falsa osservazione.
+
+Un componente `OBSERVED_ONLY` resterà evidenza esplicita e visibile nel
+report, senza target pianificati inventati. Potrà influire su identity e
+composition secondo le policy approvate, ma non determinerà la completezza dei
+componenti pianificati obbligatori e non riceverà valutazioni target-based
+fabbricate.
 
 ```yaml
 execution_evaluation:
@@ -854,6 +896,21 @@ execution_evaluation:
   dose_aggregate:
     evaluation: dose_evaluation
     component_dose_result_refs: []
+  objective_result:  # null salvo objective.evaluability: STRUCTURED
+    objective_result_id: string
+    status: MET | PARTIALLY_MET | NOT_MET | INSUFFICIENT_DATA
+    planned_objective_ref:
+      prescription_snapshot_id: string
+      objective_code: string
+    applied_criteria: []
+    planned_evidence_refs: []
+    observed_evidence_refs: []
+    policy_id: string
+    policy_version: string
+    provenance: object
+    computed_at: datetime
+    missing_fields: []
+    warnings: []
   overall:
     status: IN_LINE | PARTIALLY_IN_LINE | DIFFERENT | INSUFFICIENT_DATA
   policy_id: maintain-plan-execution-aggregation
@@ -876,7 +933,18 @@ riferire esclusivamente i `dose_result_id` delle dosi dei componenti, mai i
 dose canonica. La dose aggregata non dovrà selezionare implicitamente una
 proprietà interna di un risultato di componente. Un riferimento mancante,
 duplicato o non risolvibile renderà la dose aggregata
-`status: INSUFFICIENT_DATA` con `direction: null`.
+`status: INSUFFICIENT_DATA` con `direction: null` e `severity_band: null`.
+
+Quando `objective.evaluability` è `STRUCTURED`, `objective_result` sarà un
+risultato canonico persistibile e verrà prodotto esclusivamente applicando i
+criteri osservabili prescritti e la policy versionata riferita dalla
+prescrizione. Criteri obbligatori mancanti o non osservabili produrranno
+`status: INSUFFICIENT_DATA` e saranno elencati in `missing_fields`; il testo
+libero non sarà mai usato per inferire un esito. Per `CONTEXT_ONLY` (e
+`NOT_APPLICABLE`) `objective_result` sarà `null`: il contesto resterà visibile
+nel report ma non costituirà un risultato valutativo. Nella v1 questo risultato
+non è una quinta dimensione obbligatoria e non modifica overall, dose o
+learning; qualsiasi influenza futura richiederà una nuova decisione approvata.
 
 Gli identificatori osservati avranno questi scope canonici: `block_id` sarà
 univoco nel componente osservato, `repetition_id` sarà univoco nel blocco
@@ -1196,9 +1264,11 @@ precedenza vincolante:
 4. altrimenti tutti i risultati identity saranno `MET` e produrranno
    `identity_aggregate: MET`.
 
-Nessun componente potrà compensarne un altro. Componenti mancanti o non
-associabili resteranno `INSUFFICIENT_DATA`; non saranno ammesse inferenze o
-aggregazioni alternative. L'overall dell'esecuzione dovrà consumare
+Nessun componente potrà compensarne un altro. I componenti `PLANNED_ONLY`
+useranno gli esiti normativi della sezione 5.2 e saranno inclusi negli
+aggregati; gli `OBSERVED_ONLY` resteranno evidenza esplicita ma non definiranno
+la completezza dei componenti pianificati obbligatori. Non saranno ammesse
+inferenze o aggregazioni alternative. L'overall dell'esecuzione dovrà consumare
 l'`identity_aggregate` ottenuto esclusivamente con questa regola.
 
 Lo `status` e la `direction` dell'intensità aggregata resteranno separati. Lo
@@ -1241,8 +1311,11 @@ non impediscono il matching. Dopo direct ID o conferma, mismatch e sostituzioni
 non autorizzate restano scostamenti di esecuzione.
 
 L'obiettivo è valutabile solo con criteri strutturati, osservabili e associati
-a policy. Se generico o testuale è `CONTEXT_ONLY`, resta visibile e non entra
-nell'aggregazione.
+a policy versionata, producendo il risultato canonico della sezione 5.2. Se
+generico o testuale è `CONTEXT_ONLY`, resta visibile nel report, non produce un
+risultato valutativo e non entra nell'aggregazione. Criteri strutturati
+obbligatori mancanti o non osservabili producono `INSUFFICIENT_DATA`; non si
+inferisce mai un esito dal testo libero.
 
 Ogni risultato di quantità conserva:
 
@@ -1270,19 +1343,31 @@ Matrice approvata:
 - nessuna superiore e almeno una inferiore → `direction: LOWER`;
 - nessuna inferiore e almeno una superiore → `direction: HIGHER`;
 - una inferiore e l'altra superiore → `direction: MIXED`, senza compensazione;
-- nella stessa direzione la gravità usa la fascia peggiore;
+- per ogni dose `EVALUATED`, `severity_band` usa sempre la fascia peggiore
+  degli input nell'ordine `MAIN < SECONDARY < OUT_OF_BAND`;
 - nella dose mista non si calcola un saldo;
 - una direzione d'intensità `MIXED` produce `direction: MIXED`;
 - una direzione d'intensità `UNDETERMINED` impedisce una direzione definitiva
   della dose e produce `direction: UNDETERMINED` con `status: EVALUATED`;
 - se una dimensione obbligatoria non è valutabile →
-  `status: INSUFFICIENT_DATA` e `direction: null`;
+  `status: INSUFFICIENT_DATA`, `direction: null` e `severity_band: null`;
 - i riferimenti ai risultati quantity/intensity sono sempre conservati.
 
 Per gli intervalli, un'intensità nella fascia principale con `status: MET`
 dovrà avere `direction: IN_LINE` e contribuirà alla matrice della dose come
 `IN_LINE`; le ripetizioni residue non conformi entro quella fascia non
 potranno modificarne la direzione.
+
+La fascia peggiore è vincolante anche con direzioni opposte e `MIXED`, quando
+un input è `IN_LINE` e l'altro deviante, e con direction `UNDETERMINED` purché
+gli input necessari siano valutabili. `MIXED` descrive soltanto la direzione e
+non compensa la gravità. Se una fascia obbligatoria non può essere determinata,
+la dose è `INSUFFICIENT_DATA` con direction e severity entrambe null. Esempi
+normativi: `MAIN + SECONDARY → SECONDARY`; `OUT_OF_BAND + MAIN → OUT_OF_BAND`;
+`LOWER/SECONDARY + HIGHER/OUT_OF_BAND → MIXED/OUT_OF_BAND`;
+`IN_LINE/MAIN + HIGHER/SECONDARY → HIGHER/SECONDARY`. La medesima regola vale
+senza variazioni per dosi di componente e dose aggregata; non introduce nuove
+soglie.
 
 Una durata più breve e intensità maggiore, o viceversa, non sono equivalenti.
 Il meteo non corregge matematicamente la dose. La dose non è una quinta
@@ -1421,14 +1506,19 @@ Le dimensioni obbligatorie sono:
 
 | Condizione | Codice interno | Testo atleta |
 |---|---|---|
-| Tutte rispettate | `IN_LINE` | Seduta eseguita come previsto |
-| Nessuna non rispettata e almeno una parziale | `PARTIALLY_IN_LINE` | Seduta eseguita con alcune variazioni |
-| Almeno una obbligatoria non rispettata | `DIFFERENT` | Seduta diversa da quella programmata |
 | Almeno una obbligatoria non valutabile | `INSUFFICIENT_DATA` | Non ci sono abbastanza dati per una valutazione completa |
+| Altrimenti, almeno una obbligatoria non rispettata | `DIFFERENT` | Seduta diversa da quella programmata |
+| Altrimenti, almeno una obbligatoria parziale | `PARTIALLY_IN_LINE` | Seduta eseguita con alcune variazioni |
+| Altrimenti, tutte rispettate | `IN_LINE` | Seduta eseguita come previsto |
 
-Il meteo non entra nell'aggregazione. La dose riassume quantità e intensità e
-non è contata come quinta dimensione. Non esistono compensazioni implicite. I
-codici tecnici restano interni.
+La tabella è una precedenza vincolante: si applica la prima condizione vera e
+non sono consentite compensazioni o interpretazioni alternative. Se una
+deviazione è accertata ma un'altra dimensione obbligatoria è
+`INSUFFICIENT_DATA`, la deviazione resta nel dettaglio e nel report, mentre
+l'overall resta `INSUFFICIENT_DATA`. Outcome finale, report e futuro learning
+consumeranno la stessa precedenza. Il meteo e l'obiettivo non entrano
+nell'aggregazione. La dose riassume quantità e intensità e non è contata come
+quinta dimensione. I codici tecnici restano interni.
 
 ## 11. Stabilità e outcome finale
 
@@ -1528,8 +1618,11 @@ in linguaggio comprensibile:
 2. seduta eseguita;
 3. confronto delle quattro dimensioni;
 4. contesto e conflitti rilevanti;
-5. dose complessiva;
-6. indicazioni per la seduta successiva soltanto quando supportate.
+5. componenti `PLANNED_ONLY` e `OBSERVED_ONLY`, senza osservazioni o target
+   inventati;
+6. obiettivo `CONTEXT_ONLY` oppure risultato strutturato, quando prodotto;
+7. dose complessiva;
+8. indicazioni per la seduta successiva soltanto quando supportate.
 
 Per la dose, il report e il futuro learning dovranno consumare `status` per la
 valutabilità, `direction` per l'esito direzionale e `severity_band` per la
@@ -1629,6 +1722,7 @@ gate per:
 - versione draft;
 - shadow;
 - ambiguità aperta;
+- mapping non confermato;
 - confirmation mancante o risposta «non lo so»;
 - dato cancellato;
 - proiezione di feedback o conflitto ambigua, ritirata o non risolvibile;
@@ -1696,12 +1790,20 @@ o feedback approvati nel presente draft.
 - [x] struttura e aggregazione dell'esecuzione definite;
 - [x] precedenza completa dell'aggregazione identity, senza compensazioni,
       definita;
+- [x] matrice `MATCHED`/`PLANNED_ONLY`/`OBSERVED_ONLY`, riferimenti nullable e
+      copertura dei componenti pianificati obbligatori definite;
+- [x] precedenza unica dell'overall definita e condivisa da outcome, report e
+      futuro learning;
 - [x] matrice completa della dose definita;
 - [x] unico tipo canonico `dose_evaluation` incorporato nella evaluation
       definito;
 - [x] `dose_result_id` e destinazione di `component_dose_result_refs` definiti;
 - [x] valutabilità, direzione, fascia e applicability della dose mantenute
       semanticamente separate;
+- [x] fascia peggiore obbligatoria per ogni dose valutata, incluse direzioni
+      `MIXED` e `UNDETERMINED`, definita;
+- [x] risultato canonico dell'obiettivo `STRUCTURED` ed esclusione valutativa
+      degli obiettivi `CONTEXT_ONLY` definiti;
 - [x] direzione aggregata dell'intensità per sessioni composte definita con
       precedenza deterministica ed esempi normativi;
 - [x] applicability delle dimensioni obbligatorie definita;
@@ -1729,6 +1831,13 @@ o feedback approvati nel presente draft.
 - [ ] matching e confirmation coperti per zero/una/più candidate e direct ID;
 - [ ] casi Brick/multisport coperti, inclusi componenti mancanti, fuori ordine,
       sovrapposti, interposti e oltre 15 minuti;
+- [ ] fixture coprono `MATCHED`, `PLANNED_ONLY` e `OBSERVED_ONLY`, inclusi i
+      riferimenti null validi e invalidi;
+- [ ] fixture coprono la precedenza overall con deviazioni accertate insieme a
+      dimensioni insufficienti;
+- [ ] fixture coprono la fascia peggiore di dose per componente e aggregata;
+- [ ] fixture coprono obiettivi `STRUCTURED` e `CONTEXT_ONLY` senza inferenze
+      dal testo libero;
 - [ ] fixture coprono tutte le fasce quantitative e d'intensità;
 - [ ] fixture confermano `MET + IN_LINE` con almeno il 90% delle ripetizioni
       obbligatorie rispettate e l'aggregazione identity completa;
