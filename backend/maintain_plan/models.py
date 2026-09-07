@@ -6,13 +6,33 @@ algorithm and the draft contract is not wired into the application runtime.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from datetime import datetime
 from enum import Enum
+from types import MappingProxyType
 from typing import Any, Mapping
 
 
 CONTRACT_VERSION = "maintain-plan/1.0.0-draft"
+
+
+def _deep_freeze(value: Any) -> Any:
+    """Defensively copy contract containers into deeply immutable values."""
+    if isinstance(value, Mapping):
+        return MappingProxyType({_deep_freeze(key): _deep_freeze(item) for key, item in value.items()})
+    if isinstance(value, tuple):
+        return tuple(_deep_freeze(item) for item in value)
+    if isinstance(value, list):
+        return tuple(_deep_freeze(item) for item in value)
+    if isinstance(value, (set, frozenset)):
+        return frozenset(_deep_freeze(item) for item in value)
+    return value
+
+
+class _DeepFrozen:
+    def __post_init__(self) -> None:
+        for field in fields(self):
+            object.__setattr__(self, field.name, _deep_freeze(getattr(self, field.name)))
 
 
 class ValueEnum(str, Enum):
@@ -111,39 +131,39 @@ class OverallStatus(ValueEnum):
 
 
 @dataclass(frozen=True)
-class PolicyRef:
+class PolicyRef(_DeepFrozen):
     policy_id: str | None
     policy_version: str | None
 
 
 @dataclass(frozen=True)
-class PlannedComponentRef:
+class PlannedComponentRef(_DeepFrozen):
     prescription_snapshot_id: str
     component_id: str
 
 
 @dataclass(frozen=True)
-class ObservedComponentRef:
+class ObservedComponentRef(_DeepFrozen):
     session_id: str
     component_id: str
 
 
 @dataclass(frozen=True)
-class PlannedBlockRef:
+class PlannedBlockRef(_DeepFrozen):
     prescription_snapshot_id: str
     component_id: str
     block_id: str
 
 
 @dataclass(frozen=True)
-class ObservedBlockRef:
+class ObservedBlockRef(_DeepFrozen):
     session_id: str
     component_id: str
     block_id: str
 
 
 @dataclass(frozen=True)
-class PlannedRepetitionRef:
+class PlannedRepetitionRef(_DeepFrozen):
     prescription_snapshot_id: str
     component_id: str
     block_id: str
@@ -151,7 +171,7 @@ class PlannedRepetitionRef:
 
 
 @dataclass(frozen=True)
-class ObservedRepetitionRef:
+class ObservedRepetitionRef(_DeepFrozen):
     session_id: str
     component_id: str
     block_id: str
@@ -159,19 +179,19 @@ class ObservedRepetitionRef:
 
 
 @dataclass(frozen=True)
-class PlannedTransitionRef:
+class PlannedTransitionRef(_DeepFrozen):
     prescription_snapshot_id: str
     transition_id: str
 
 
 @dataclass(frozen=True)
-class ObservedTransitionRef:
+class ObservedTransitionRef(_DeepFrozen):
     session_id: str
     transition_id: str
 
 
 @dataclass(frozen=True)
-class Objective:
+class Objective(_DeepFrozen):
     evaluability: ObjectiveEvaluability
     code: str | None
     success_criteria: tuple[Mapping[str, Any], ...] = ()
@@ -180,7 +200,7 @@ class Objective:
 
 
 @dataclass(frozen=True)
-class PlannedComponent:
+class PlannedComponent(_DeepFrozen):
     component_id: str
     component_index: int
     discipline: Discipline
@@ -190,7 +210,7 @@ class PlannedComponent:
 
 
 @dataclass(frozen=True)
-class PrescriptionSnapshot:
+class PrescriptionSnapshot(_DeepFrozen):
     prescription_snapshot_id: str
     workout_id: str
     decision_id: str
@@ -203,14 +223,14 @@ class PrescriptionSnapshot:
 
 
 @dataclass(frozen=True)
-class ObservedBlock:
+class ObservedBlock(_DeepFrozen):
     block_id: str
     block_index: int
     repetitions: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
-class ObservedComponent:
+class ObservedComponent(_DeepFrozen):
     component_id: str
     component_index: int
     discipline: Discipline | None
@@ -219,7 +239,7 @@ class ObservedComponent:
 
 
 @dataclass(frozen=True)
-class ActualSession:
+class ActualSession(_DeepFrozen):
     session_id: str
     start: datetime
     composition: Composition | None
@@ -229,16 +249,16 @@ class ActualSession:
 
 
 @dataclass(frozen=True)
-class ComponentMapping:
+class ComponentMapping(_DeepFrozen):
     planned_component_ref: PlannedComponentRef
-    observed_component_ref: ObservedComponentRef
+    observed_component_ref: ObservedComponentRef | None
     requiredness: Requiredness
     support_status: SupportStatus
     capability_policy: PolicyRef
 
 
 @dataclass(frozen=True)
-class PrescriptionMapping:
+class PrescriptionMapping(_DeepFrozen):
     mapping_id: str
     prescription_snapshot_ref: str
     actual_session_ref: str
@@ -247,7 +267,7 @@ class PrescriptionMapping:
 
 
 @dataclass(frozen=True)
-class MatchingResult:
+class MatchingResult(_DeepFrozen):
     matching_result_id: str
     status: MatchingStatus
     prescription_mapping: PrescriptionMapping | None
@@ -255,7 +275,7 @@ class MatchingResult:
 
 
 @dataclass(frozen=True)
-class DimensionResult:
+class DimensionResult(_DeepFrozen):
     result_id: str
     status: AdherenceStatus
     policy: PolicyRef
@@ -264,7 +284,7 @@ class DimensionResult:
 
 
 @dataclass(frozen=True)
-class DoseEvaluation:
+class DoseEvaluation(_DeepFrozen):
     dose_result_id: str
     status: DoseStatus
     direction: Direction | None
@@ -275,7 +295,7 @@ class DoseEvaluation:
 
 
 @dataclass(frozen=True)
-class ComponentEvaluation:
+class ComponentEvaluation(_DeepFrozen):
     component_result_id: str
     match_status: MatchStatus
     requiredness: Requiredness | None
@@ -292,7 +312,7 @@ class ComponentEvaluation:
 
 
 @dataclass(frozen=True)
-class SessionCompositionResult:
+class SessionCompositionResult(_DeepFrozen):
     composition_result_id: str
     status: AdherenceStatus
     relevant_planned_component_refs: tuple[PlannedComponentRef, ...]
@@ -303,7 +323,7 @@ class SessionCompositionResult:
 
 
 @dataclass(frozen=True)
-class EvaluationCoverage:
+class EvaluationCoverage(_DeepFrozen):
     status: CoverageStatus
     required_supported_component_refs: tuple[PlannedComponentRef, ...]
     required_unsupported_component_refs: tuple[PlannedComponentRef, ...]
@@ -312,7 +332,7 @@ class EvaluationCoverage:
 
 
 @dataclass(frozen=True)
-class DimensionAggregate:
+class DimensionAggregate(_DeepFrozen):
     result_id: str
     status: AdherenceStatus
     component_result_refs: tuple[str, ...]
@@ -321,7 +341,7 @@ class DimensionAggregate:
 
 
 @dataclass(frozen=True)
-class ExecutionEvaluation:
+class ExecutionEvaluation(_DeepFrozen):
     evaluation_id: str
     prescription_mapping_ref: str
     prescription_snapshot_ref: str
