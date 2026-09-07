@@ -57,7 +57,12 @@ def component_result(component_id, observed_id=None, *, requiredness=Requirednes
     )
 
 
-def execution(results, coverage=CoverageStatus.FULLY_SUPPORTED):
+def execution(results, coverage=CoverageStatus.FULLY_SUPPORTED, snapshot=None):
+    snapshot = snapshot or prescription(*(planned(r.planned_component_ref.component_id, index, Discipline.RUN,
+                                                   r.requiredness, r.support_status)
+                                          for index, r in enumerate(results)
+                                          if r.planned_component_ref is not None),
+                                        composition=Composition.SINGLE if len(results) == 1 else Composition.BRICK)
     full = coverage is CoverageStatus.FULLY_SUPPORTED
     aggregates = [DimensionAggregate(f"aggregate-{name}", AdherenceStatus.MET,
                                      tuple(r.component_result_id for r in results if r.requiredness is Requiredness.REQUIRED), AGGREGATION)
@@ -65,9 +70,9 @@ def execution(results, coverage=CoverageStatus.FULLY_SUPPORTED):
     return ExecutionEvaluation(
         "evaluation-1", "mapping-1", "snapshot-1", "session-1", tuple(results), None,
         EvaluationCoverage(coverage,
-                           tuple(r.planned_component_ref for r in results if r.requiredness is Requiredness.REQUIRED and r.support_status is SupportStatus.SUPPORTED),
-                           tuple(r.planned_component_ref for r in results if r.requiredness is Requiredness.REQUIRED and r.support_status is SupportStatus.UNSUPPORTED),
-                           tuple(r.planned_component_ref for r in results if r.requiredness is Requiredness.OPTIONAL and r.support_status is SupportStatus.UNSUPPORTED), CAPABILITY),
+                           tuple(PlannedComponentRef(snapshot.prescription_snapshot_id, c.component_id) for c in snapshot.components if c.requiredness is Requiredness.REQUIRED and c.support_status is SupportStatus.SUPPORTED),
+                           tuple(PlannedComponentRef(snapshot.prescription_snapshot_id, c.component_id) for c in snapshot.components if c.requiredness is Requiredness.REQUIRED and c.support_status is SupportStatus.UNSUPPORTED),
+                           tuple(PlannedComponentRef(snapshot.prescription_snapshot_id, c.component_id) for c in snapshot.components if c.requiredness is Requiredness.OPTIONAL and c.support_status is SupportStatus.UNSUPPORTED), CAPABILITY),
         *(aggregates if full else (None, None, None, None)),
         DoseEvaluation("dose-aggregate", DoseStatus.EVALUATED, Direction.IN_LINE, SeverityBand.MAIN,
                        "aggregate-quantity", "aggregate-intensity", DOSE_POLICY) if full else None,
@@ -79,17 +84,18 @@ def execution(results, coverage=CoverageStatus.FULLY_SUPPORTED):
 RUN_PRESCRIPTION = prescription(planned("run", 0, Discipline.RUN))
 RUN_SESSION = ActualSession("session-1", NOW, Composition.SINGLE, (observed("run", 0, Discipline.RUN, {"seconds": 3600}),))
 RUN_MAPPING = mapping((("run", "run", Requiredness.REQUIRED, SupportStatus.SUPPORTED),))
-RUN_EXECUTION = execution((component_result("run"),))
+RUN_EXECUTION = execution((component_result("run"),), snapshot=RUN_PRESCRIPTION)
 
 BRICK_PRESCRIPTION = prescription(planned("run", 0, Discipline.RUN), planned("bike", 1, Discipline.BIKE), composition=Composition.BRICK)
 BRICK_SESSION = ActualSession("session-1", NOW, Composition.BRICK, (observed("run", 0, Discipline.RUN), observed("bike", 1, Discipline.BIKE)))
 BRICK_MAPPING = mapping((("run", "run", Requiredness.REQUIRED, SupportStatus.SUPPORTED),
                          ("bike", "bike", Requiredness.REQUIRED, SupportStatus.SUPPORTED)))
-BRICK_EXECUTION = execution((component_result("run"), component_result("bike")))
+BRICK_EXECUTION = execution((component_result("run"), component_result("bike")), snapshot=BRICK_PRESCRIPTION)
 
 STRENGTH_REQUIRED = component_result("strength", support=SupportStatus.UNSUPPORTED)
 STRENGTH_PRESCRIPTION = prescription(planned("strength", 0, Discipline.STRENGTH, support=SupportStatus.UNSUPPORTED))
-STRENGTH_EXECUTION = execution((STRENGTH_REQUIRED,), CoverageStatus.UNSUPPORTED)
+STRENGTH_MAPPING = mapping((("strength", "strength", Requiredness.REQUIRED, SupportStatus.UNSUPPORTED),))
+STRENGTH_EXECUTION = execution((STRENGTH_REQUIRED,), CoverageStatus.UNSUPPORTED, STRENGTH_PRESCRIPTION)
 OPTIONAL_PLANNED_ONLY = component_result("swim", requiredness=Requiredness.OPTIONAL, match=MatchStatus.PLANNED_ONLY)
 OBSERVED_ONLY_EXTRA = component_result("extra", match=MatchStatus.OBSERVED_ONLY)
 PARTIAL_POLICY = PolicyRef("policy", None)
