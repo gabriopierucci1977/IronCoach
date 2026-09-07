@@ -13,6 +13,91 @@ def test_contracts_are_immutable():
     assert dataclass_is_frozen(RUN_SESSION)
 
 
+def test_continuous_run_preserves_complete_quantity_and_intensity_targets():
+    component = RUN_PRESCRIPTION.components[0]
+    assert component.quantity.target == PrescribedTarget(60)
+    assert component.intensity.target == PrescribedTarget("Z2")
+    assert component.quantity.primary_metric is QuantityMetric.ACTIVE_DURATION
+    assert validate_prescription(RUN_PRESCRIPTION) == ()
+
+
+def test_structured_workout_preserves_blocks_repetitions_and_recovery():
+    block = INTERVAL_PRESCRIPTION.components[0].structure.blocks[0]
+    assert block.planned_repetitions == 6
+    assert block.quantity_target == PrescribedTarget(400)
+    assert block.recovery.target == PrescribedTarget(90)
+    assert validate_prescription(INTERVAL_PRESCRIPTION) == ()
+
+
+def test_brick_targets_are_owned_by_and_distinct_for_each_component():
+    run, bike = BRICK_PRESCRIPTION.components
+    assert run.quantity.target == PrescribedTarget(30)
+    assert bike.quantity.target == PrescribedTarget(75)
+    assert run.intensity.target != bike.intensity.target
+
+
+def test_environment_and_mode_are_preserved_in_snapshot():
+    component = planned("indoor", 0, Discipline.RUN,
+                        environment=Environment.INDOOR, mode=Mode.TREADMILL)
+    snapshot = prescription(component)
+    assert snapshot.components[0].environment is Environment.INDOOR
+    assert snapshot.components[0].mode is Mode.TREADMILL
+
+
+def test_substitution_contract_is_preserved_and_immutable():
+    substitutions = [AllowedSubstitution(Discipline.RUN, Environment.INDOOR,
+                                         Mode.TREADMILL, IDENTITY_POLICY)]
+    component = planned("run", 0, Discipline.RUN, substitutions=substitutions)
+    substitutions.append(AllowedSubstitution(Discipline.BIKE, None, None, IDENTITY_POLICY))
+    assert len(component.allowed_substitutions) == 1
+    with pytest.raises(FrozenInstanceError):
+        component.allowed_substitutions[0].mode = Mode.ROAD
+
+
+def test_target_change_keeps_otherwise_equal_snapshots_distinct():
+    first = RUN_PRESCRIPTION
+    changed_component = replace(first.components[0], quantity=replace(
+        first.components[0].quantity, target=PrescribedTarget(61)))
+    second = replace(first, components=(changed_component,))
+    assert first != second
+
+
+@pytest.mark.parametrize("component", [
+    replace(RUN_PRESCRIPTION.components[0], quantity=replace(
+        RUN_PRESCRIPTION.components[0].quantity, target=None)),
+    replace(RUN_PRESCRIPTION.components[0], intensity=replace(
+        RUN_PRESCRIPTION.components[0].intensity, target=PrescribedTarget(None))),
+    replace(RUN_PRESCRIPTION.components[0], structure=replace(
+        RUN_PRESCRIPTION.components[0].structure, blocks=())),
+])
+def test_missing_or_incoherent_required_target_is_rejected(component):
+    assert "target" in " ".join(validate_prescription(prescription(component))) or \
+           "structure" in " ".join(validate_prescription(prescription(component)))
+
+
+def test_partial_target_policy_is_rejected():
+    component = replace(RUN_PRESCRIPTION.components[0], quantity=replace(
+        RUN_PRESCRIPTION.components[0].quantity, policy=PARTIAL_POLICY))
+    assert "both set or both null" in " ".join(validate_prescription(prescription(component)))
+
+
+def test_mutating_original_target_containers_does_not_change_snapshot():
+    constraints = ["first"]
+    block = replace(INTERVAL_BLOCK, order_constraints=constraints)
+    snapshot = prescription(planned("run", 0, Discipline.RUN,
+                                    session_type=SessionType.INTERVALS, blocks=[block]))
+    constraints.append("changed")
+    assert snapshot.components[0].structure.blocks[0].order_constraints == ("first",)
+
+
+def test_nested_prescription_targets_cannot_be_mutated_through_model():
+    component = INTERVAL_PRESCRIPTION.components[0]
+    with pytest.raises(FrozenInstanceError):
+        component.quantity.target.value = 0
+    with pytest.raises(AttributeError):
+        component.structure.blocks.append(INTERVAL_BLOCK)
+
+
 def test_valid_single_run_and_brick_fixtures():
     assert validate_prescription(RUN_PRESCRIPTION) == ()
     assert validate_actual_session(RUN_SESSION) == ()
