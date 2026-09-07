@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Callable, Iterable
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 
 @dataclass(frozen=True)
@@ -95,6 +95,129 @@ MIGRATIONS = (Migration(
     1,
     hashlib.sha256(_MIGRATION_1_SQL.encode("utf-8")).hexdigest(),
     _migration_1,
+),)
+
+
+_MIGRATION_2_SQL = """
+        CREATE TABLE maintain_plan_feedback_logs (
+            feedback_log_id TEXT PRIMARY KEY,
+            session_id TEXT NOT NULL REFERENCES maintain_plan_actual_sessions(session_id),
+            feedback_id TEXT NOT NULL,
+            schema_version TEXT NOT NULL,
+            payload_schema_version TEXT NOT NULL,
+            payload_json TEXT NOT NULL,
+            UNIQUE (feedback_log_id, session_id, feedback_id)
+        );
+        CREATE INDEX idx_mp_feedback_logs_session ON maintain_plan_feedback_logs(session_id);
+
+        CREATE TABLE maintain_plan_feedback_events (
+            feedback_event_id TEXT PRIMARY KEY,
+            feedback_log_id TEXT NOT NULL,
+            session_id TEXT NOT NULL,
+            feedback_id TEXT NOT NULL,
+            event_sequence INTEGER NOT NULL CHECK (event_sequence > 0),
+            event_type TEXT NOT NULL CHECK (event_type IN ('CAPTURED', 'CORRECTED', 'DELETED')),
+            previous_event_id TEXT REFERENCES maintain_plan_feedback_events(feedback_event_id),
+            payload_schema_version TEXT NOT NULL,
+            payload_json TEXT NOT NULL,
+            UNIQUE (feedback_log_id, event_sequence),
+            FOREIGN KEY (feedback_log_id, session_id, feedback_id)
+                REFERENCES maintain_plan_feedback_logs(feedback_log_id, session_id, feedback_id)
+        );
+        CREATE INDEX idx_mp_feedback_events_session ON maintain_plan_feedback_events(session_id);
+        CREATE INDEX idx_mp_feedback_events_log ON maintain_plan_feedback_events(feedback_log_id);
+
+        CREATE TABLE maintain_plan_feedback_projections (
+            projection_id TEXT PRIMARY KEY,
+            projection_version TEXT NOT NULL,
+            feedback_log_id TEXT NOT NULL,
+            session_id TEXT NOT NULL,
+            feedback_id TEXT NOT NULL,
+            status TEXT NOT NULL CHECK (status IN ('ACTIVE', 'DELETED', 'INVALID', 'INSUFFICIENT_DATA')),
+            payload_schema_version TEXT NOT NULL,
+            payload_json TEXT NOT NULL,
+            UNIQUE (feedback_log_id, projection_version),
+            FOREIGN KEY (feedback_log_id, session_id, feedback_id)
+                REFERENCES maintain_plan_feedback_logs(feedback_log_id, session_id, feedback_id)
+        );
+        CREATE INDEX idx_mp_feedback_projections_session ON maintain_plan_feedback_projections(session_id);
+        CREATE INDEX idx_mp_feedback_projections_status ON maintain_plan_feedback_projections(status);
+        CREATE INDEX idx_mp_feedback_projections_version ON maintain_plan_feedback_projections(feedback_log_id, projection_version);
+
+        CREATE TABLE maintain_plan_source_conflicts (
+            conflict_id TEXT NOT NULL,
+            session_id TEXT NOT NULL REFERENCES maintain_plan_actual_sessions(session_id),
+            schema_version TEXT NOT NULL,
+            payload_schema_version TEXT NOT NULL,
+            payload_json TEXT NOT NULL,
+            PRIMARY KEY (session_id, conflict_id)
+        );
+        CREATE INDEX idx_mp_source_conflicts_conflict ON maintain_plan_source_conflicts(conflict_id);
+        CREATE INDEX idx_mp_source_conflicts_session ON maintain_plan_source_conflicts(session_id);
+
+        CREATE TABLE maintain_plan_resolution_logs (
+            resolution_log_id TEXT PRIMARY KEY,
+            conflict_id TEXT NOT NULL,
+            session_id TEXT NOT NULL,
+            schema_version TEXT NOT NULL,
+            payload_schema_version TEXT NOT NULL,
+            payload_json TEXT NOT NULL,
+            UNIQUE (resolution_log_id, conflict_id, session_id),
+            FOREIGN KEY (session_id, conflict_id)
+                REFERENCES maintain_plan_source_conflicts(session_id, conflict_id)
+        );
+        CREATE INDEX idx_mp_resolution_logs_conflict ON maintain_plan_resolution_logs(conflict_id);
+        CREATE INDEX idx_mp_resolution_logs_session ON maintain_plan_resolution_logs(session_id);
+
+        CREATE TABLE maintain_plan_resolution_events (
+            event_id TEXT PRIMARY KEY,
+            resolution_log_id TEXT NOT NULL,
+            conflict_id TEXT NOT NULL,
+            session_id TEXT NOT NULL,
+            event_sequence INTEGER NOT NULL CHECK (event_sequence > 0),
+            event_type TEXT NOT NULL CHECK (event_type IN ('RESOLVED', 'UNKNOWN_ANSWER', 'RESOLUTION_WITHDRAWN')),
+            previous_event_id TEXT REFERENCES maintain_plan_resolution_events(event_id),
+            payload_schema_version TEXT NOT NULL,
+            payload_json TEXT NOT NULL,
+            UNIQUE (resolution_log_id, event_sequence),
+            FOREIGN KEY (resolution_log_id, conflict_id, session_id)
+                REFERENCES maintain_plan_resolution_logs(resolution_log_id, conflict_id, session_id)
+        );
+        CREATE INDEX idx_mp_resolution_events_session ON maintain_plan_resolution_events(session_id);
+        CREATE INDEX idx_mp_resolution_events_conflict ON maintain_plan_resolution_events(conflict_id);
+        CREATE INDEX idx_mp_resolution_events_log ON maintain_plan_resolution_events(resolution_log_id);
+
+        CREATE TABLE maintain_plan_source_conflict_projections (
+            projection_id TEXT PRIMARY KEY,
+            projection_version TEXT NOT NULL,
+            resolution_log_id TEXT NOT NULL,
+            conflict_id TEXT NOT NULL,
+            session_id TEXT NOT NULL,
+            status TEXT NOT NULL CHECK (status IN ('UNRESOLVED', 'RESOLVED', 'DONT_KNOW', 'INVALID')),
+            projection_hash TEXT NOT NULL,
+            payload_schema_version TEXT NOT NULL,
+            payload_json TEXT NOT NULL,
+            UNIQUE (resolution_log_id, projection_version),
+            FOREIGN KEY (resolution_log_id, conflict_id, session_id)
+                REFERENCES maintain_plan_resolution_logs(resolution_log_id, conflict_id, session_id)
+        );
+        CREATE INDEX idx_mp_conflict_projections_session ON maintain_plan_source_conflict_projections(session_id);
+        CREATE INDEX idx_mp_conflict_projections_conflict ON maintain_plan_source_conflict_projections(conflict_id);
+        CREATE INDEX idx_mp_conflict_projections_status ON maintain_plan_source_conflict_projections(status);
+        CREATE INDEX idx_mp_conflict_projections_version ON maintain_plan_source_conflict_projections(resolution_log_id, projection_version);
+        """
+
+
+def _migration_2(connection: sqlite3.Connection) -> None:
+    for statement in _MIGRATION_2_SQL.split(";"):
+        if statement.strip():
+            connection.execute(statement)
+
+
+MIGRATIONS = MIGRATIONS + (Migration(
+    2,
+    hashlib.sha256(_MIGRATION_2_SQL.encode("utf-8")).hexdigest(),
+    _migration_2,
 ),)
 
 
