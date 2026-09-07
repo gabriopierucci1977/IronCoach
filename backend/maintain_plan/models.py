@@ -505,6 +505,169 @@ class ActualSession(_DeepFrozen):
     warnings: tuple[str, ...] = ()
 
 
+# Append-only feedback and source-conflict lifecycle contracts.  Identifiers,
+# versions and timestamps deliberately have no generated defaults.
+class FeedbackEventType(ValueEnum):
+    CAPTURED = "CAPTURED"
+    CORRECTED = "CORRECTED"
+    DELETED = "DELETED"
+
+
+class FeedbackProjectionStatus(ValueEnum):
+    ACTIVE = "ACTIVE"
+    DELETED = "DELETED"
+    INVALID = "INVALID"
+    INSUFFICIENT_DATA = "INSUFFICIENT_DATA"
+
+
+class ConflictResolutionEventType(ValueEnum):
+    RESOLVED = "RESOLVED"
+    UNKNOWN_ANSWER = "UNKNOWN_ANSWER"
+    RESOLUTION_WITHDRAWN = "RESOLUTION_WITHDRAWN"
+
+
+class SourceConflictProjectionStatus(ValueEnum):
+    UNRESOLVED = "UNRESOLVED"
+    RESOLVED = "RESOLVED"
+    DONT_KNOW = "DONT_KNOW"
+    INVALID = "INVALID"
+
+
+@dataclass(frozen=True)
+class ActualSessionRef(_DeepFrozen):
+    session_id: str
+
+
+@dataclass(frozen=True)
+class FeedbackRef(_DeepFrozen):
+    session_id: str
+    feedback_id: str
+
+
+@dataclass(frozen=True)
+class FeedbackLogRef(_DeepFrozen):
+    feedback_log_id: str
+    session_id: str
+    feedback_id: str
+
+
+@dataclass(frozen=True)
+class FeedbackEventLog(_DeepFrozen):
+    feedback_log_id: str
+    schema_version: str
+    feedback_ref: FeedbackRef
+    actual_session_ref: ActualSessionRef
+
+
+@dataclass(frozen=True)
+class FeedbackEvent(_DeepFrozen):
+    feedback_event_id: str
+    feedback_log_ref: FeedbackLogRef
+    feedback_ref: FeedbackRef
+    actual_session_ref: ActualSessionRef
+    event_type: FeedbackEventType
+    baseline_schema_version: str
+    baseline_payload_hash: str
+    event_sequence: int
+    stream_version: int
+    occurred_at: datetime
+    actor: str
+    provenance: Mapping[str, Any]
+    schema_version: str
+    previous_event_id: str | None
+    superseded_event_ref: str | None
+    corrected_payload: Mapping[str, Any] | None
+    deletion_reason_or_ref: str | None
+    audit_metadata: Mapping[str, Any]
+    missing_fields: tuple[str, ...] = ()
+    warnings: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class FeedbackProjection(_DeepFrozen):
+    projection_id: str
+    projection_version: str
+    feedback_log_ref: FeedbackLogRef
+    feedback_ref: FeedbackRef
+    actual_session_ref: ActualSessionRef
+    captured_event_id: str | None
+    last_applied_event_id: str | None
+    last_applied_sequence: int | None
+    baseline_schema_version: str
+    baseline_payload_hash: str
+    status: FeedbackProjectionStatus
+    projected_payload: Mapping[str, Any] | None
+    provenance: Mapping[str, Any]
+    missing_fields: tuple[str, ...]
+    warnings: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class SourceConflictRef(_DeepFrozen):
+    session_id: str
+    conflict_id: str
+
+
+@dataclass(frozen=True)
+class ResolutionLogRef(_DeepFrozen):
+    resolution_log_id: str
+    source_conflict_id: str
+    session_id: str
+
+
+@dataclass(frozen=True)
+class SourceConflictResolutionLog(_DeepFrozen):
+    resolution_log_id: str
+    schema_version: str
+    conflict_ref: SourceConflictRef
+    actual_session_ref: ActualSessionRef
+
+
+@dataclass(frozen=True)
+class SourceConflictResolutionEvent(_DeepFrozen):
+    event_id: str
+    resolution_log_ref: ResolutionLogRef
+    resolution_log_id: str
+    source_conflict_id: str
+    actual_session_ref: ActualSessionRef
+    event_sequence: int
+    event_type: ConflictResolutionEventType
+    selected_value: Any | None
+    selected_source: str | None
+    unknown_answer: bool
+    actor: str
+    occurred_at: datetime
+    provenance: Mapping[str, Any]
+    schema_version: str
+    previous_event_id: str | None
+    withdrawn_event_ref: str | None
+    audit_metadata: Mapping[str, Any]
+
+
+@dataclass(frozen=True)
+class SourceConflictProjection(_DeepFrozen):
+    projection_id: str
+    projection_version: str
+    projection_hash: str
+    projection_hash_algorithm: str
+    projection_serialization_policy_id: str
+    projection_serialization_policy_version: str
+    source_conflict_id: str
+    actual_session_ref: ActualSessionRef
+    resolution_log_ref: ResolutionLogRef
+    through_event_id: str | None
+    through_event_sequence: int | None
+    status: SourceConflictProjectionStatus
+    selected_value: Any | None
+    selected_source: str | None
+    policy_id: str
+    policy_version: str
+    provenance: Mapping[str, Any]
+    computed_at: datetime
+    missing_fields: tuple[str, ...]
+    warnings: tuple[str, ...]
+
+
 @dataclass(frozen=True)
 class ComponentMapping(_DeepFrozen):
     planned_component_ref: PlannedComponentRef
