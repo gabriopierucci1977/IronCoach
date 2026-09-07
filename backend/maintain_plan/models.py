@@ -403,10 +403,39 @@ class PrescriptionSnapshot(_DeepFrozen):
 
 
 @dataclass(frozen=True)
+class SourceActivity(_DeepFrozen):
+    source: str
+    original_activity_id: str
+    raw_ids: Mapping[str, Any]
+    provenance: Mapping[str, Any]
+
+
+@dataclass(frozen=True)
+class ObservedRepetition(_DeepFrozen):
+    repetition_id: str
+    repetition_index: int
+    block_ref: str
+    quantity_observation: Mapping[str, Any] | None = None
+    intensity_observation: Mapping[str, Any] | None = None
+    valid_coverage: Mapping[str, Any] | None = None
+    time_in_target: Mapping[str, Any] | None = None
+    source_segment_refs: tuple[str, ...] = ()
+    provenance: Mapping[str, Any] = MappingProxyType({})
+    missing_fields: tuple[str, ...] = ()
+    warnings: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class ObservedBlock(_DeepFrozen):
     block_id: str
     block_index: int
-    repetitions: tuple[str, ...] = ()
+    repetitions: tuple[ObservedRepetition, ...] = ()
+    block_type: BlockType = BlockType.OTHER
+    quantity_observation: Mapping[str, Any] | None = None
+    intensity_observation: Mapping[str, Any] | None = None
+    provenance: Mapping[str, Any] = MappingProxyType({})
+    missing_fields: tuple[str, ...] = ()
+    warnings: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -416,6 +445,42 @@ class ObservedComponent(_DeepFrozen):
     discipline: Discipline | None
     blocks: tuple[ObservedBlock, ...] = ()
     quantity_observation: Mapping[str, Any] | None = None
+    environment: Environment | None = None
+    mode: Mode | None = None
+    source_activity_refs: tuple[str, ...] = ()
+    source_segment_refs: tuple[str, ...] = ()
+    start: datetime | None = None
+    end: datetime | None = None
+    quantity_primary_metric: str | None = None
+    quantity_unit: str | None = None
+    secondary_metrics: tuple[Mapping[str, Any], ...] = ()
+    intensity_methods: tuple[str, ...] = ()
+    intensity_observations: Mapping[str, Any] | None = None
+    temporal_coverage: Mapping[str, Any] | None = None
+    provenance: Mapping[str, Any] = MappingProxyType({})
+    missing_fields: tuple[str, ...] = ()
+    warnings: tuple[str, ...] = ()
+    data_quality: Mapping[str, Any] = MappingProxyType({})
+
+
+@dataclass(frozen=True)
+class ObservedTransition(_DeepFrozen):
+    transition_id: str
+    from_component_ref: str
+    to_component_ref: str
+    start: datetime | None = None
+    end: datetime | None = None
+    duration_minutes: int | float | None = None
+    provenance: Mapping[str, Any] = MappingProxyType({})
+    missing_fields: tuple[str, ...] = ()
+    warnings: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class CompletionObservation(_DeepFrozen):
+    status: str | None = None
+    interruption_reason: str | None = None
+    safety_interruption: bool | None = None
 
 
 @dataclass(frozen=True)
@@ -426,6 +491,18 @@ class ActualSession(_DeepFrozen):
     components: tuple[ObservedComponent, ...]
     transition_ids: tuple[str, ...] = ()
     contract_version: str = CONTRACT_VERSION
+    source_activities: tuple[SourceActivity, ...] = ()
+    end: datetime | None = None
+    timezone: str = "UTC"
+    transitions: tuple[ObservedTransition, ...] = ()
+    completion: CompletionObservation = CompletionObservation()
+    athlete_feedback: Mapping[str, Any] | None = None
+    weather_context: tuple[Mapping[str, Any], ...] = ()
+    source_conflicts: tuple[Mapping[str, Any], ...] = ()
+    data_quality: Mapping[str, Any] = MappingProxyType({})
+    provenance: Mapping[str, Any] = MappingProxyType({})
+    missing_fields: tuple[str, ...] = ()
+    warnings: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
