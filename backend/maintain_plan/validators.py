@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections import Counter
+from datetime import datetime
 from dataclasses import fields, is_dataclass
 from typing import Iterable
 
@@ -12,6 +13,7 @@ from .models import (
     Applicability, MatchingStatus, PolicyRef, PrescriptionMapping, PrescriptionSnapshot,
     PlannedComponent, PlannedComponentRef, PrescribedTarget, QuantityMetric,
     Requiredness, SessionType, SupportStatus,
+    CONTRACT_VERSION,
 )
 
 
@@ -27,6 +29,8 @@ def validate_policy_ref(policy: PolicyRef, *, required: bool = False) -> tuple[s
         return ("policy_id and policy_version must be both set or both null",)
     if required and not complete:
         return ("policy is required",)
+    if complete and (not policy.policy_id or not policy.policy_version):
+        return ("policy_id and policy_version must be non-empty when set",)
     return ()
 
 
@@ -42,6 +46,10 @@ def _validate_target(target: PrescribedTarget | None, name: str, *, required: bo
             target.lower_bound > target.upper_bound):
         errors.append(f"{name} target range bounds are incoherent")
     return errors
+
+
+def _is_timezone_aware(value: datetime) -> bool:
+    return value.tzinfo is not None and value.utcoffset() is not None
 
 
 def _validate_planned_component(component: PlannedComponent) -> list[str]:
@@ -121,7 +129,25 @@ def _validate_planned_component(component: PlannedComponent) -> list[str]:
 
 
 def validate_prescription(snapshot: PrescriptionSnapshot) -> tuple[str, ...]:
-    errors = list(validate_policy_ref(snapshot.matching_policy, required=True))
+    errors: list[str] = []
+    for value, name in (
+        (snapshot.prescription_snapshot_id, "prescription_snapshot_id"),
+        (snapshot.workout_id, "workout_id"),
+        (snapshot.decision_id, "decision_id"),
+    ):
+        if not value:
+            errors.append(f"{name} is required")
+    if snapshot.contract_version != CONTRACT_VERSION:
+        errors.append("prescription contract_version is unsupported")
+    for value, name in (
+        (snapshot.communicated_at, "communicated_at"),
+        (snapshot.scheduled_window.start, "scheduled window start"),
+        (snapshot.scheduled_window.end, "scheduled window end"),
+        (snapshot.provenance.captured_at, "provenance captured_at"),
+    ):
+        if not _is_timezone_aware(value):
+            errors.append(f"{name} must be timezone-aware")
+    errors.extend(validate_policy_ref(snapshot.matching_policy, required=True))
     errors.extend(validate_policy_ref(snapshot.brick_policy,
                                       required=snapshot.composition is Composition.BRICK))
     if snapshot.composition is not Composition.BRICK and snapshot.brick_policy.policy_id is not None:
