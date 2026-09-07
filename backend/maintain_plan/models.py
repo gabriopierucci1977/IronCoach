@@ -62,6 +62,66 @@ class SupportStatus(ValueEnum):
     UNSUPPORTED = "UNSUPPORTED"
 
 
+class Environment(ValueEnum):
+    INDOOR = "INDOOR"
+    OUTDOOR = "OUTDOOR"
+
+
+class Mode(ValueEnum):
+    ROAD = "ROAD"
+    TRAIL = "TRAIL"
+    TRACK = "TRACK"
+    TREADMILL = "TREADMILL"
+    GRAVEL = "GRAVEL"
+    MOUNTAIN_BIKE = "MOUNTAIN_BIKE"
+    INDOOR_TRAINER = "INDOOR_TRAINER"
+    POOL = "POOL"
+    OPEN_WATER = "OPEN_WATER"
+
+
+class Applicability(ValueEnum):
+    REQUIRED = "REQUIRED"
+    NOT_APPLICABLE = "NOT_APPLICABLE"
+
+
+class QuantityMetric(ValueEnum):
+    ACTIVE_DURATION = "active_duration"
+    DISTANCE = "distance"
+    SETS_REPETITIONS = "sets_repetitions"
+    PER_SEGMENT = "per_segment"
+
+
+class IntensityMethod(ValueEnum):
+    HR = "HR"
+    POWER = "POWER"
+    PACE_SPEED = "PACE_SPEED"
+    RPE = "RPE"
+
+
+class SessionType(ValueEnum):
+    CONTINUOUS = "continuous"
+    INTERVALS = "intervals"
+    BRICK = "brick"
+    OTHER = "other"
+
+
+class BlockType(ValueEnum):
+    WARMUP = "WARMUP"
+    MAIN_SET = "MAIN_SET"
+    WORK = "WORK"
+    RECOVERY = "RECOVERY"
+    COOLDOWN = "COOLDOWN"
+    OTHER = "OTHER"
+
+
+class EvaluationWindow(ValueEnum):
+    WHOLE_BLOCK = "WHOLE_BLOCK"
+    FINAL_PART = "FINAL_PART"
+    AVERAGE = "AVERAGE"
+    PEAK = "PEAK"
+    TIME_IN_TARGET = "TIME_IN_TARGET"
+
+
 class MatchStatus(ValueEnum):
     MATCHED = "MATCHED"
     PLANNED_ONLY = "PLANNED_ONLY"
@@ -200,13 +260,128 @@ class Objective(_DeepFrozen):
 
 
 @dataclass(frozen=True)
+class PrescribedTarget(_DeepFrozen):
+    """An authored value or inclusive range, retained without conversion."""
+    value: int | float | str | None
+    lower_bound: int | float | None = None
+    upper_bound: int | float | None = None
+
+
+@dataclass(frozen=True)
+class QuantityContract(_DeepFrozen):
+    applicability: Applicability
+    primary_metric: QuantityMetric
+    target: PrescribedTarget | None
+    unit: str
+    secondary_metrics: tuple[QuantityMetric, ...]
+    policy: PolicyRef
+    quantity_band_policy_ref: PolicyRef
+
+
+@dataclass(frozen=True)
+class IntensityContract(_DeepFrozen):
+    applicability: Applicability
+    primary_method: IntensityMethod
+    target: PrescribedTarget | None
+    unit: str
+    allowed_secondary_methods: tuple[IntensityMethod, ...]
+    policy: PolicyRef
+
+
+@dataclass(frozen=True)
+class RecoveryContract(_DeepFrozen):
+    applicability: Applicability
+    target: PrescribedTarget | None
+
+
+@dataclass(frozen=True)
+class PlannedBlock(_DeepFrozen):
+    block_id: str
+    block_index: int
+    block_type: BlockType
+    requiredness: Requiredness
+    quantity_target: PrescribedTarget | None
+    intensity_target: PrescribedTarget | None
+    method: IntensityMethod | None
+    unit: str | None
+    target_range: PrescribedTarget | None
+    evaluation_window: EvaluationWindow | None
+    coverage_policy: PolicyRef
+    planned_repetitions: int | None
+    recovery: RecoveryContract
+    order_constraints: tuple[str, ...]
+    policy: PolicyRef
+
+
+@dataclass(frozen=True)
+class StructureContract(_DeepFrozen):
+    applicability: Applicability
+    session_type: SessionType
+    policy: PolicyRef
+    blocks: tuple[PlannedBlock, ...]
+
+
+@dataclass(frozen=True)
+class DoseContract(_DeepFrozen):
+    applicability: Applicability
+    policy: PolicyRef
+    quantity_dimension_ref: str
+    intensity_dimension_ref: str
+
+
+@dataclass(frozen=True)
+class AllowedSubstitution(_DeepFrozen):
+    discipline: Discipline
+    environment: Environment | None
+    mode: Mode | None
+    policy: PolicyRef
+
+
+@dataclass(frozen=True)
+class ScheduledWindow(_DeepFrozen):
+    start: datetime
+    end: datetime
+    timezone: str
+    derived_from_date_only: bool
+
+
+@dataclass(frozen=True)
+class PlannedTransition(_DeepFrozen):
+    transition_id: str
+    from_component_id: str
+    to_component_id: str
+    policy: PolicyRef
+    applicable_limit_minutes: int | float
+
+
+@dataclass(frozen=True)
+class Provenance(_DeepFrozen):
+    source: str
+    captured_at: datetime
+
+
+@dataclass(frozen=True)
+class PrescriptionAudit(_DeepFrozen):
+    original_plan_snapshot_id: str | None
+
+
+@dataclass(frozen=True)
 class PlannedComponent(_DeepFrozen):
     component_id: str
     component_index: int
     discipline: Discipline
+    environment: Environment | None
+    mode: Mode | None
     requiredness: Requiredness
     support_status: SupportStatus
     capability_policy: PolicyRef
+    applicability: Applicability
+    allowed_substitutions: tuple[AllowedSubstitution, ...]
+    identity_policy: PolicyRef
+    quantity: QuantityContract
+    intensity: IntensityContract
+    structure: StructureContract
+    dose: DoseContract
 
 
 @dataclass(frozen=True)
@@ -215,10 +390,15 @@ class PrescriptionSnapshot(_DeepFrozen):
     workout_id: str
     decision_id: str
     communicated_at: datetime
+    scheduled_window: ScheduledWindow
     composition: Composition
     components: tuple[PlannedComponent, ...]
+    transitions: tuple[PlannedTransition, ...]
     objective: Objective
     matching_policy: PolicyRef
+    brick_policy: PolicyRef
+    provenance: Provenance
+    audit: PrescriptionAudit
     contract_version: str = CONTRACT_VERSION
 
 

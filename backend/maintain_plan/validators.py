@@ -9,8 +9,9 @@ from typing import Iterable
 from .models import (
     ActualSession, ComponentEvaluation, Composition, CoverageStatus, DoseEvaluation,
     DoseStatus, EvaluationApplicability, ExecutionEvaluation, MatchStatus,
-    MatchingStatus, PolicyRef, PrescriptionMapping, PrescriptionSnapshot,
-    PlannedComponentRef, Requiredness, SupportStatus,
+    Applicability, MatchingStatus, PolicyRef, PrescriptionMapping, PrescriptionSnapshot,
+    PlannedComponent, PlannedComponentRef, PrescribedTarget, QuantityMetric,
+    Requiredness, SessionType, SupportStatus,
 )
 
 
@@ -29,8 +30,108 @@ def validate_policy_ref(policy: PolicyRef, *, required: bool = False) -> tuple[s
     return ()
 
 
+def _validate_target(target: PrescribedTarget | None, name: str, *, required: bool) -> list[str]:
+    if target is None:
+        return [f"{name} target is required"] if required else []
+    errors: list[str] = []
+    if target.value is None and target.lower_bound is None and target.upper_bound is None:
+        errors.append(f"{name} target must contain an authored value or bound")
+    if ((target.lower_bound is None) != (target.upper_bound is None)):
+        errors.append(f"{name} target range must contain both bounds")
+    if (target.lower_bound is not None and target.upper_bound is not None and
+            target.lower_bound > target.upper_bound):
+        errors.append(f"{name} target range bounds are incoherent")
+    return errors
+
+
+def _validate_planned_component(component: PlannedComponent) -> list[str]:
+    errors = list(validate_policy_ref(component.capability_policy, required=True))
+    errors.extend(validate_policy_ref(component.identity_policy, required=True))
+    if component.applicability is not Applicability.REQUIRED:
+        errors.append("planned component applicability must be REQUIRED")
+    for substitution in component.allowed_substitutions:
+        errors.extend(validate_policy_ref(substitution.policy, required=True))
+
+    quantity = component.quantity
+    if quantity.applicability is not Applicability.REQUIRED:
+        errors.append("quantity applicability must be REQUIRED")
+    errors.extend(_validate_target(quantity.target, "quantity", required=True))
+    if not quantity.unit:
+        errors.append("quantity unit is required")
+    errors.extend(validate_policy_ref(quantity.policy, required=True))
+    distance_policy_required = (quantity.primary_metric is QuantityMetric.DISTANCE and
+                                component.structure.session_type is SessionType.CONTINUOUS)
+    errors.extend(validate_policy_ref(quantity.quantity_band_policy_ref,
+                                      required=distance_policy_required))
+    if not distance_policy_required and quantity.quantity_band_policy_ref.policy_id is not None:
+        errors.append("quantity band policy is only applicable to continuous distance-based quantity")
+
+    intensity = component.intensity
+    if intensity.applicability is not Applicability.REQUIRED:
+        errors.append("intensity applicability must be REQUIRED")
+    errors.extend(_validate_target(intensity.target, "intensity", required=True))
+    if not intensity.unit:
+        errors.append("intensity unit is required")
+    errors.extend(validate_policy_ref(intensity.policy, required=True))
+
+    structure = component.structure
+    if structure.applicability is not Applicability.REQUIRED:
+        errors.append("structure applicability must be REQUIRED")
+    errors.extend(validate_policy_ref(structure.policy, required=True))
+    expected_intensity_policy = ("maintain-plan-interval-intensity"
+                                 if structure.session_type is SessionType.INTERVALS
+                                 else "maintain-plan-continuous-intensity")
+    if intensity.policy.policy_id != expected_intensity_policy:
+        errors.append("intensity policy must match the prescribed session_type")
+    if not structure.blocks:
+        errors.append("structure requires prescribed blocks")
+    if _duplicates(block.block_id for block in structure.blocks):
+        errors.append(f"block_id must be unique in planned component {component.component_id}")
+    if _duplicates(str(block.block_index) for block in structure.blocks):
+        errors.append(f"block_index must be unique in planned component {component.component_id}")
+    for block in structure.blocks:
+        errors.extend(validate_policy_ref(block.policy, required=True))
+        errors.extend(validate_policy_ref(block.coverage_policy))
+        errors.extend(_validate_target(block.quantity_target, "block quantity", required=False))
+        errors.extend(_validate_target(block.intensity_target, "block intensity", required=False))
+        errors.extend(_validate_target(block.target_range, "block range", required=False))
+        intensity_fields = (block.intensity_target, block.method, block.unit,
+                            block.target_range, block.evaluation_window)
+        if any(value is not None for value in intensity_fields) and not all(
+                value is not None for value in intensity_fields):
+            errors.append("block intensity target, method, unit, range, and evaluation window must be complete")
+        if block.intensity_target is not None:
+            errors.extend(validate_policy_ref(block.coverage_policy, required=True))
+        elif block.coverage_policy.policy_id is not None:
+            errors.append("block without intensity target must not have a coverage policy")
+        if block.planned_repetitions is not None and block.planned_repetitions <= 0:
+            errors.append("planned_repetitions must be positive when prescribed")
+        recovery_required = block.recovery.applicability is Applicability.REQUIRED
+        errors.extend(_validate_target(block.recovery.target, "recovery", required=recovery_required))
+        if not recovery_required and block.recovery.target is not None:
+            errors.append("NOT_APPLICABLE recovery requires a null target")
+
+    dose = component.dose
+    if dose.applicability is not Applicability.REQUIRED:
+        errors.append("dose applicability must be REQUIRED")
+    errors.extend(validate_policy_ref(dose.policy, required=True))
+    if not dose.quantity_dimension_ref or not dose.intensity_dimension_ref:
+        errors.append("dose requires quantity and intensity dimension references")
+    return errors
+
+
 def validate_prescription(snapshot: PrescriptionSnapshot) -> tuple[str, ...]:
     errors = list(validate_policy_ref(snapshot.matching_policy, required=True))
+    errors.extend(validate_policy_ref(snapshot.brick_policy,
+                                      required=snapshot.composition is Composition.BRICK))
+    if snapshot.composition is not Composition.BRICK and snapshot.brick_policy.policy_id is not None:
+        errors.append("brick policy is only applicable to BRICK prescriptions")
+    if snapshot.scheduled_window.start > snapshot.scheduled_window.end:
+        errors.append("scheduled window start must not follow end")
+    if not snapshot.scheduled_window.timezone:
+        errors.append("scheduled window timezone is required")
+    if not snapshot.provenance.source:
+        errors.append("prescription provenance source is required")
     component_count = len(snapshot.components)
     if snapshot.composition is Composition.SINGLE and component_count != 1:
         errors.append("SINGLE prescription requires exactly one planned component")
@@ -40,8 +141,16 @@ def validate_prescription(snapshot: PrescriptionSnapshot) -> tuple[str, ...]:
         errors.append("planned component_id must be unique in prescription snapshot")
     if _duplicates(str(c.component_index) for c in snapshot.components):
         errors.append("planned component_index must be unique in prescription snapshot")
+    if _duplicates(t.transition_id for t in snapshot.transitions):
+        errors.append("transition_id must be unique in prescription snapshot")
+    component_ids = {component.component_id for component in snapshot.components}
+    for transition in snapshot.transitions:
+        errors.extend(validate_policy_ref(transition.policy, required=True))
+        if (transition.from_component_id not in component_ids or
+                transition.to_component_id not in component_ids):
+            errors.append("transition endpoints must reference planned components")
     for component in snapshot.components:
-        errors.extend(validate_policy_ref(component.capability_policy, required=True))
+        errors.extend(_validate_planned_component(component))
         if component.discipline.value == "STRENGTH" and component.support_status is not SupportStatus.UNSUPPORTED:
             errors.append("STRENGTH must be UNSUPPORTED in v1")
     objective = snapshot.objective

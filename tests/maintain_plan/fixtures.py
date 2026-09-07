@@ -10,18 +10,52 @@ CAPABILITY = PolicyRef("maintain-plan-evaluator-capability", "1.0.0-draft")
 AGGREGATION = PolicyRef("maintain-plan-component-aggregation", "1.0.0-draft")
 DOSE_POLICY = PolicyRef("maintain-plan-dose-matrix", "1.0.0-draft")
 NULL_POLICY = PolicyRef(None, None)
+IDENTITY_POLICY = PolicyRef("maintain-plan-sport-taxonomy", "1.0.0-draft")
+QUANTITY_POLICY = PolicyRef("maintain-plan-quantity", "1.0.0-draft")
+CONTINUOUS_INTENSITY_POLICY = PolicyRef("maintain-plan-continuous-intensity", "1.0.0-draft")
+INTERVAL_INTENSITY_POLICY = PolicyRef("maintain-plan-interval-intensity", "1.0.0-draft")
+STRUCTURE_POLICY = PolicyRef("maintain-plan-structure", "1.0.0-draft")
 
 
-def prescription(*components: PlannedComponent, composition=Composition.SINGLE, objective=None):
+def prescription(*components: PlannedComponent, composition=Composition.SINGLE, objective=None,
+                 transitions=()):
     return PrescriptionSnapshot(
-        "snapshot-1", "workout-1", "decision-1", NOW, composition, tuple(components),
+        "snapshot-1", "workout-1", "decision-1", NOW,
+        ScheduledWindow(NOW, NOW, "UTC", False), composition, tuple(components), tuple(transitions),
         objective or Objective(ObjectiveEvaluability.CONTEXT_ONLY, None, context_text="synthetic", policy=NULL_POLICY),
         PolicyRef("maintain-plan-matching", "1.0.0-draft"),
+        PolicyRef("maintain-plan-brick-consecutivity", "1.0.0-draft")
+        if composition is Composition.BRICK else NULL_POLICY,
+        Provenance("synthetic-fixture", NOW), PrescriptionAudit(None),
     )
 
 
-def planned(component_id, index, discipline, requiredness=Requiredness.REQUIRED, support=SupportStatus.SUPPORTED):
-    return PlannedComponent(component_id, index, discipline, requiredness, support, CAPABILITY)
+def planned(component_id, index, discipline, requiredness=Requiredness.REQUIRED,
+            support=SupportStatus.SUPPORTED, *, environment=Environment.OUTDOOR,
+            mode=Mode.ROAD, quantity_target=None, intensity_target=None,
+            session_type=SessionType.CONTINUOUS, blocks=None, substitutions=()):
+    quantity_target = PrescribedTarget(60) if quantity_target is None else quantity_target
+    intensity_target = PrescribedTarget("Z2") if intensity_target is None else intensity_target
+    intensity_policy = (INTERVAL_INTENSITY_POLICY if session_type is SessionType.INTERVALS
+                        else CONTINUOUS_INTENSITY_POLICY)
+    if blocks is None:
+        blocks = (PlannedBlock(
+            f"{component_id}-main", 0, BlockType.MAIN_SET, Requiredness.REQUIRED,
+            quantity_target, intensity_target, IntensityMethod.RPE, "RPE",
+            intensity_target, EvaluationWindow.WHOLE_BLOCK, intensity_policy, None,
+            RecoveryContract(Applicability.NOT_APPLICABLE, None), (), STRUCTURE_POLICY),)
+    return PlannedComponent(
+        component_id, index, discipline, environment, mode, requiredness, support,
+        CAPABILITY, Applicability.REQUIRED, tuple(substitutions), IDENTITY_POLICY,
+        QuantityContract(Applicability.REQUIRED, QuantityMetric.ACTIVE_DURATION,
+                         quantity_target, "minutes", (), QUANTITY_POLICY, NULL_POLICY),
+        IntensityContract(Applicability.REQUIRED, IntensityMethod.RPE,
+                          intensity_target, "RPE", (), intensity_policy),
+        StructureContract(Applicability.REQUIRED, session_type, STRUCTURE_POLICY,
+                          tuple(blocks)),
+        DoseContract(Applicability.REQUIRED, DOSE_POLICY,
+                     f"quantity-{component_id}", f"intensity-{component_id}"),
+    )
 
 
 def observed(component_id, index, discipline, quantity=None):
@@ -86,7 +120,15 @@ RUN_SESSION = ActualSession("session-1", NOW, Composition.SINGLE, (observed("run
 RUN_MAPPING = mapping((("run", "run", Requiredness.REQUIRED, SupportStatus.SUPPORTED),))
 RUN_EXECUTION = execution((component_result("run"),), snapshot=RUN_PRESCRIPTION)
 
-BRICK_PRESCRIPTION = prescription(planned("run", 0, Discipline.RUN), planned("bike", 1, Discipline.BIKE), composition=Composition.BRICK)
+BRICK_PRESCRIPTION = prescription(
+    planned("run", 0, Discipline.RUN, quantity_target=PrescribedTarget(30),
+            intensity_target=PrescribedTarget("RUN_Z2")),
+    planned("bike", 1, Discipline.BIKE, mode=Mode.ROAD,
+            quantity_target=PrescribedTarget(75), intensity_target=PrescribedTarget(180)),
+    composition=Composition.BRICK,
+    transitions=(PlannedTransition(
+        "run-to-bike", "run", "bike",
+        PolicyRef("maintain-plan-brick-consecutivity", "1.0.0-draft"), 15),))
 BRICK_SESSION = ActualSession("session-1", NOW, Composition.BRICK, (observed("run", 0, Discipline.RUN), observed("bike", 1, Discipline.BIKE)))
 BRICK_MAPPING = mapping((("run", "run", Requiredness.REQUIRED, SupportStatus.SUPPORTED),
                          ("bike", "bike", Requiredness.REQUIRED, SupportStatus.SUPPORTED)))
@@ -102,3 +144,16 @@ PARTIAL_POLICY = PolicyRef("policy", None)
 INVALID_STRUCTURED = Objective(ObjectiveEvaluability.STRUCTURED, None, policy=NULL_POLICY)
 INVALID_EVALUATED_DOSE = DoseEvaluation("bad-dose", DoseStatus.EVALUATED, None, None, "q", "i", NULL_POLICY)
 INVALID_NON_FULL_AGGREGATES = replace(RUN_EXECUTION, evaluation_coverage=replace(RUN_EXECUTION.evaluation_coverage, status=CoverageStatus.UNSUPPORTED))
+
+INTERVAL_BLOCK = PlannedBlock(
+    "run-work", 0, BlockType.WORK, Requiredness.REQUIRED,
+    PrescribedTarget(400), PrescribedTarget(None, 4, 5), IntensityMethod.RPE,
+    "RPE", PrescribedTarget(None, 4, 5), EvaluationWindow.AVERAGE,
+    INTERVAL_INTENSITY_POLICY, 6,
+    RecoveryContract(Applicability.REQUIRED, PrescribedTarget(90)),
+    ("after warmup",), STRUCTURE_POLICY,
+)
+INTERVAL_PRESCRIPTION = prescription(planned(
+    "run", 0, Discipline.RUN, session_type=SessionType.INTERVALS,
+    quantity_target=PrescribedTarget(2400), intensity_target=PrescribedTarget(None, 4, 5),
+    blocks=(INTERVAL_BLOCK,)))
