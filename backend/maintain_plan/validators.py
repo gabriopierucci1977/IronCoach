@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections import Counter
 from datetime import datetime
 from dataclasses import fields, is_dataclass
+import math
 from typing import Iterable
 
 from .models import (
@@ -191,16 +192,123 @@ def validate_prescription(snapshot: PrescriptionSnapshot) -> tuple[str, ...]:
 
 def validate_actual_session(session: ActualSession) -> tuple[str, ...]:
     errors: list[str] = []
+    if not session.session_id:
+        errors.append("session_id is required")
+    if session.contract_version != CONTRACT_VERSION:
+        errors.append("actual session contract_version is unsupported")
+    if not _is_timezone_aware(session.start):
+        errors.append("actual session start must be timezone-aware")
+    if session.end is not None and not _is_timezone_aware(session.end):
+        errors.append("actual session end must be timezone-aware")
+    if (session.end is not None and _is_timezone_aware(session.start) and
+            _is_timezone_aware(session.end) and session.start > session.end):
+        errors.append("actual session start must not follow end")
+    if not session.timezone:
+        errors.append("actual session timezone is required")
+    count = len(session.components)
+    if session.composition is Composition.SINGLE and count != 1:
+        errors.append("SINGLE actual session requires exactly one observed component")
+    if session.composition in (Composition.BRICK, Composition.MULTISPORT) and count < 2:
+        errors.append(f"{session.composition.name} actual session requires at least two observed components")
     if _duplicates(c.component_id for c in session.components):
         errors.append("observed component_id must be unique in actual session")
-    if _duplicates(session.transition_ids):
+    if _duplicates(str(c.component_index) for c in session.components):
+        errors.append("observed component_index must be unique in actual session")
+    source_ids = [item.original_activity_id for item in session.source_activities]
+    if _duplicates(source_ids):
+        errors.append("source original_activity_id must be unique in actual session")
+    for source in session.source_activities:
+        if not source.source or not source.original_activity_id:
+            errors.append("source and original_activity_id are required")
+        provenance_source = source.provenance.get("source")
+        if provenance_source is not None and provenance_source != source.source:
+            errors.append("source activity provenance must identify the same source")
+    transition_ids = [item.transition_id for item in session.transitions]
+    if _duplicates(transition_ids) or _duplicates(session.transition_ids):
         errors.append("transition_id must be unique in actual session")
+    if session.transitions and tuple(transition_ids) != session.transition_ids:
+        errors.append("transition_ids must correspond to observed transitions")
+    component_ids = {item.component_id for item in session.components}
     for component in session.components:
+        if not component.component_id:
+            errors.append("observed component_id is required")
+        if session.composition is not None and component.discipline is None:
+            errors.append(f"discipline is required in observed component {component.component_id}")
+        if any(reference not in source_ids for reference in component.source_activity_refs):
+            errors.append(f"source activity reference is unresolved in component {component.component_id}")
+        if ((component.start is not None and not _is_timezone_aware(component.start)) or
+                (component.end is not None and not _is_timezone_aware(component.end))):
+            errors.append(f"component timestamps must be timezone-aware in {component.component_id}")
+        if (component.start is not None and component.end is not None and
+                _is_timezone_aware(component.start) and _is_timezone_aware(component.end) and
+                component.start > component.end):
+            errors.append(f"component start must not follow end in {component.component_id}")
         if _duplicates(b.block_id for b in component.blocks):
             errors.append(f"block_id must be unique in observed component {component.component_id}")
+        if _duplicates(str(b.block_index) for b in component.blocks):
+            errors.append(f"block_index must be unique in observed component {component.component_id}")
         for block in component.blocks:
-            if _duplicates(block.repetitions):
+            if not block.block_id:
+                errors.append(f"block_id is required in observed component {component.component_id}")
+            repetition_ids = [getattr(item, "repetition_id", item) for item in block.repetitions]
+            if _duplicates(repetition_ids):
                 errors.append(f"repetition_id must be unique in observed block {block.block_id}")
+            indexes = [str(item.repetition_index) for item in block.repetitions
+                       if hasattr(item, "repetition_index")]
+            if _duplicates(indexes):
+                errors.append(f"repetition_index must be unique in observed block {block.block_id}")
+            for repetition in block.repetitions:
+                if hasattr(repetition, "block_ref") and repetition.block_ref != block.block_id:
+                    errors.append(f"repetition block_ref is unresolved in observed block {block.block_id}")
+            for values, label in ((block.missing_fields, "missing_fields"),
+                                  (block.warnings, "warnings")):
+                if _duplicates(values):
+                    errors.append(f"{label} must not contain duplicates")
+        for values, label in ((component.missing_fields, "missing_fields"),
+                              (component.warnings, "warnings")):
+            if _duplicates(values):
+                errors.append(f"{label} must not contain duplicates")
+    for transition in session.transitions:
+        if (not transition.transition_id or transition.from_component_ref not in component_ids or
+                transition.to_component_ref not in component_ids):
+            errors.append("transition endpoints must reference observed components")
+        if ((transition.start is not None and not _is_timezone_aware(transition.start)) or
+                (transition.end is not None and not _is_timezone_aware(transition.end))):
+            errors.append("transition timestamps must be timezone-aware")
+        if (transition.start is not None and transition.end is not None and
+                _is_timezone_aware(transition.start) and _is_timezone_aware(transition.end) and
+                transition.start > transition.end):
+            errors.append("transition start must not follow end")
+    for values, label in ((session.missing_fields, "missing_fields"),
+                          (session.warnings, "warnings")):
+        if _duplicates(values):
+            errors.append(f"actual session {label} must not contain duplicates")
+    normalized_at = session.provenance.get("normalized_at")
+    if not isinstance(normalized_at, datetime) or not _is_timezone_aware(normalized_at):
+        # Legacy hand-built fixtures predate the normalization boundary.
+        if session.source_activities:
+            errors.append("normalized_at provenance must be timezone-aware")
+
+    forbidden = ("planned", "prescription", "mapping", "evaluation", "outcome", "target")
+    def inspect(value, path="actual_session"):
+        if isinstance(value, datetime) and not _is_timezone_aware(value):
+            errors.append(f"timestamp must be timezone-aware at {path}")
+        elif isinstance(value, float) and not math.isfinite(value):
+            errors.append(f"non-finite value at {path}")
+        elif isinstance(value, dict) or hasattr(value, "items"):
+            for key, item in value.items():
+                key_text = str(key).lower()
+                if any(key_text == word or key_text.startswith(f"{word}_")
+                       for word in forbidden):
+                    errors.append(f"planned or evaluative reference is forbidden at {path}.{key}")
+                inspect(item, f"{path}.{key}")
+        elif isinstance(value, (tuple, list, set, frozenset)):
+            for index, item in enumerate(value):
+                inspect(item, f"{path}[{index}]")
+        elif is_dataclass(value):
+            for item in fields(value):
+                inspect(getattr(value, item.name), f"{path}.{item.name}")
+    inspect(session)
     return tuple(errors)
 
 
