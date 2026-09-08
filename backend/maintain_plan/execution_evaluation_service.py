@@ -243,6 +243,11 @@ def _identity(component, observed):
     return AdherenceStatus.MET if allowed else AdherenceStatus.NOT_MET
 
 
+def _observed_block_collection_is_incomplete(observed: ObservedComponent) -> bool:
+    """Recognize only the canonical component-scoped block collection marker."""
+    return any(field == "structure.blocks" for field in observed.missing_fields)
+
+
 def _structure(component, observed, mapping, snapshot, session):
     block_maps = [b for b in mapping.block_mappings if
                   (b.planned_block_ref and b.planned_block_ref.component_id == component.component_id) or
@@ -275,12 +280,8 @@ def _structure(component, observed, mapping, snapshot, session):
                 # Beta 0.4 has no qualified RecoveryMapping/parent reference: even a
                 # mapped or unique observed recovery cannot be associated implicitly.
                 return AdherenceStatus.INSUFFICIENT_DATA
-            incomplete = any("block" in field.lower() or "structure" in field.lower()
-                             for field in (*session.missing_fields,
-                                           *observed.missing_fields,
-                                           *(field for candidate in observed.blocks
-                                             for field in candidate.missing_fields)))
-            return (AdherenceStatus.INSUFFICIENT_DATA if incomplete
+            return (AdherenceStatus.INSUFFICIENT_DATA
+                    if _observed_block_collection_is_incomplete(observed)
                     else AdherenceStatus.NOT_MET)
     if snapshot.composition is Composition.BRICK:
         for transition in snapshot.transitions:

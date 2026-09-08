@@ -4,7 +4,8 @@ from dataclasses import replace
 
 import pytest
 
-from backend.maintain_plan.execution_evaluation_service import evaluate
+from backend.maintain_plan.execution_evaluation_service import (
+    _observed_block_collection_is_incomplete, evaluate)
 from backend.maintain_plan.matching_service import build_mapping
 from backend.maintain_plan.models import *
 from tests.maintain_plan.fixtures import NOW
@@ -108,3 +109,45 @@ def test_multiple_required_recoveries_are_reported_separately_and_sorted():
         "prescription_snapshot.snapshot-1.components.run.blocks.run-work.recovery.evidence",
     )
     assert result.component_results[0].intensity.warnings == (WARNING,)
+
+
+@pytest.mark.parametrize("marker", [
+    "weather.blocking_clouds", "notes.structure_comment", "roadblock_note",
+    "notes.structure", "weather.blocks", "block", "blocks_extra",
+    "structure_blocks", "structure.blocks_extra", "structure.blocks.comment",
+    " structure.blocks", "structure.blocks ", "STRUCTURE.BLOCKS",
+    "recovery.evidence", "quantity_observation", "intensity_observation",
+])
+def test_unrelated_or_fuzzy_missing_marker_does_not_change_absent_recovery(marker):
+    snapshot, session, mapping = required_case(recovery=False)
+    session = replace(session, components=(replace(session.components[0],
+        missing_fields=(marker,)),))
+    result = evaluate(snapshot, session, mapping,
+                      evaluation_id="unrelated-missing", evaluated_at=NOW)
+    assert result.component_results[0].structure.status is AdherenceStatus.NOT_MET
+
+
+def test_block_collection_marker_is_exact_component_scoped_and_order_independent():
+    component = required_case(recovery=False)[1].components[0]
+    assert _observed_block_collection_is_incomplete(replace(
+        component, missing_fields=("structure.blocks",)))
+    assert _observed_block_collection_is_incomplete(replace(
+        component, missing_fields=("weather.blocking_clouds", "structure.blocks")))
+    assert _observed_block_collection_is_incomplete(replace(
+        component, missing_fields=("structure.blocks", "weather.blocking_clouds")))
+    assert not _observed_block_collection_is_incomplete(replace(
+        component, missing_fields=("components.other.structure.blocks",)))
+    # Duplicate markers have one deterministic truth value at the pure boundary;
+    # the full ActualSession validator independently rejects duplicates.
+    assert _observed_block_collection_is_incomplete(replace(
+        component, missing_fields=("structure.blocks", "structure.blocks")))
+
+
+def test_missing_field_inside_present_block_does_not_mark_collection_incomplete():
+    snapshot, session, mapping = required_case(recovery=False)
+    work = replace(session.components[0].blocks[0],
+                   missing_fields=("intensity_observation", "structure.blocks"))
+    session = replace(session, components=(replace(session.components[0], blocks=(work,)),))
+    result = evaluate(snapshot, session, mapping,
+                      evaluation_id="block-local", evaluated_at=NOW)
+    assert result.component_results[0].structure.status is AdherenceStatus.NOT_MET
