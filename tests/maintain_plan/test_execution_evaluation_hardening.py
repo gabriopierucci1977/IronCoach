@@ -222,7 +222,7 @@ def test_v1_through_v5_checksums_and_real_v4_upgrade_are_exact(tmp_path):
         3: "7607d1dd4e9d6a7bf7ebae0668986d9a938572560e52f46d506b22123303ba00",
         4: "8b2dbd6ff037088309066e82829fa7f708a49cbfdc0447581f2c5b117025c3e1",
         5: "7a9f07febe192eedc230b927bc582d4b069c6a21b3d5acb64482f1021da058a8"}
-    assert {m.version: m.checksum for m in MIGRATIONS} == expected
+    assert {m.version: m.checksum for m in MIGRATIONS[:5]} == expected
     path = tmp_path / "upgrade.db"
     run_migrations(path, MIGRATIONS[:4])
     with sqlite3.connect(path) as connection:
@@ -230,6 +230,6 @@ def test_v1_through_v5_checksums_and_real_v4_upgrade_are_exact(tmp_path):
     run_migrations(path)
     run_migrations(path)
     with sqlite3.connect(path) as connection:
-        assert connection.execute("SELECT count(*) FROM maintain_plan_schema_migrations").fetchone() == (5,)
+        assert connection.execute("SELECT count(*) FROM maintain_plan_schema_migrations").fetchone() == (6,)
         assert connection.execute("SELECT count(*) FROM maintain_plan_source_conflict_impact_evaluations").fetchone() == (0,)
         assert before

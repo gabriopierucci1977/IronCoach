@@ -43,24 +43,24 @@ def classify_source_conflict_field_path(path: str) -> tuple[AffectedDimension, .
     return ()
 
 
-def evaluate_source_conflict_impact(session: ActualSession, mapping: PrescriptionMapping,
+def evaluate_source_conflict_impact(session: ActualSession, mapping: PrescriptionMapping | None,
                                     conflict: Mapping, *, impact_evaluation_id: str,
                                     evaluation_version: str, evaluated_at: datetime,
                                     provenance: Mapping | None = None) -> SourceConflictImpactEvaluation:
     """Classify only dimensions explicitly identified by a canonical field path."""
     errors = validate_actual_session(session)
-    if errors or mapping.actual_session_ref != session.session_id:
-        raise ValueError("source conflict impact requires the exact canonical session and mapping")
+    if errors or (mapping is not None and mapping.actual_session_ref != session.session_id):
+        raise ValueError("source conflict impact requires the exact canonical session")
     conflict_id, path = conflict.get("conflict_id"), conflict.get("field_path")
     if not isinstance(conflict_id, str) or not isinstance(path, str):
         raise ValueError("source conflict requires conflict_id and field_path")
     if sum(item.get("conflict_id") == conflict_id for item in session.source_conflicts) != 1:
         raise ValueError("source conflict reference is ghost or duplicated")
     dimensions = classify_source_conflict_field_path(path)
-    status = ConflictImpactStatus.EVALUATED
+    status = ConflictImpactStatus.EVALUATED if mapping is not None else ConflictImpactStatus.UNRESOLVED
     return SourceConflictImpactEvaluation(
         impact_evaluation_id, evaluation_version, SourceConflictRef(session.session_id, conflict_id),
-        mapping.mapping_id, status, dimensions,
+        None if mapping is None else mapping.mapping_id, status, dimensions,
         PolicyRef("maintain-plan-source-conflict-impact", "1.0.0-draft"),
         provenance or {}, evaluated_at, (), ())
 
@@ -293,6 +293,9 @@ def evaluate(snapshot: PrescriptionSnapshot, session: ActualSession, mapping: Pr
     projection_conflicts = [p.source_conflict_id for p in conflict_projections]
     if len(projection_conflicts) != len(set(projection_conflicts)):
         raise ValueError("only one source-conflict projection per canonical conflict is allowed")
+    impact_conflicts = [i.source_conflict_ref.conflict_id for i in conflict_impacts]
+    if sorted(projection_conflicts) != sorted(conflict_ids) or sorted(impact_conflicts) != sorted(conflict_ids):
+        raise ValueError("source conflicts require exact projection and impact coverage")
     planned = {x.component_id: x for x in snapshot.components}
     observed = {x.component_id: x for x in session.components}
     conflicts = {item.get("conflict_id"): item for item in session.source_conflicts}
@@ -355,7 +358,9 @@ def evaluate(snapshot: PrescriptionSnapshot, session: ActualSession, mapping: Pr
         tuple(PlannedComponentRef(snapshot.prescription_snapshot_id,p.component_id) for p in snapshot.components if p.requiredness is Requiredness.OPTIONAL and p.support_status is SupportStatus.UNSUPPORTED), CAPABILITY)
     extras = tuple(r.observed_component_ref for r in results if r.match_status is MatchStatus.OBSERVED_ONLY)
     missing = tuple(r.planned_component_ref for r in results if r.match_status is MatchStatus.PLANNED_ONLY and r.requiredness is Requiredness.REQUIRED)
-    comp_status = AdherenceStatus.NOT_MET if extras else AdherenceStatus.NOT_MET if missing else AdherenceStatus.MET
+    comp_status = (AdherenceStatus.INSUFFICIENT_DATA if session.composition is None else
+                   AdherenceStatus.NOT_MET if session.composition is not snapshot.composition else
+                   AdherenceStatus.NOT_MET if extras or missing else AdherenceStatus.MET)
     composition = SessionCompositionResult(f"{evaluation_id}:composition", comp_status,
         tuple(PlannedComponentRef(snapshot.prescription_snapshot_id,p.component_id) for p in snapshot.components),
         tuple(ObservedComponentRef(session.session_id,o.component_id) for o in session.components), extras, missing, COMPOSITION)

@@ -353,11 +353,11 @@ class MaintainPlanRepository:
 
     def create_source_conflict_impact_evaluation(self, value: SourceConflictImpactEvaluation) -> None:
         self._require_valid(validate_source_conflict_impact(value))
-        if value.prescription_mapping_ref is None:
-            raise ValueError("persisted conflict impact requires a canonical mapping")
-        mapping = self.get_prescription_mapping(value.prescription_mapping_ref)
+        mapping = (None if value.prescription_mapping_ref is None else
+                   self.get_prescription_mapping(value.prescription_mapping_ref))
         session = self.get_actual_session(value.source_conflict_ref.session_id)
-        if mapping is None or session is None or mapping.actual_session_ref != session.session_id:
+        if session is None or (value.prescription_mapping_ref is not None and
+                               (mapping is None or mapping.actual_session_ref != session.session_id)):
             raise ValueError("conflict impact ownership is unresolved")
         conflicts = [item for item in session.source_conflicts
                      if item.get("conflict_id") == value.source_conflict_ref.conflict_id]
@@ -394,9 +394,11 @@ class MaintainPlanRepository:
                 "session_id", "conflict_id", "prescription_mapping_ref", "status",
                 "policy_id", "policy_version")) != metadata:
             raise ValueError("stored source-conflict impact metadata does not match payload")
-        mapping = self.get_prescription_mapping(value.prescription_mapping_ref)
+        mapping = (None if value.prescription_mapping_ref is None else
+                   self.get_prescription_mapping(value.prescription_mapping_ref))
         session = self.get_actual_session(value.source_conflict_ref.session_id)
-        if mapping is None or session is None or mapping.actual_session_ref != session.session_id or sum(
+        if session is None or (value.prescription_mapping_ref is not None and
+                (mapping is None or mapping.actual_session_ref != session.session_id)) or sum(
                 item.get("conflict_id") == value.source_conflict_ref.conflict_id
                 for item in session.source_conflicts) != 1:
             raise ValueError("stored source-conflict impact has unresolved ownership")

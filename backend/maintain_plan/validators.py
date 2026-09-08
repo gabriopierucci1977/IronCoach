@@ -617,6 +617,8 @@ def validate_source_conflict_impact(value) -> tuple[str, ...]:
         errors.append("conflict impact status must be canonical")
     elif value.status is ConflictImpactStatus.EVALUATED and value.prescription_mapping_ref is None:
         errors.append("EVALUATED conflict impact requires canonical mapping")
+    elif value.status is ConflictImpactStatus.UNRESOLVED and value.prescription_mapping_ref is not None:
+        errors.append("UNRESOLVED conflict impact forbids a mapping")
     return tuple(errors)
 
 
