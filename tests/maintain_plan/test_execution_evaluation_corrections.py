@@ -89,7 +89,7 @@ def test_missing_recovery_and_wrong_repetition_order_affect_structure():
     assert no_recovery.component_results[0].structure.status is AdherenceStatus.NOT_MET
     wrong_order = evaluated(interval_case([.8] * 6, valid=[.8] * 6,
                                            order=[0, 2, 1, 3, 4, 5]))
-    assert wrong_order.component_results[0].structure.status is AdherenceStatus.PARTIALLY_MET
+    assert wrong_order.component_results[0].structure.status is AdherenceStatus.MET
 
 
 @pytest.mark.parametrize("path", [

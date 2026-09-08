@@ -122,20 +122,55 @@ def _ratio(value):
     return result if type(result) in (int, float) and 0 <= result <= 1 else None
 
 
-def _interval_intensity(component: PlannedComponent, observed: ObservedComponent, result_id: str):
+def _mapped_block(component, observed, planned_block, mapping, snapshot, session):
+    planned_ref = PlannedBlockRef(snapshot.prescription_snapshot_id,
+                                  component.component_id, planned_block.block_id)
+    matches = [item for item in mapping.block_mappings
+               if item.planned_block_ref == planned_ref]
+    if len(matches) != 1 or matches[0].match_status is not MatchStatus.MATCHED or matches[0].observed_block_ref is None:
+        return None
+    observed_ref = matches[0].observed_block_ref
+    if (observed_ref.session_id != session.session_id or
+            observed_ref.component_id != observed.component_id):
+        return None
+    blocks = [item for item in observed.blocks if item.block_id == observed_ref.block_id]
+    return blocks[0] if len(blocks) == 1 else None
+
+
+def _mapped_repetition(component, observed, planned_block, repetition_index,
+                       observed_block, mapping, snapshot, session):
+    planned_ref = PlannedRepetitionRef(snapshot.prescription_snapshot_id,
+        component.component_id, planned_block.block_id, repetition_index)
+    matches = [item for item in mapping.repetition_mappings
+               if item.planned_repetition_ref == planned_ref]
+    if len(matches) != 1 or matches[0].match_status is not MatchStatus.MATCHED or matches[0].observed_repetition_ref is None:
+        return None
+    observed_ref = matches[0].observed_repetition_ref
+    if (observed_ref.session_id != session.session_id or
+            observed_ref.component_id != observed.component_id or
+            observed_ref.block_id != observed_block.block_id):
+        return None
+    repetitions = [item for item in observed_block.repetitions
+                   if item.repetition_id == observed_ref.repetition_id]
+    return repetitions[0] if len(repetitions) == 1 else None
+
+
+def _interval_intensity(component: PlannedComponent, observed: ObservedComponent,
+                        mapping, snapshot, session, result_id: str):
     required = [b for b in component.structure.blocks if b.requiredness is Requiredness.REQUIRED]
     repetitions = []
     missing = []
     for block in required:
         if block.planned_repetitions is None:
             continue
-        candidates = [b for b in observed.blocks if b.block_id == block.block_id]
-        if len(candidates) != 1 or block.evaluation_window is None:
+        actual_block = _mapped_block(component, observed, block, mapping, snapshot, session)
+        if actual_block is None or block.evaluation_window is None:
             missing.append(block.block_id); continue
-        actual = sorted(candidates[0].repetitions, key=lambda r: r.repetition_index)
-        if len(actual) < block.planned_repetitions or [r.repetition_index for r in actual] != list(range(len(actual))):
-            missing.append(block.block_id); continue
-        for repetition in actual[:block.planned_repetitions]:
+        for repetition_index in range(block.planned_repetitions):
+            repetition = _mapped_repetition(component, observed, block, repetition_index,
+                actual_block, mapping, snapshot, session)
+            if repetition is None:
+                missing.append(f"{block.block_id}:{repetition_index}"); continue
             coverage = _ratio(repetition.valid_coverage)
             target = _ratio(repetition.time_in_target)
             declared_window = None if repetition.time_in_target is None else repetition.time_in_target.get("window")
@@ -158,9 +193,10 @@ def _interval_intensity(component: PlannedComponent, observed: ObservedComponent
                            band, {"conforming_repetitions": sum(repetitions), "required_repetitions": len(repetitions)})
 
 
-def _intensity(component: PlannedComponent, observed: ObservedComponent, result_id: str):
+def _intensity(component: PlannedComponent, observed: ObservedComponent,
+               mapping, snapshot, session, result_id: str):
     if component.structure.session_type is SessionType.INTERVALS:
-        return _interval_intensity(component, observed, result_id)
+        return _interval_intensity(component, observed, mapping, snapshot, session, result_id)
     data = observed.intensity_observations
     method = component.intensity.primary_method.value
     if not data or method not in observed.intensity_methods:
@@ -209,23 +245,39 @@ def _structure(component, observed, mapping, snapshot, session):
     for block in component.structure.blocks:
         if block.requiredness is not Requiredness.REQUIRED or block.planned_repetitions is None:
             continue
-        matches = [b for b in observed.blocks if b.block_id == block.block_id]
-        if len(matches) != 1:
+        observed_block = _mapped_block(component, observed, block, mapping, snapshot, session)
+        if observed_block is None:
             return AdherenceStatus.NOT_MET if block.block_type in (BlockType.MAIN_SET, BlockType.WORK) else AdherenceStatus.PARTIALLY_MET
-        reps = matches[0].repetitions
-        if len(reps) < block.planned_repetitions:
+        mapped_repetitions = [_mapped_repetition(component, observed, block, index,
+            observed_block, mapping, snapshot, session)
+            for index in range(block.planned_repetitions)]
+        if any(item is None for item in mapped_repetitions):
             return AdherenceStatus.NOT_MET if block.block_type in (BlockType.MAIN_SET, BlockType.WORK) else AdherenceStatus.PARTIALLY_MET
-        if [r.repetition_index for r in reps] != list(range(len(reps))):
+        if [item.repetition_index for item in mapped_repetitions] != sorted(
+                item.repetition_index for item in mapped_repetitions):
             return AdherenceStatus.PARTIALLY_MET
-        if (block.recovery.applicability is Applicability.REQUIRED and
-                block.recovery.target is not None and
-                not any(observed_block.block_type is BlockType.RECOVERY
-                        for observed_block in observed.blocks)):
+        if (block.recovery.applicability is Applicability.REQUIRED and block.recovery.target is not None and
+                not any(candidate.block_type is BlockType.RECOVERY and
+                        any(item.observed_block_ref == ObservedBlockRef(
+                            session.session_id, observed.component_id, candidate.block_id)
+                            for item in block_maps)
+                        for candidate in observed.blocks)):
             return AdherenceStatus.NOT_MET
     if snapshot.composition is Composition.BRICK:
         for transition in snapshot.transitions:
-            matches = [t for t in session.transitions if t.from_component_ref == transition.from_component_id and t.to_component_ref == transition.to_component_id]
-            if len(matches) != 1 or matches[0].duration_minutes is None:
+            planned_ref = PlannedTransitionRef(snapshot.prescription_snapshot_id, transition.transition_id)
+            transition_maps = [item for item in mapping.transition_mappings if item.planned_transition_ref == planned_ref]
+            if len(transition_maps) != 1 or transition_maps[0].match_status is not MatchStatus.MATCHED or transition_maps[0].observed_transition_ref is None:
+                return AdherenceStatus.INSUFFICIENT_DATA
+            observed_ref = transition_maps[0].observed_transition_ref
+            matches = [item for item in session.transitions if
+                       item.transition_id == observed_ref.transition_id and
+                       observed_ref.session_id == session.session_id]
+            component_map = {item.planned_component_ref.component_id: item.observed_component_ref.component_id
+                for item in mapping.component_mappings if item.planned_component_ref and item.observed_component_ref}
+            if (len(matches) != 1 or matches[0].duration_minutes is None or
+                    matches[0].from_component_ref != component_map.get(transition.from_component_id) or
+                    matches[0].to_component_ref != component_map.get(transition.to_component_id)):
                 return AdherenceStatus.INSUFFICIENT_DATA
             if matches[0].duration_minutes > transition.applicable_limit_minutes:
                 return AdherenceStatus.NOT_MET
@@ -337,7 +389,7 @@ def evaluate(snapshot: PrescriptionSnapshot, session: ActualSession, mapping: Pr
                 identity = _identity(p, o)
                 structure = _structure(p, o, mapping, snapshot, session)
                 dimensions = [DimensionResult(f"{rid}:identity", identity, p.identity_policy),
-                              _quantity(p, o, f"{rid}:quantity"), _intensity(p, o, f"{rid}:intensity"),
+                              _quantity(p, o, f"{rid}:quantity"), _intensity(p, o, mapping, snapshot, session, f"{rid}:intensity"),
                               DimensionResult(f"{rid}:structure", structure, p.structure.policy)]
             for pos, affected in enumerate((AffectedDimension.IDENTITY, AffectedDimension.QUANTITY, AffectedDimension.INTENSITY, AffectedDimension.STRUCTURE)):
                 if affected in unresolved:
