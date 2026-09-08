@@ -10,10 +10,12 @@ from backend.maintain_plan.confirmation_service import answer_confirmation, requ
 from backend.maintain_plan.matching_service import build_mapping, match
 from backend.maintain_plan.models import (ActualSession, Composition, ConfirmationAnswerType,
     ConfirmationStatus, DirectIdEvidence, Discipline, MatchStatus, MatchingStatus,
-    ObservedBlock, ObservedComponent, ObservedRepetition, ObservedTransition, ResolutionMethod)
+    ObservedBlock, ObservedComponent, ObservedComponentRef, ObservedRepetition,
+    ObservedTransition, PlannedComponentRef, ResolutionMethod)
 from backend.maintain_plan.repository import MaintainPlanRepository
 from backend.maintain_plan.serialization import serialize_contract
-from backend.maintain_plan.validators import validate_confirmation, validate_execution_evaluation
+from backend.maintain_plan.validators import (validate_confirmation,
+    validate_execution_evaluation, validate_mapping_ownership)
 from tests.maintain_plan.fixtures import (BRICK_PRESCRIPTION, NOW, RUN_PRESCRIPTION,
                                           RUN_SESSION, component_result, execution, observed)
 
@@ -241,12 +243,115 @@ def test_direct_id_observed_extra_survives_downstream_planned_lookup():
     result = _match(RUN_PRESCRIPTION, (session,), (
         DirectIdEvidence("direct", "direct-extra", "workout-1", "device", {}),))
     assert result.prescription_mapping.component_mappings[-1].match_status is MatchStatus.OBSERVED_ONLY
-    evaluation = execution((component_result("run"), component_result(
-        "extra", match=MatchStatus.OBSERVED_ONLY)), snapshot=RUN_PRESCRIPTION)
+    planned_result = replace(component_result("run"), observed_component_ref=ObservedComponentRef(
+        "direct-extra", "run"))
+    extra_result = replace(component_result("extra", match=MatchStatus.OBSERVED_ONLY),
+                           observed_component_ref=ObservedComponentRef("direct-extra", "extra"))
+    evaluation = execution((planned_result, extra_result), snapshot=RUN_PRESCRIPTION)
     evaluation = replace(evaluation, prescription_mapping_ref=result.prescription_mapping.mapping_id,
                          actual_session_ref="direct-extra")
-    assert isinstance(validate_execution_evaluation(
-        evaluation, result.prescription_mapping, RUN_PRESCRIPTION), tuple)
+    assert validate_execution_evaluation(
+        evaluation, result.prescription_mapping, RUN_PRESCRIPTION, session) == ()
+
+
+@pytest.mark.parametrize("mutation", [
+    {"observed_component_ref": ObservedComponentRef("foreign-session", "ghost")},
+    {"observed_component_ref": ObservedComponentRef("direct-extra", "ghost")},
+    {"observed_component_ref": ObservedComponentRef("direct-extra", "run")},
+    {"match_status": MatchStatus.MATCHED},
+    {"planned_component_ref": PlannedComponentRef("snapshot-1", "run")},
+])
+def test_observed_only_evaluation_must_match_canonical_mapping(mutation):
+    session = ActualSession("direct-extra", NOW, Composition.BRICK,
+                            (observed("run", 0, Discipline.RUN), observed("extra", 1, Discipline.BIKE)))
+    matching = _match(RUN_PRESCRIPTION, (session,), (
+        DirectIdEvidence("direct", "direct-extra", "workout-1", "device", {}),))
+    planned_result = replace(component_result("run"), observed_component_ref=ObservedComponentRef(
+        "direct-extra", "run"))
+    extra_result = replace(component_result("extra", match=MatchStatus.OBSERVED_ONLY),
+                           observed_component_ref=ObservedComponentRef("direct-extra", "extra"))
+    extra_result = replace(extra_result, **mutation)
+    value = execution((planned_result, extra_result), snapshot=RUN_PRESCRIPTION)
+    value = replace(value, prescription_mapping_ref=matching.prescription_mapping.mapping_id,
+                    actual_session_ref="direct-extra")
+    assert validate_execution_evaluation(
+        value, matching.prescription_mapping, RUN_PRESCRIPTION, session)
+
+
+def test_observed_only_duplicate_repository_rejection_and_tamper_detection(tmp_path):
+    session = ActualSession("direct-extra", NOW, Composition.BRICK,
+                            (observed("run", 0, Discipline.RUN), observed("extra", 1, Discipline.BIKE)))
+    matching = _match(RUN_PRESCRIPTION, (session,), (
+        DirectIdEvidence("direct", "direct-extra", "workout-1", "device", {}),))
+    planned_result = replace(component_result("run"), observed_component_ref=ObservedComponentRef(
+        "direct-extra", "run"))
+    extra_result = replace(component_result("extra", match=MatchStatus.OBSERVED_ONLY),
+                           observed_component_ref=ObservedComponentRef("direct-extra", "extra"))
+    value = replace(execution((planned_result, extra_result), snapshot=RUN_PRESCRIPTION),
+                    prescription_mapping_ref=matching.prescription_mapping.mapping_id,
+                    actual_session_ref="direct-extra")
+    repo = MaintainPlanRepository(tmp_path / "evaluation-ownership.db")
+    repo.create_prescription_snapshot(RUN_PRESCRIPTION)
+    repo.create_actual_session(session)
+    repo.create_prescription_mapping(matching.prescription_mapping)
+    duplicate = replace(value, component_results=(planned_result, extra_result, extra_result))
+    with pytest.raises(ValueError):
+        repo.create_execution_evaluation(duplicate)
+    with sqlite3.connect(repo.database_path) as connection:
+        assert connection.execute("SELECT count(*) FROM maintain_plan_execution_evaluations").fetchone() == (0,)
+    repo.create_execution_evaluation(value)
+    ghost = replace(extra_result, observed_component_ref=ObservedComponentRef(
+        "foreign-session", "ghost"))
+    tampered = replace(value, component_results=(planned_result, ghost))
+    with sqlite3.connect(repo.database_path) as connection:
+        connection.execute("UPDATE maintain_plan_execution_evaluations SET payload_json=?",
+                           (serialize_contract(tampered),))
+    with pytest.raises(ValueError):
+        repo.get_execution_evaluation(value.evaluation_id)
+
+
+def test_mapping_hierarchy_rejects_cross_component_blocks_repetitions_and_transitions(tmp_path):
+    planned_components = tuple(replace(component, structure=replace(
+        component.structure, blocks=(replace(component.structure.blocks[0],
+            block_id=f"{component.component_id}-block", planned_repetitions=1),)))
+        for component in BRICK_PRESCRIPTION.components)
+    snapshot = replace(BRICK_PRESCRIPTION, components=planned_components)
+    observed_components = (
+        ObservedComponent("run", 0, Discipline.RUN, blocks=(ObservedBlock(
+            "run-block", 0, repetitions=(ObservedRepetition("run-rep", 0, "run-block"),)),)),
+        ObservedComponent("bike", 1, Discipline.BIKE, blocks=(ObservedBlock(
+            "bike-block", 0, repetitions=(ObservedRepetition("bike-rep", 0, "bike-block"),)),)),
+    )
+    session = ActualSession("hierarchy", NOW, Composition.BRICK, observed_components,
+        transition_ids=("observed-transition",), transitions=(ObservedTransition(
+            "observed-transition", "run", "bike"),))
+    mapping = build_mapping(snapshot, session, mapping_id="hierarchy-map", created_at=NOW,
+                            resolution_method=ResolutionMethod.AUTOMATIC)
+    assert validate_mapping_ownership(mapping, snapshot, session) == ()
+    swapped_blocks = replace(mapping, block_mappings=(
+        replace(mapping.block_mappings[0], observed_block_ref=mapping.block_mappings[1].observed_block_ref),
+        mapping.block_mappings[1]))
+    assert validate_mapping_ownership(swapped_blocks, snapshot, session)
+    swapped_repetitions = replace(mapping, repetition_mappings=(
+        replace(mapping.repetition_mappings[0],
+                observed_repetition_ref=mapping.repetition_mappings[1].observed_repetition_ref),
+        mapping.repetition_mappings[1]))
+    assert validate_mapping_ownership(swapped_repetitions, snapshot, session)
+    reversed_session = replace(session, transitions=(ObservedTransition(
+        "observed-transition", "bike", "run"),))
+    assert validate_mapping_ownership(mapping, snapshot, reversed_session)
+    repo = MaintainPlanRepository(tmp_path / "mapping-hierarchy.db")
+    repo.create_prescription_snapshot(snapshot)
+    repo.create_actual_session(session)
+    with pytest.raises(ValueError):
+        repo.create_prescription_mapping(swapped_blocks)
+    assert repo.get_prescription_mapping("hierarchy-map") is None
+    repo.create_prescription_mapping(mapping)
+    with sqlite3.connect(repo.database_path) as connection:
+        connection.execute("UPDATE maintain_plan_prescription_mappings SET payload_json=?",
+                           (serialize_contract(swapped_blocks),))
+    with pytest.raises(ValueError):
+        repo.get_prescription_mapping("hierarchy-map")
 
 
 def test_zero_candidate_confirmation_offers_and_resolves_all_normative_answers():

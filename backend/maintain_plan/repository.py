@@ -19,7 +19,7 @@ from .schema import run_migrations
 from .serialization import PAYLOAD_SCHEMA_VERSION, deserialize_contract, serialize_contract
 from .validators import (validate_actual_session, validate_execution_evaluation,
                          validate_confirmation, validate_mapping, validate_matching_result,
-                         validate_prescription)
+                         validate_mapping_ownership, validate_prescription)
 
 
 class MaintainPlanRepository:
@@ -134,6 +134,9 @@ class MaintainPlanRepository:
     @staticmethod
     def _validate_mapping_refs(value: PrescriptionMapping, snapshot: PrescriptionSnapshot,
                                session: ActualSession) -> None:
+        errors = validate_mapping_ownership(value, snapshot, session)
+        if errors:
+            raise ValueError("; ".join(errors))
         planned_ids = {item.component_id for item in snapshot.components}
         observed_ids = {item.component_id for item in session.components}
         if any((item.planned_component_ref is not None and
@@ -265,7 +268,10 @@ class MaintainPlanRepository:
         snapshot = self.get_prescription_snapshot(value.prescription_snapshot_ref)
         if snapshot is None:
             raise ValueError("execution evaluation must reference a persisted snapshot")
-        self._require_valid(validate_execution_evaluation(value, mapping, snapshot))
+        session = self.get_actual_session(value.actual_session_ref)
+        if session is None:
+            raise ValueError("execution evaluation must reference a persisted actual session")
+        self._require_valid(validate_execution_evaluation(value, mapping, snapshot, session))
         self._insert(
             "INSERT INTO maintain_plan_execution_evaluations VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (value.evaluation_id, value.prescription_mapping_ref,
@@ -291,9 +297,10 @@ class MaintainPlanRepository:
             raise ValueError("stored execution evaluation metadata does not match payload")
         mapping = self.get_prescription_mapping(value.prescription_mapping_ref)
         snapshot = self.get_prescription_snapshot(value.prescription_snapshot_ref)
-        if mapping is None or snapshot is None:
+        session = self.get_actual_session(value.actual_session_ref)
+        if mapping is None or snapshot is None or session is None:
             raise ValueError("stored execution evaluation has unresolved references")
-        self._require_valid(validate_execution_evaluation(value, mapping, snapshot))
+        self._require_valid(validate_execution_evaluation(value, mapping, snapshot, session))
         return value
 
     def create_feedback_log(self, value: FeedbackEventLog) -> None:
