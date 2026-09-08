@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Callable, Iterable
 
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 
 @dataclass(frozen=True)
@@ -221,6 +221,7 @@ MIGRATIONS = MIGRATIONS + (Migration(
 ),)
 
 
+
 _MIGRATION_3_SQL = """
         CREATE TABLE maintain_plan_confirmations (
             confirmation_id TEXT PRIMARY KEY,
@@ -308,6 +309,37 @@ MIGRATIONS = MIGRATIONS + (Migration(
     4,
     hashlib.sha256(_MIGRATION_4_SQL.encode("utf-8")).hexdigest(),
     _migration_4,
+),)
+
+_MIGRATION_5_SQL = """
+        CREATE TABLE maintain_plan_source_conflict_impact_evaluations (
+            conflict_impact_evaluation_id TEXT PRIMARY KEY,
+            evaluation_version TEXT NOT NULL,
+            session_id TEXT NOT NULL,
+            conflict_id TEXT NOT NULL,
+            prescription_mapping_ref TEXT NOT NULL REFERENCES maintain_plan_prescription_mappings(mapping_id),
+            status TEXT NOT NULL CHECK (status IN ('EVALUATED', 'UNRESOLVED')),
+            policy_id TEXT NOT NULL,
+            policy_version TEXT NOT NULL,
+            payload_schema_version TEXT NOT NULL,
+            payload_json TEXT NOT NULL,
+            UNIQUE (session_id, conflict_id, evaluation_version),
+            FOREIGN KEY (session_id, conflict_id)
+                REFERENCES maintain_plan_source_conflicts(session_id, conflict_id)
+        );
+        CREATE INDEX idx_mp_conflict_impacts_session
+            ON maintain_plan_source_conflict_impact_evaluations(session_id);
+        """
+
+
+def _migration_5(connection: sqlite3.Connection) -> None:
+    for statement in _MIGRATION_5_SQL.split(";"):
+        if statement.strip():
+            connection.execute(statement)
+
+
+MIGRATIONS = MIGRATIONS + (Migration(
+    5, hashlib.sha256(_MIGRATION_5_SQL.encode("utf-8")).hexdigest(), _migration_5,
 ),)
 
 
