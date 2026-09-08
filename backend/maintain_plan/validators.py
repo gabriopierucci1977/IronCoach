@@ -314,20 +314,57 @@ def validate_actual_session(session: ActualSession) -> tuple[str, ...]:
 
 def validate_mapping(mapping: PrescriptionMapping) -> tuple[str, ...]:
     errors: list[str] = []
-    planned_refs = [item.planned_component_ref for item in mapping.component_mappings]
+    planned_refs = [item.planned_component_ref for item in mapping.component_mappings
+                    if item.planned_component_ref is not None]
     observed_refs = [item.observed_component_ref for item in mapping.component_mappings
                      if item.observed_component_ref is not None]
     if len(set(planned_refs)) != len(planned_refs):
         errors.append("planned component reference must occur at most once in canonical mapping")
     if len(set(observed_refs)) != len(observed_refs):
         errors.append("non-null observed component reference must occur at most once in canonical mapping")
+    for label, values in (
+        ("planned block", [item.planned_block_ref for item in mapping.block_mappings if item.planned_block_ref]),
+        ("observed block", [item.observed_block_ref for item in mapping.block_mappings if item.observed_block_ref]),
+        ("planned repetition", [item.planned_repetition_ref for item in mapping.repetition_mappings if item.planned_repetition_ref]),
+        ("observed repetition", [item.observed_repetition_ref for item in mapping.repetition_mappings if item.observed_repetition_ref]),
+        ("planned transition", [item.planned_transition_ref for item in mapping.transition_mappings if item.planned_transition_ref]),
+        ("observed transition", [item.observed_transition_ref for item in mapping.transition_mappings if item.observed_transition_ref]),
+    ):
+        if len(set(values)) != len(values):
+            errors.append(f"{label} reference must occur at most once in canonical mapping")
     for item in mapping.component_mappings:
-        if item.planned_component_ref.prescription_snapshot_id != mapping.prescription_snapshot_ref:
+        if item.match_status is MatchStatus.MATCHED and (
+                item.planned_component_ref is None or item.observed_component_ref is None):
+            errors.append("MATCHED mapping requires planned and observed references")
+        if item.match_status is MatchStatus.PLANNED_ONLY and (
+                item.planned_component_ref is None or item.observed_component_ref is not None):
+            errors.append("PLANNED_ONLY mapping requires only a planned reference")
+        if item.match_status is MatchStatus.OBSERVED_ONLY and (
+                item.planned_component_ref is not None or item.observed_component_ref is None or
+                item.requiredness is not None):
+            errors.append("OBSERVED_ONLY mapping requires only an observed reference")
+        if (item.planned_component_ref is not None and
+                item.planned_component_ref.prescription_snapshot_id != mapping.prescription_snapshot_ref):
             errors.append("planned component reference is not qualified by mapped snapshot")
         if (item.observed_component_ref is not None and
                 item.observed_component_ref.session_id != mapping.actual_session_ref):
             errors.append("observed component reference is not qualified by mapped session")
         errors.extend(validate_policy_ref(item.capability_policy, required=True))
+    for item in mapping.block_mappings:
+        if item.planned_block_ref and item.planned_block_ref.prescription_snapshot_id != mapping.prescription_snapshot_ref:
+            errors.append("planned block reference is not qualified by mapped snapshot")
+        if item.observed_block_ref and item.observed_block_ref.session_id != mapping.actual_session_ref:
+            errors.append("observed block reference is not qualified by mapped session")
+    for item in mapping.repetition_mappings:
+        if item.planned_repetition_ref and item.planned_repetition_ref.prescription_snapshot_id != mapping.prescription_snapshot_ref:
+            errors.append("planned repetition reference is not qualified by mapped snapshot")
+        if item.observed_repetition_ref and item.observed_repetition_ref.session_id != mapping.actual_session_ref:
+            errors.append("observed repetition reference is not qualified by mapped session")
+    for item in mapping.transition_mappings:
+        if item.planned_transition_ref and item.planned_transition_ref.prescription_snapshot_id != mapping.prescription_snapshot_ref:
+            errors.append("planned transition reference is not qualified by mapped snapshot")
+        if item.observed_transition_ref and item.observed_transition_ref.session_id != mapping.actual_session_ref:
+            errors.append("observed transition reference is not qualified by mapped session")
     return tuple(errors)
 
 
@@ -339,6 +376,11 @@ def validate_matching_result(result) -> tuple[str, ...]:
         errors.append("unresolved matching result must not contain a mapping")
     if result.prescription_mapping:
         errors.extend(validate_mapping(result.prescription_mapping))
+    if len(set(result.candidate_set)) != len(result.candidate_set):
+        errors.append("candidate set must not contain duplicates")
+    if result.status is MatchingStatus.MATCHED and result.candidate_set and (
+            result.prescription_mapping.actual_session_ref not in result.candidate_set):
+        errors.append("matched session must belong to candidate set")
     return tuple(errors)
 
 

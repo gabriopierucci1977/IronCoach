@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Callable, Iterable
 
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 
 @dataclass(frozen=True)
@@ -218,6 +218,36 @@ MIGRATIONS = MIGRATIONS + (Migration(
     2,
     hashlib.sha256(_MIGRATION_2_SQL.encode("utf-8")).hexdigest(),
     _migration_2,
+),)
+
+
+_MIGRATION_3_SQL = """
+        CREATE TABLE maintain_plan_confirmations (
+            confirmation_id TEXT PRIMARY KEY,
+            matching_result_ref TEXT NOT NULL REFERENCES maintain_plan_matching_results(matching_result_id),
+            prescription_snapshot_ref TEXT NOT NULL REFERENCES maintain_plan_prescription_snapshots(prescription_snapshot_id),
+            status TEXT NOT NULL CHECK (status IN ('NOT_REQUIRED', 'REQUIRED', 'ANSWERED', 'UNKNOWN_ANSWER', 'SUPERSEDED')),
+            answer_type TEXT CHECK (answer_type IS NULL OR answer_type IN
+                ('SELECT_CANDIDATE', 'NOT_PERFORMED', 'NOT_SYNCHRONIZED', 'MANUAL_ASSOCIATION', 'DONT_KNOW')),
+            selected_session_ref TEXT REFERENCES maintain_plan_actual_sessions(session_id),
+            payload_schema_version TEXT NOT NULL,
+            payload_json TEXT NOT NULL
+        );
+        CREATE INDEX idx_mp_confirmations_result ON maintain_plan_confirmations(matching_result_ref);
+        CREATE INDEX idx_mp_confirmations_snapshot ON maintain_plan_confirmations(prescription_snapshot_ref);
+        """
+
+
+def _migration_3(connection: sqlite3.Connection) -> None:
+    for statement in _MIGRATION_3_SQL.split(";"):
+        if statement.strip():
+            connection.execute(statement)
+
+
+MIGRATIONS = MIGRATIONS + (Migration(
+    3,
+    hashlib.sha256(_MIGRATION_3_SQL.encode("utf-8")).hexdigest(),
+    _migration_3,
 ),)
 
 

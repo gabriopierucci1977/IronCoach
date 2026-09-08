@@ -47,7 +47,7 @@ def test_migration_on_empty_database_is_versioned_and_idempotent(tmp_path):
         versions = connection.execute(
             "SELECT version, checksum FROM maintain_plan_schema_migrations"
         ).fetchall()
-        assert [item[0] for item in versions] == [1, 2]
+        assert [item[0] for item in versions] == [1, 2, 3]
         assert all(len(item[1]) == 64 for item in versions)
     run_migrations(path)
     with sqlite3.connect(path) as connection:
@@ -57,7 +57,7 @@ def test_migration_on_empty_database_is_versioned_and_idempotent(tmp_path):
         assert before == after
         assert connection.execute(
             "SELECT count(*) FROM maintain_plan_schema_migrations"
-        ).fetchone() == (2,)
+            ).fetchone() == (3,)
 
 
 def test_migration_preserves_legacy_schema_and_record_exactly(tmp_path):

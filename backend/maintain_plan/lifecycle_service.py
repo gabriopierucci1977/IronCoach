@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
+import re
 from dataclasses import fields, is_dataclass, replace
 from datetime import datetime
 from enum import Enum
@@ -25,6 +27,15 @@ CONFLICT_PROJECTION_POLICY_VERSION = "1.0.0-draft"
 CONFLICT_SERIALIZATION_POLICY_ID = "maintain-plan-source-conflict-projection-canonical-json"
 CONFLICT_SERIALIZATION_POLICY_VERSION = "1.0.0-draft"
 PROJECTION_HASH_ALGORITHM = "SHA-256"
+SUBJECTIVE_FEEDBACK_SCHEMA = "maintain-plan-subjective-feedback/1.0.0-draft"
+_FEEDBACK_FIELDS = frozenset({
+    "feedback_id", "schema_version", "payload_hash", "rpe", "pain",
+    "unusual_fatigue", "interruption", "reason", "note", "captured_at",
+    "provenance", "missing_fields", "warnings",
+})
+_IMMUTABLE_FEEDBACK_FIELDS = (
+    "feedback_id", "schema_version", "payload_hash", "captured_at", "provenance",
+)
 
 
 def _aware(value: datetime) -> bool:
@@ -47,6 +58,104 @@ def _plain(value: Any) -> Any:
     raise TypeError(f"unsupported canonical projection value: {type(value).__name__}")
 
 
+def _valid_nested(value: Any) -> bool:
+    if value is None or isinstance(value, (str, bool, int)):
+        return True
+    if isinstance(value, float):
+        return math.isfinite(value)
+    if isinstance(value, datetime):
+        return _aware(value)
+    if isinstance(value, Mapping):
+        return all(isinstance(key, str) and _valid_nested(item)
+                   for key, item in value.items())
+    if isinstance(value, (tuple, list, set, frozenset)):
+        return all(_valid_nested(item) for item in value)
+    return False
+
+
+def _structural_form(value: Any) -> Any:
+    """Preserve every value while equating only approved container representations."""
+    if isinstance(value, Mapping):
+        items = [(_structural_form(key), _structural_form(item)) for key, item in value.items()]
+        return ("mapping", tuple(sorted(items, key=repr)))
+    if isinstance(value, (tuple, list)):
+        return ("sequence", tuple(_structural_form(item) for item in value))
+    if isinstance(value, (set, frozenset)):
+        return ("set", tuple(sorted((_structural_form(item) for item in value), key=repr)))
+    if isinstance(value, datetime):
+        return ("datetime", value)
+    if isinstance(value, Enum):
+        return ("enum", type(value).__qualname__, value.value)
+    return (type(value).__qualname__, value)
+
+
+def structurally_equivalent(left: Any, right: Any) -> bool:
+    return _structural_form(left) == _structural_form(right)
+
+
+def _feedback_timestamp(value: Any) -> bool:
+    if isinstance(value, datetime):
+        return _aware(value)
+    if not isinstance(value, str):
+        return False
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return False
+    return _aware(parsed)
+
+
+def validate_feedback_payload(payload: Mapping[str, Any] | None, *,
+                              baseline: Mapping[str, Any] | None = None) -> tuple[str, ...]:
+    """Validate a complete subjective-feedback payload without coercion or repair."""
+    errors: list[str] = []
+    if not isinstance(payload, Mapping):
+        return ("feedback payload must be a mapping",)
+    if set(payload) != _FEEDBACK_FIELDS:
+        errors.append("feedback payload fields do not exactly match the schema")
+        return tuple(errors)
+    if not isinstance(payload["feedback_id"], str) or not payload["feedback_id"]:
+        errors.append("feedback_id must be a non-empty string")
+    if payload["schema_version"] != SUBJECTIVE_FEEDBACK_SCHEMA:
+        errors.append("feedback schema_version is unsupported")
+    digest = payload["payload_hash"]
+    if not isinstance(digest, str) or re.fullmatch(r"[0-9a-f]{64}", digest) is None:
+        errors.append("feedback payload_hash must be a lowercase SHA-256 digest")
+    for name in ("rpe", "pain"):
+        value = payload[name]
+        if value is not None and (type(value) not in (int, float) or
+                                  not math.isfinite(value) or value < 0 or value > 10):
+            errors.append(f"feedback {name} must be null or a finite number from 0 to 10")
+    if payload["unusual_fatigue"] not in (None, "NONE", "MILD", "MODERATE", "HIGH"):
+        errors.append("feedback unusual_fatigue is invalid")
+    if payload["interruption"] is not None and type(payload["interruption"]) is not bool:
+        errors.append("feedback interruption must be boolean or null")
+    if payload["reason"] not in (None, "HEALTH", "WORK_TIME", "WEATHER", "EQUIPMENT", "OTHER"):
+        errors.append("feedback reason is invalid")
+    if payload["note"] is not None and not isinstance(payload["note"], str):
+        errors.append("feedback note must be a string or null")
+    if not _feedback_timestamp(payload["captured_at"]):
+        errors.append("feedback captured_at must be timezone-aware")
+    if not isinstance(payload["provenance"], Mapping) or not payload["provenance"] or \
+            not _valid_nested(payload["provenance"]):
+        errors.append("feedback provenance must be a non-empty valid mapping")
+    for name in ("missing_fields", "warnings"):
+        values = payload[name]
+        if not isinstance(values, (tuple, list)) or not all(isinstance(item, str) for item in values):
+            errors.append(f"feedback {name} must be a list of strings")
+        elif len(set(values)) != len(values):
+            errors.append(f"feedback {name} must not contain duplicates")
+    if baseline is not None:
+        baseline_errors = validate_feedback_payload(baseline)
+        if baseline_errors:
+            errors.append("canonical feedback baseline is invalid")
+        else:
+            for name in _IMMUTABLE_FEEDBACK_FIELDS:
+                if payload[name] != baseline[name]:
+                    errors.append(f"feedback immutable field {name} differs from baseline")
+    return tuple(errors)
+
+
 def validate_feedback_log(log: FeedbackEventLog) -> tuple[str, ...]:
     errors = []
     if not log.feedback_log_id:
@@ -60,7 +169,8 @@ def validate_feedback_log(log: FeedbackEventLog) -> tuple[str, ...]:
     return tuple(errors)
 
 
-def validate_feedback_event(event: FeedbackEvent, log: FeedbackEventLog) -> tuple[str, ...]:
+def validate_feedback_event(event: FeedbackEvent, log: FeedbackEventLog,
+                            baseline: Mapping[str, Any] | None = None) -> tuple[str, ...]:
     errors = list(validate_feedback_log(log))
     if event.schema_version != FEEDBACK_EVENT_SCHEMA:
         errors.append("feedback event schema version is unsupported")
@@ -86,6 +196,8 @@ def validate_feedback_event(event: FeedbackEvent, log: FeedbackEventLog) -> tupl
             errors.append("CORRECTED requires a complete payload and superseded event")
         if event.deletion_reason_or_ref is not None:
             errors.append("CORRECTED must not contain deletion metadata")
+        if baseline is not None:
+            errors.extend(validate_feedback_payload(event.corrected_payload, baseline=baseline))
     elif event.event_type is FeedbackEventType.DELETED:
         if event.corrected_payload is not None or event.deletion_reason_or_ref is None:
             errors.append("DELETED requires only deletion metadata")
@@ -154,8 +266,9 @@ def project_feedback(*, projection_id: str, projection_version: str,
                      log: FeedbackEventLog, baseline: Mapping[str, Any] | None,
                      events: Sequence[FeedbackEvent], provenance: Mapping[str, Any]) -> FeedbackProjection:
     errors = list(validate_feedback_log(log))
+    errors.extend(validate_feedback_payload(baseline))
     for event in events:
-        errors.extend(validate_feedback_event(event, log))
+        errors.extend(validate_feedback_event(event, log, baseline))
     errors.extend(_chain_errors(events, "feedback_event_id"))
     captured = [event for event in events if event.event_type is FeedbackEventType.CAPTURED]
     baseline_schema = "" if baseline is None else str(baseline.get("schema_version", ""))
@@ -184,9 +297,6 @@ def project_feedback(*, projection_id: str, projection_version: str,
                 errors.append("superseded feedback event is incoherent")
                 break
             if event.event_type is FeedbackEventType.CORRECTED:
-                if set(event.corrected_payload or {}) != set(baseline or {}):
-                    errors.append("corrected feedback payload is not a complete replacement")
-                    break
                 payload = event.corrected_payload
             else:
                 deleted = True

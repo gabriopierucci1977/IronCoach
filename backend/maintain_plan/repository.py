@@ -6,11 +6,12 @@ import sqlite3
 from pathlib import Path
 from typing import Any, Mapping
 
-from .models import (ActualSession, ExecutionEvaluation, FeedbackEvent, FeedbackEventLog,
+from .models import (ActualSession, Confirmation, ConfirmationStatus, ExecutionEvaluation, FeedbackEvent, FeedbackEventLog,
                      FeedbackProjection, MatchingResult, PrescriptionMapping,
                      PrescriptionSnapshot, SourceConflictProjection,
                      SourceConflictResolutionEvent, SourceConflictResolutionLog)
 from .lifecycle_service import (project_feedback, project_source_conflict,
+                                structurally_equivalent, validate_feedback_payload,
                                 validate_feedback_event, validate_feedback_log,
                                 validate_resolution_event, validate_resolution_log,
                                 validate_source_conflict_projection)
@@ -134,11 +135,79 @@ class MaintainPlanRepository:
                                session: ActualSession) -> None:
         planned_ids = {item.component_id for item in snapshot.components}
         observed_ids = {item.component_id for item in session.components}
-        if any(item.planned_component_ref.component_id not in planned_ids or
+        if any((item.planned_component_ref is not None and
+                item.planned_component_ref.component_id not in planned_ids) or
                (item.observed_component_ref is not None and
                 item.observed_component_ref.component_id not in observed_ids)
                for item in value.component_mappings):
             raise ValueError("mapping contains an unresolvable component reference")
+        planned_blocks = {(component.component_id, block.block_id)
+                          for component in snapshot.components for block in component.structure.blocks}
+        observed_blocks = {(component.component_id, block.block_id)
+                           for component in session.components for block in component.blocks}
+        observed_repetitions = {(component.component_id, block.block_id, repetition.repetition_id)
+                                for component in session.components for block in component.blocks
+                                for repetition in block.repetitions}
+        if any(item.planned_block_ref and
+               (item.planned_block_ref.component_id, item.planned_block_ref.block_id) not in planned_blocks
+               or item.observed_block_ref and
+               (item.observed_block_ref.component_id, item.observed_block_ref.block_id) not in observed_blocks
+               for item in value.block_mappings):
+            raise ValueError("mapping contains an unresolvable block reference")
+        if any(item.observed_repetition_ref and
+               (item.observed_repetition_ref.component_id, item.observed_repetition_ref.block_id,
+                item.observed_repetition_ref.repetition_id) not in observed_repetitions
+               for item in value.repetition_mappings):
+            raise ValueError("mapping contains an unresolvable repetition reference")
+        planned_transitions = {item.transition_id for item in snapshot.transitions}
+        observed_transitions = {item.transition_id for item in session.transitions}
+        if any(item.planned_transition_ref and item.planned_transition_ref.transition_id not in planned_transitions
+               or item.observed_transition_ref and item.observed_transition_ref.transition_id not in observed_transitions
+               for item in value.transition_mappings):
+            raise ValueError("mapping contains an unresolvable transition reference")
+
+    def create_confirmation(self, value: Confirmation) -> None:
+        result = self.get_matching_result(value.matching_result_ref)
+        if result is None or result.prescription_snapshot_ref != value.prescription_snapshot_ref:
+            raise ValueError("confirmation must reference the exact persisted matching result")
+        if result.candidate_set != value.candidate_session_refs:
+            raise ValueError("confirmation candidate set differs from matching result")
+        if value.selected_session_ref is not None:
+            if value.selected_session_ref not in value.candidate_session_refs:
+                raise ValueError("confirmation selected session is outside candidate set")
+            if self.get_actual_session(value.selected_session_ref) is None:
+                raise ValueError("confirmation selected session is unresolved")
+        if value.status is ConfirmationStatus.REQUIRED and (
+                value.answer_type is not None or value.selected_session_ref is not None or
+                value.actor is not None or value.answered_at is not None):
+            raise ValueError("unanswered confirmation contains answer data")
+        self._insert(
+            "INSERT INTO maintain_plan_confirmations VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (value.confirmation_id, value.matching_result_ref,
+             value.prescription_snapshot_ref, value.status.value,
+             None if value.answer_type is None else value.answer_type.value,
+             value.selected_session_ref, PAYLOAD_SCHEMA_VERSION, serialize_contract(value)),
+        )
+
+    def get_confirmation(self, identifier: str) -> Confirmation | None:
+        stored = self._get("maintain_plan_confirmations", "confirmation_id", identifier,
+                           Confirmation)
+        if stored is None:
+            return None
+        row, value = stored
+        metadata = (value.confirmation_id, value.matching_result_ref,
+                    value.prescription_snapshot_ref, value.status.value,
+                    None if value.answer_type is None else value.answer_type.value,
+                    value.selected_session_ref)
+        if (row["confirmation_id"], row["matching_result_ref"],
+                row["prescription_snapshot_ref"], row["status"], row["answer_type"],
+                row["selected_session_ref"]) != metadata:
+            raise ValueError("stored confirmation metadata does not match payload")
+        result = self.get_matching_result(value.matching_result_ref)
+        if result is None or result.prescription_snapshot_ref != value.prescription_snapshot_ref or \
+                result.candidate_set != value.candidate_session_refs:
+            raise ValueError("stored confirmation references are incoherent")
+        return value
 
     def create_matching_result(self, value: MatchingResult) -> None:
         self._require_valid(validate_matching_result(value))
@@ -219,6 +288,7 @@ class MaintainPlanRepository:
         if session is None or session.athlete_feedback is None:
             raise ValueError("feedback log must resolve an actual-session feedback baseline")
         baseline = session.athlete_feedback
+        self._require_valid(validate_feedback_payload(baseline))
         if baseline.get("feedback_id") != value.feedback_ref.feedback_id:
             raise ValueError("feedback log does not identify the persisted baseline")
         self._insert(
@@ -243,15 +313,17 @@ class MaintainPlanRepository:
         if session is None or session.athlete_feedback is None or session.athlete_feedback.get(
                 "feedback_id") != value.feedback_ref.feedback_id:
             raise ValueError("stored feedback log has an unresolved baseline")
+        self._require_valid(validate_feedback_payload(session.athlete_feedback))
         return value
 
     def append_feedback_event(self, value: FeedbackEvent) -> None:
         log = self.get_feedback_log(value.feedback_log_ref.feedback_log_id)
         if log is None:
             raise ValueError("feedback event must reference a persisted log")
-        self._require_valid(validate_feedback_event(value, log))
         session = self.get_actual_session(log.actual_session_ref.session_id)
         baseline = None if session is None else session.athlete_feedback
+        self._require_valid(validate_feedback_payload(baseline))
+        self._require_valid(validate_feedback_event(value, log, baseline))
         if (baseline is None or baseline.get("schema_version") != value.baseline_schema_version or
                 baseline.get("payload_hash") != value.baseline_payload_hash):
             raise ValueError("feedback event baseline metadata does not match persisted baseline")
@@ -288,14 +360,17 @@ class MaintainPlanRepository:
         log = self.get_feedback_log(feedback_log_id)
         if log is None:
             raise ValueError("feedback log is unavailable")
+        session = self.get_actual_session(log.actual_session_ref.session_id)
+        baseline = None if session is None else session.athlete_feedback
+        self._require_valid(validate_feedback_payload(baseline))
         return tuple(self._list_payloads(
             "maintain_plan_feedback_events", "feedback_log_id", feedback_log_id,
             "event_sequence", FeedbackEvent,
-            lambda row, value: self._validate_feedback_event_row(row, value, log)))
+            lambda row, value: self._validate_feedback_event_row(row, value, log, baseline)))
 
     @staticmethod
-    def _validate_feedback_event_row(row, value, log):
-        errors = validate_feedback_event(value, log)
+    def _validate_feedback_event_row(row, value, log, baseline):
+        errors = validate_feedback_event(value, log, baseline)
         if errors:
             raise ValueError("; ".join(errors))
         if (row["feedback_event_id"], row["feedback_log_id"], row["session_id"],
@@ -356,15 +431,18 @@ class MaintainPlanRepository:
 
     def create_source_conflict(self, session_id: str, value: Mapping[str, Any]) -> None:
         session = self.get_actual_session(session_id)
-        if session is None or not any(item.get("conflict_id") == value.get("conflict_id")
-                                      for item in session.source_conflicts):
+        matches = (() if session is None else tuple(
+            item for item in session.source_conflicts if structurally_equivalent(item, value)))
+        if len(matches) != 1:
             raise ValueError("source conflict must resolve exactly in the persisted session")
-        if value.get("schema_version") != "maintain-plan-source-conflict/1.0.0-draft":
+        canonical = matches[0]
+        if (canonical.get("session_id", session_id) != session_id or
+                canonical.get("schema_version") != "maintain-plan-source-conflict/1.0.0-draft"):
             raise ValueError("source conflict schema version is unsupported")
         self._insert(
             "INSERT INTO maintain_plan_source_conflicts VALUES (?, ?, ?, ?, ?)",
-            (value["conflict_id"], session_id, value["schema_version"],
-             PAYLOAD_SCHEMA_VERSION, serialize_contract(value)),
+            (canonical["conflict_id"], session_id, canonical["schema_version"],
+             PAYLOAD_SCHEMA_VERSION, serialize_contract(canonical)),
         )
 
     def get_source_conflict(self, session_id: str, conflict_id: str) -> dict[str, Any] | None:
@@ -381,8 +459,9 @@ class MaintainPlanRepository:
                 row["schema_version"] != value.get("schema_version")):
             raise ValueError("stored source conflict metadata does not match payload")
         session = self.get_actual_session(session_id)
-        if session is None or sum(item.get("conflict_id") == conflict_id
-                                  for item in session.source_conflicts) != 1:
+        matches = (() if session is None else tuple(
+            item for item in session.source_conflicts if structurally_equivalent(item, value)))
+        if len(matches) != 1 or value.get("session_id", session_id) != session_id:
             raise ValueError("stored source conflict does not resolve exactly in its session")
         return value
 
