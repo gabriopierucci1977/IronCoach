@@ -68,7 +68,8 @@ def test_conflict_impact_is_exact_and_ghost_is_rejected():
     session = replace(session, source_conflicts=(conflict,))
     impact = evaluate_source_conflict_impact(session, mapping, conflict,
         impact_evaluation_id="impact-1", evaluation_version="1", evaluated_at=NOW)
-    assert impact.affected_dimensions == (AffectedDimension.QUANTITY,)
+    assert impact.affected_dimensions == (
+        AffectedDimension.QUANTITY, AffectedDimension.DOSE, AffectedDimension.DECISION)
     with pytest.raises(ValueError, match="ghost"):
         evaluate_source_conflict_impact(session, mapping, {**conflict, "conflict_id": "ghost"},
             impact_evaluation_id="impact-2", evaluation_version="1", evaluated_at=NOW)

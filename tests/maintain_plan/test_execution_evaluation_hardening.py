@@ -115,16 +115,16 @@ def test_direct_id_preserves_execution_deviation_and_evaluation_is_immutable():
         evaluation.overall = OverallStatus.IN_LINE
 
 
-@pytest.mark.parametrize("path,dimension", [
-    ("components.run.discipline", AffectedDimension.IDENTITY),
-    ("components.run.environment", AffectedDimension.IDENTITY),
-    ("components.run.quantity_observation", AffectedDimension.QUANTITY),
-    ("components.run.intensity_observations", AffectedDimension.INTENSITY),
-    ("components.run.blocks", AffectedDimension.STRUCTURE),
-    ("components.run.repetitions", AffectedDimension.STRUCTURE),
-    ("transitions.duration_minutes", AffectedDimension.STRUCTURE),
+@pytest.mark.parametrize("path,dimensions", [
+    ("components.run.discipline", (AffectedDimension.IDENTITY, AffectedDimension.DECISION)),
+    ("components.run.environment", (AffectedDimension.IDENTITY, AffectedDimension.DECISION)),
+    ("components.run.quantity_observation", (AffectedDimension.QUANTITY, AffectedDimension.DOSE, AffectedDimension.DECISION)),
+    ("components.run.intensity_observations", (AffectedDimension.INTENSITY, AffectedDimension.DOSE, AffectedDimension.DECISION)),
+    ("components.run.blocks.main.block_type", (AffectedDimension.STRUCTURE, AffectedDimension.DECISION)),
+    ("components.run.blocks.main.repetitions", (AffectedDimension.STRUCTURE, AffectedDimension.DECISION)),
+    ("transitions.run-bike.duration_minutes", (AffectedDimension.STRUCTURE, AffectedDimension.DECISION)),
 ])
-def test_conflict_field_path_classification_is_contract_only(path, dimension):
+def test_conflict_field_path_classification_is_contract_only(path, dimensions):
     snapshot, session, mapping = canonical()
     conflict = {"conflict_id": "c", "schema_version": "maintain-plan-source-conflict/1.0.0-draft",
                 "field_path": path, "values": ({"value": 1, "source": "Garmin"},
@@ -133,7 +133,7 @@ def test_conflict_field_path_classification_is_contract_only(path, dimension):
     session = replace(session, source_conflicts=(conflict,))
     impact = evaluate_source_conflict_impact(session, mapping, conflict,
         impact_evaluation_id="impact", evaluation_version="1", evaluated_at=NOW)
-    assert impact.affected_dimensions == (dimension,)
+    assert impact.affected_dimensions == dimensions
 
 
 def test_irrelevant_conflict_has_no_affected_axis_and_duplicate_is_rejected():
@@ -168,10 +168,11 @@ def test_irrelevant_conflict_has_no_affected_axis_and_duplicate_is_rejected():
 ])
 def test_projection_state_controls_only_the_affected_axis(projection, status):
     snapshot, session, mapping = canonical()
-    session = replace(session, source_conflicts=(CONFLICT,))
+    conflict = dict(CONFLICT, field_path="components.run.quantity_observation")
+    session = replace(session, source_conflicts=(conflict,))
     impact = SourceConflictImpactEvaluation("impact", "1",
-        SourceConflictRef(session.session_id, CONFLICT["conflict_id"]), mapping.mapping_id,
-        ConflictImpactStatus.EVALUATED, (AffectedDimension.QUANTITY,),
+        SourceConflictRef(session.session_id, conflict["conflict_id"]), mapping.mapping_id,
+        ConflictImpactStatus.EVALUATED, (AffectedDimension.QUANTITY, AffectedDimension.DOSE, AffectedDimension.DECISION),
         PolicyRef("maintain-plan-source-conflict-impact", "1.0.0-draft"), {}, NOW)
     result = evaluate(snapshot, session, mapping, evaluation_id="conflicted", evaluated_at=NOW,
                       conflict_projections=(projection,), conflict_impacts=(impact,))
@@ -186,7 +187,7 @@ def test_projection_and_impact_cross_ownership_are_validation_errors():
     snapshot, session, mapping = canonical()
     session = replace(session, source_conflicts=(CONFLICT,))
     projection = replace(conflict_projection(()), actual_session_ref=ActualSessionRef("foreign"))
-    with pytest.raises(ValueError, match="foreign-session"):
+    with pytest.raises(ValueError, match="hash mismatch|foreign-session"):
         evaluate(snapshot, session, mapping, evaluation_id="bad", evaluated_at=NOW,
                  conflict_projections=(projection,))
     impact = SourceConflictImpactEvaluation("impact", "1",

@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 from datetime import datetime
+import re
 from typing import Mapping
 
 from .models import *
+from .lifecycle_service import validate_source_conflict_projection
 from .validators import (validate_actual_session, validate_execution_evaluation,
-                         validate_mapping_ownership, validate_prescription)
+                         validate_mapping_ownership, validate_prescription,
+                         validate_source_conflict_impact)
 
 CAPABILITY = PolicyRef("maintain-plan-evaluator-capability", "1.0.0-draft")
 AGGREGATION = PolicyRef("maintain-plan-component-aggregation", "1.0.0-draft")
@@ -15,6 +18,29 @@ EXECUTION = PolicyRef("maintain-plan-execution-aggregation", "1.0.0-draft")
 COMPOSITION = PolicyRef("maintain-plan-session-composition", "1.0.0-draft")
 DOSE = PolicyRef("maintain-plan-dose-matrix", "1.0.0-draft")
 NULL_POLICY = PolicyRef(None, None)
+
+_FIELD_PATHS = (
+    (re.compile(r"^components\.(?P<component>[^.]+)\.(discipline|environment|mode)$"),
+     (AffectedDimension.IDENTITY, AffectedDimension.DECISION)),
+    (re.compile(r"^components\.(?P<component>[^.]+)\.(quantity_observation|quantity_primary_metric|quantity_unit)$"),
+     (AffectedDimension.QUANTITY, AffectedDimension.DOSE, AffectedDimension.DECISION)),
+    (re.compile(r"^components\.(?P<component>[^.]+)\.(intensity_observations|intensity_methods|temporal_coverage)$"),
+     (AffectedDimension.INTENSITY, AffectedDimension.DOSE, AffectedDimension.DECISION)),
+    (re.compile(r"^components\.(?P<component>[^.]+)\.blocks\.[^.]+\.(block_index|block_type|repetitions|quantity_observation|intensity_observation)$"),
+     (AffectedDimension.STRUCTURE, AffectedDimension.DECISION)),
+    (re.compile(r"^transitions\.[^.]+\.(from_component_ref|to_component_ref|start|end|duration_minutes)$"),
+     (AffectedDimension.STRUCTURE, AffectedDimension.DECISION)),
+    (re.compile(r"^composition$"), (AffectedDimension.IDENTITY, AffectedDimension.DECISION)),
+)
+
+
+def classify_source_conflict_field_path(path: str) -> tuple[AffectedDimension, ...]:
+    if type(path) is not str:
+        return ()
+    for pattern, dimensions in _FIELD_PATHS:
+        if pattern.fullmatch(path):
+            return dimensions
+    return ()
 
 
 def evaluate_source_conflict_impact(session: ActualSession, mapping: PrescriptionMapping,
@@ -30,20 +56,11 @@ def evaluate_source_conflict_impact(session: ActualSession, mapping: Prescriptio
         raise ValueError("source conflict requires conflict_id and field_path")
     if sum(item.get("conflict_id") == conflict_id for item in session.source_conflicts) != 1:
         raise ValueError("source conflict reference is ghost or duplicated")
-    dimensions = []
-    tokens = set(path.replace("[", ".").replace("]", "").split("."))
-    if tokens & {"discipline", "environment", "mode", "composition"}:
-        dimensions.append(AffectedDimension.IDENTITY)
-    if tokens & {"quantity_observation", "quantity_primary_metric", "quantity_unit", "distance", "active_duration"}:
-        dimensions.append(AffectedDimension.QUANTITY)
-    if tokens & {"intensity_observations", "intensity_methods", "time_in_target", "valid_coverage"}:
-        dimensions.append(AffectedDimension.INTENSITY)
-    if tokens & {"blocks", "repetitions", "transitions", "block_index", "repetition_index", "duration_minutes"}:
-        dimensions.append(AffectedDimension.STRUCTURE)
+    dimensions = classify_source_conflict_field_path(path)
     status = ConflictImpactStatus.EVALUATED
     return SourceConflictImpactEvaluation(
         impact_evaluation_id, evaluation_version, SourceConflictRef(session.session_id, conflict_id),
-        mapping.mapping_id, status, tuple(dimensions),
+        mapping.mapping_id, status, dimensions,
         PolicyRef("maintain-plan-source-conflict-impact", "1.0.0-draft"),
         provenance or {}, evaluated_at, (), ())
 
@@ -76,18 +93,74 @@ def _quantity(component: PlannedComponent, observed: ObservedComponent, result_i
     if ratio is None:
         return DimensionResult(result_id, AdherenceStatus.INSUFFICIENT_DATA,
                                component.quantity.policy, missing_fields=("quantity.target.value",))
-    # The v1 table has the same duration bands for supported continuous sports.
-    if .90 <= ratio <= 1.05:
-        status, direction, band = AdherenceStatus.MET, Direction.IN_LINE, SeverityBand.MAIN
-    elif .80 <= ratio <= 1.15:
-        status, direction, band = AdherenceStatus.PARTIALLY_MET, (Direction.LOWER if ratio < .9 else Direction.HIGHER), SeverityBand.SECONDARY
+    if component.structure.session_type is SessionType.INTERVALS:
+        main_low, secondary_low, main_high, secondary_high = .95, .80, 1.05, 1.15
+    elif (component.discipline is Discipline.SWIM and
+          component.quantity.primary_metric is QuantityMetric.DISTANCE and
+          component.mode is Mode.POOL):
+        main_low, secondary_low, main_high, secondary_high = .95, .90, 1.05, 1.10
+    elif component.quantity.primary_metric is QuantityMetric.ACTIVE_DURATION:
+        main_low, secondary_low, main_high, secondary_high = .90, .80, 1.05, 1.15
     else:
-        status, direction, band = AdherenceStatus.NOT_MET, (Direction.LOWER if ratio < .8 else Direction.HIGHER), SeverityBand.OUT_OF_BAND
+        return DimensionResult(result_id, AdherenceStatus.INSUFFICIENT_DATA,
+            component.quantity.policy,
+            missing_fields=("quantity.quantity_band_policy_ref",))
+    if main_low <= ratio <= main_high:
+        status, direction, band = AdherenceStatus.MET, Direction.IN_LINE, SeverityBand.MAIN
+    elif secondary_low <= ratio <= secondary_high:
+        status, direction, band = AdherenceStatus.PARTIALLY_MET, (Direction.LOWER if ratio < main_low else Direction.HIGHER), SeverityBand.SECONDARY
+    else:
+        status, direction, band = AdherenceStatus.NOT_MET, (Direction.LOWER if ratio < secondary_low else Direction.HIGHER), SeverityBand.OUT_OF_BAND
     return DimensionResult(result_id, status, component.quantity.policy, direction, band,
                            {"planned": target.value, "observed": value, "unit": component.quantity.unit})
 
 
+def _ratio(value):
+    if type(value) is not dict and not hasattr(value, "get"):
+        return None
+    result = value.get("value")
+    return result if type(result) in (int, float) and 0 <= result <= 1 else None
+
+
+def _interval_intensity(component: PlannedComponent, observed: ObservedComponent, result_id: str):
+    required = [b for b in component.structure.blocks if b.requiredness is Requiredness.REQUIRED]
+    repetitions = []
+    missing = []
+    for block in required:
+        if block.planned_repetitions is None:
+            continue
+        candidates = [b for b in observed.blocks if b.block_id == block.block_id]
+        if len(candidates) != 1 or block.evaluation_window is None:
+            missing.append(block.block_id); continue
+        actual = sorted(candidates[0].repetitions, key=lambda r: r.repetition_index)
+        if len(actual) < block.planned_repetitions or [r.repetition_index for r in actual] != list(range(len(actual))):
+            missing.append(block.block_id); continue
+        for repetition in actual[:block.planned_repetitions]:
+            coverage = _ratio(repetition.valid_coverage)
+            target = _ratio(repetition.time_in_target)
+            declared_window = None if repetition.time_in_target is None else repetition.time_in_target.get("window")
+            if coverage is None or coverage < .8 or target is None or declared_window != block.evaluation_window.value:
+                missing.append(repetition.repetition_id)
+            else:
+                repetitions.append(target >= .7)
+    if missing or not repetitions:
+        return DimensionResult(result_id, AdherenceStatus.INSUFFICIENT_DATA,
+            component.intensity.policy, missing_fields=tuple(missing or ("repetitions",)))
+    conformity = sum(repetitions) / len(repetitions)
+    if conformity >= .9:
+        status, band = AdherenceStatus.MET, SeverityBand.MAIN
+    elif conformity >= .7:
+        status, band = AdherenceStatus.PARTIALLY_MET, SeverityBand.SECONDARY
+    else:
+        status, band = AdherenceStatus.NOT_MET, SeverityBand.OUT_OF_BAND
+    return DimensionResult(result_id, status, component.intensity.policy,
+                           Direction.IN_LINE if status is AdherenceStatus.MET else Direction.UNDETERMINED,
+                           band, {"conforming_repetitions": sum(repetitions), "required_repetitions": len(repetitions)})
+
+
 def _intensity(component: PlannedComponent, observed: ObservedComponent, result_id: str):
+    if component.structure.session_type is SessionType.INTERVALS:
+        return _interval_intensity(component, observed, result_id)
     data = observed.intensity_observations
     method = component.intensity.primary_method.value
     if not data or method not in observed.intensity_methods:
@@ -107,6 +180,56 @@ def _intensity(component: PlannedComponent, observed: ObservedComponent, result_
     direction = (Direction.UNDETERMINED if not isinstance(above, (int, float)) or not isinstance(below, (int, float))
                  else Direction.HIGHER if above > below else Direction.LOWER if below > above else Direction.MIXED)
     return DimensionResult(result_id, status, component.intensity.policy, direction, band, data)
+
+
+def _identity(component, observed):
+    if observed.discipline is None or observed.environment is None or observed.mode is None:
+        return AdherenceStatus.INSUFFICIENT_DATA
+    if (observed.discipline, observed.environment, observed.mode) == (
+            component.discipline, component.environment, component.mode):
+        return AdherenceStatus.MET
+    allowed = any(s.discipline is observed.discipline and
+                  (s.environment is None or s.environment is observed.environment) and
+                  (s.mode is None or s.mode is observed.mode)
+                  for s in component.allowed_substitutions)
+    return AdherenceStatus.MET if allowed else AdherenceStatus.NOT_MET
+
+
+def _structure(component, observed, mapping, snapshot, session):
+    block_maps = [b for b in mapping.block_mappings if
+                  (b.planned_block_ref and b.planned_block_ref.component_id == component.component_id) or
+                  (b.observed_block_ref and b.observed_block_ref.component_id == observed.component_id)]
+    planned_by_id = {b.block_id: b for b in component.structure.blocks}
+    missing = [b for b in block_maps if b.match_status is MatchStatus.PLANNED_ONLY and
+               b.planned_block_ref and planned_by_id[b.planned_block_ref.block_id].requiredness is Requiredness.REQUIRED]
+    if any(planned_by_id[b.planned_block_ref.block_id].block_type in (BlockType.MAIN_SET, BlockType.WORK) for b in missing):
+        return AdherenceStatus.NOT_MET
+    if missing:
+        return AdherenceStatus.PARTIALLY_MET
+    for block in component.structure.blocks:
+        if block.requiredness is not Requiredness.REQUIRED or block.planned_repetitions is None:
+            continue
+        matches = [b for b in observed.blocks if b.block_id == block.block_id]
+        if len(matches) != 1:
+            return AdherenceStatus.NOT_MET if block.block_type in (BlockType.MAIN_SET, BlockType.WORK) else AdherenceStatus.PARTIALLY_MET
+        reps = matches[0].repetitions
+        if len(reps) < block.planned_repetitions:
+            return AdherenceStatus.NOT_MET if block.block_type in (BlockType.MAIN_SET, BlockType.WORK) else AdherenceStatus.PARTIALLY_MET
+        if [r.repetition_index for r in reps] != list(range(len(reps))):
+            return AdherenceStatus.PARTIALLY_MET
+        if (block.recovery.applicability is Applicability.REQUIRED and
+                block.recovery.target is not None and
+                not any(observed_block.block_type is BlockType.RECOVERY
+                        for observed_block in observed.blocks)):
+            return AdherenceStatus.NOT_MET
+    if snapshot.composition is Composition.BRICK:
+        for transition in snapshot.transitions:
+            matches = [t for t in session.transitions if t.from_component_ref == transition.from_component_id and t.to_component_ref == transition.to_component_id]
+            if len(matches) != 1 or matches[0].duration_minutes is None:
+                return AdherenceStatus.INSUFFICIENT_DATA
+            if matches[0].duration_minutes > transition.applicable_limit_minutes:
+                return AdherenceStatus.NOT_MET
+    return AdherenceStatus.MET
 
 
 def _dose(result_id, quantity, intensity, now):
@@ -145,14 +268,31 @@ def evaluate(snapshot: PrescriptionSnapshot, session: ActualSession, mapping: Pr
     if len({i.conflict_impact_evaluation_id for i in conflict_impacts}) != len(conflict_impacts):
         raise ValueError("conflict impacts must not be duplicated")
     for projection in conflict_projections:
+        projection_errors = validate_source_conflict_projection(projection)
+        if projection_errors:
+            raise ValueError("; ".join(projection_errors))
         if (projection.actual_session_ref.session_id != session.session_id or
                 conflict_ids.count(projection.source_conflict_id) != 1):
             raise ValueError("source-conflict projection is ghost or foreign-session")
     for impact in conflict_impacts:
+        impact_errors = validate_source_conflict_impact(impact)
+        if impact_errors:
+            raise ValueError("; ".join(impact_errors))
         if (impact.prescription_mapping_ref != mapping.mapping_id or
                 impact.source_conflict_ref.session_id != session.session_id or
                 conflict_ids.count(impact.source_conflict_ref.conflict_id) != 1):
             raise ValueError("conflict impact is ghost, foreign-session, or cross-mapping")
+        canonical = evaluate_source_conflict_impact(
+            session, mapping, next(c for c in session.source_conflicts
+                                   if c.get("conflict_id") == impact.source_conflict_ref.conflict_id),
+            impact_evaluation_id=impact.conflict_impact_evaluation_id,
+            evaluation_version=impact.evaluation_version, evaluated_at=impact.evaluated_at,
+            provenance=impact.provenance)
+        if impact != canonical:
+            raise ValueError("conflict impact does not match canonical field-path classification")
+    projection_conflicts = [p.source_conflict_id for p in conflict_projections]
+    if len(projection_conflicts) != len(set(projection_conflicts)):
+        raise ValueError("only one source-conflict projection per canonical conflict is allowed")
     planned = {x.component_id: x for x in snapshot.components}
     observed = {x.component_id: x for x in session.components}
     conflicts = {item.get("conflict_id"): item for item in session.source_conflicts}
@@ -191,10 +331,8 @@ def evaluate(snapshot: PrescriptionSnapshot, session: ActualSession, mapping: Pr
                               DimensionResult(f"{rid}:intensity", AdherenceStatus.INSUFFICIENT_DATA, p.intensity.policy, missing_fields=("observed_component",)),
                               DimensionResult(f"{rid}:structure", AdherenceStatus.NOT_MET, p.structure.policy)]
             else:
-                identity = AdherenceStatus.MET if (o.discipline is p.discipline and o.environment is p.environment and o.mode is p.mode) else (AdherenceStatus.INSUFFICIENT_DATA if None in (o.discipline, o.environment, o.mode) else AdherenceStatus.NOT_MET)
-                block_maps = [b for b in mapping.block_mappings if (b.planned_block_ref and b.planned_block_ref.component_id == p.component_id) or (b.observed_block_ref and b.observed_block_ref.component_id == o.component_id)]
-                structure = (AdherenceStatus.NOT_MET if any(b.match_status is MatchStatus.PLANNED_ONLY for b in block_maps) else
-                             AdherenceStatus.MET if block_maps or not p.structure.blocks else AdherenceStatus.INSUFFICIENT_DATA)
+                identity = _identity(p, o)
+                structure = _structure(p, o, mapping, snapshot, session)
                 dimensions = [DimensionResult(f"{rid}:identity", identity, p.identity_policy),
                               _quantity(p, o, f"{rid}:quantity"), _intensity(p, o, f"{rid}:intensity"),
                               DimensionResult(f"{rid}:structure", structure, p.structure.policy)]
