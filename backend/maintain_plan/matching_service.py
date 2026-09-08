@@ -37,7 +37,8 @@ def _component_checks(snapshot: PrescriptionSnapshot, session: ActualSession) ->
         "scheduled_window": snapshot.scheduled_window.start <= session.start <= snapshot.scheduled_window.end,
         "composition": session.composition is snapshot.composition,
         "component_cardinality": len(observed) == len(planned),
-        "component_order": tuple(item.component_index for item in observed) == tuple(range(len(observed))),
+        "component_order": all(right.component_index == left.component_index + 1
+                               for left, right in zip(observed, observed[1:])),
         "disciplines": disciplines_match,
     }
 
@@ -53,15 +54,15 @@ def _consecutivity(snapshot: PrescriptionSnapshot, session: ActualSession) -> tu
               for item in snapshot.transitions}
     transitions = {(item.from_component_ref, item.to_component_ref): item
                    for item in session.transitions}
-    for left, right in zip(observed, observed[1:]):
+    for position, (left, right) in enumerate(zip(observed, observed[1:])):
         if left.start is None or left.end is None or right.start is None:
             return False, "component timing is incomplete"
         if right.start < left.end:
             return False, "components overlap"
         if len(observed) != len(planned):
             return False, "component sequence is not consecutive"
-        limit = limits.get((planned[left.component_index].component_id,
-                            planned[right.component_index].component_id))
+        limit = limits.get((planned[position].component_id,
+                            planned[position + 1].component_id))
         if limit is None:
             return False, "transition gap policy is missing"
         gap = (right.start - left.end).total_seconds() / 60
@@ -100,25 +101,56 @@ def build_mapping(snapshot: PrescriptionSnapshot, session: ActualSession, *, map
             status,
         ))
     blocks, repetitions = [], []
-    for p, o in zip(planned, observed):
-        for pb, ob in zip(sorted(p.structure.blocks, key=lambda x: x.block_index),
-                          sorted(o.blocks, key=lambda x: x.block_index)):
+    for component_position in range(max(len(planned), len(observed))):
+        p = planned[component_position] if component_position < len(planned) else None
+        o = observed[component_position] if component_position < len(observed) else None
+        planned_blocks = () if p is None else tuple(sorted(p.structure.blocks,
+                                                           key=lambda value: value.block_index))
+        observed_blocks = () if o is None else tuple(sorted(o.blocks,
+                                                            key=lambda value: value.block_index))
+        for block_position in range(max(len(planned_blocks), len(observed_blocks))):
+            pb = planned_blocks[block_position] if block_position < len(planned_blocks) else None
+            ob = observed_blocks[block_position] if block_position < len(observed_blocks) else None
+            block_status = (MatchStatus.MATCHED if pb is not None and ob is not None else
+                            MatchStatus.PLANNED_ONLY if pb is not None else MatchStatus.OBSERVED_ONLY)
             blocks.append(BlockMapping(
-                PlannedBlockRef(snapshot.prescription_snapshot_id, p.component_id, pb.block_id),
-                ObservedBlockRef(session.session_id, o.component_id, ob.block_id)))
-            for position, repetition in enumerate(ob.repetitions):
+                None if pb is None else PlannedBlockRef(
+                    snapshot.prescription_snapshot_id, p.component_id, pb.block_id),
+                None if ob is None else ObservedBlockRef(
+                    session.session_id, o.component_id, ob.block_id), block_status))
+            planned_count = 0 if pb is None or pb.planned_repetitions is None else pb.planned_repetitions
+            observed_repetitions = () if ob is None else tuple(sorted(
+                ob.repetitions, key=lambda value: value.repetition_index))
+            for repetition_position in range(max(planned_count, len(observed_repetitions))):
+                repetition = (observed_repetitions[repetition_position]
+                              if repetition_position < len(observed_repetitions) else None)
+                repetition_status = (MatchStatus.MATCHED
+                                     if repetition_position < planned_count and repetition is not None else
+                                     MatchStatus.PLANNED_ONLY if repetition_position < planned_count else
+                                     MatchStatus.OBSERVED_ONLY)
                 repetitions.append(RepetitionMapping(
-                    PlannedRepetitionRef(snapshot.prescription_snapshot_id, p.component_id,
-                                         pb.block_id, position),
-                    ObservedRepetitionRef(session.session_id, o.component_id, ob.block_id,
-                                          repetition.repetition_id)))
-    transitions = tuple(TransitionMapping(
-        PlannedTransitionRef(snapshot.prescription_snapshot_id, p.transition_id),
-        ObservedTransitionRef(session.session_id, o.transition_id))
-        for p, o in zip(snapshot.transitions, session.transitions))
+                    None if repetition_position >= planned_count else PlannedRepetitionRef(
+                        snapshot.prescription_snapshot_id, p.component_id, pb.block_id,
+                        repetition_position),
+                    None if repetition is None else ObservedRepetitionRef(
+                        session.session_id, o.component_id, ob.block_id, repetition.repetition_id),
+                    repetition_status))
+    planned_transitions = tuple(snapshot.transitions)
+    observed_transitions = tuple(session.transitions)
+    transitions = []
+    for position in range(max(len(planned_transitions), len(observed_transitions))):
+        p = planned_transitions[position] if position < len(planned_transitions) else None
+        o = observed_transitions[position] if position < len(observed_transitions) else None
+        status = (MatchStatus.MATCHED if p is not None and o is not None else
+                  MatchStatus.PLANNED_ONLY if p is not None else MatchStatus.OBSERVED_ONLY)
+        transitions.append(TransitionMapping(
+            None if p is None else PlannedTransitionRef(snapshot.prescription_snapshot_id,
+                                                         p.transition_id),
+            None if o is None else ObservedTransitionRef(session.session_id, o.transition_id),
+            status))
     value = PrescriptionMapping(mapping_id, snapshot.prescription_snapshot_id, session.session_id,
                                 resolution_method, tuple(components), tuple(blocks),
-                                tuple(repetitions), transitions, confirmation_ref, actor,
+                                tuple(repetitions), tuple(transitions), confirmation_ref, actor,
                                 created_at if confirmation_ref else None, created_at,
                                 provenance or {})
     errors = validate_mapping(value)
@@ -137,7 +169,8 @@ def match(snapshot: PrescriptionSnapshot, sessions: tuple[ActualSession, ...], *
             matching_result_id, MatchingStatus.NOT_EVALUABLE, None,
             snapshot.matching_policy, snapshot.prescription_snapshot_id, (), (), None,
             provenance or {}, ("brick_policy",),
-            ("composed session requires an explicit consecutivity policy",))
+            ("composed session requires an explicit consecutivity policy",),
+            tuple(sorted(session.session_id for session in sessions)))
     errors = validate_prescription(snapshot)
     if errors:
         raise ValueError("; ".join(errors))
@@ -153,14 +186,15 @@ def match(snapshot: PrescriptionSnapshot, sessions: tuple[ActualSession, ...], *
         if len(direct) != 1 or len(direct_sessions) != 1:
             return MatchingResult(matching_result_id, MatchingStatus.CONFIRMATION_REQUIRED, None,
                                   snapshot.matching_policy, snapshot.prescription_snapshot_id, (), (),
-                                  None, provenance or {}, (), ("direct ID is invalid, dangling, contradictory, or ambiguous",))
+                                  None, provenance or {}, (), ("direct ID is invalid, dangling, contradictory, or ambiguous",),
+                                  tuple(sorted(by_id)))
         session = by_id[next(iter(direct_sessions))]
         mapping = build_mapping(snapshot, session, mapping_id=mapping_id, created_at=created_at,
                                 resolution_method=ResolutionMethod.AUTOMATIC,
                                 provenance=provenance)
         return MatchingResult(matching_result_id, MatchingStatus.MATCHED, mapping,
                               snapshot.matching_policy, snapshot.prescription_snapshot_id,
-                              (session.session_id,), (), None, provenance or {})
+                              (session.session_id,), (), None, provenance or {}, (), (), tuple(sorted(by_id)))
 
     evidence, candidates, policy_missing = [], [], False
     for session in sorted(sessions, key=lambda value: value.session_id):
@@ -190,4 +224,4 @@ def match(snapshot: PrescriptionSnapshot, sessions: tuple[ActualSession, ...], *
         warnings = ("Non ho trovato un'attività associabile alla seduta prevista",)
     return MatchingResult(matching_result_id, status, mapping, snapshot.matching_policy,
                           snapshot.prescription_snapshot_id, tuple(candidates), tuple(evidence),
-                          None, provenance or {}, (), warnings)
+                          None, provenance or {}, (), warnings, tuple(sorted(by_id)))

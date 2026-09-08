@@ -231,7 +231,18 @@ _MIGRATION_3_SQL = """
                 ('SELECT_CANDIDATE', 'NOT_PERFORMED', 'NOT_SYNCHRONIZED', 'MANUAL_ASSOCIATION', 'DONT_KNOW')),
             selected_session_ref TEXT REFERENCES maintain_plan_actual_sessions(session_id),
             payload_schema_version TEXT NOT NULL,
-            payload_json TEXT NOT NULL
+            payload_json TEXT NOT NULL,
+            CHECK (CASE
+                WHEN status IN ('REQUIRED', 'NOT_REQUIRED')
+                    THEN answer_type IS NULL AND selected_session_ref IS NULL
+                WHEN status = 'UNKNOWN_ANSWER'
+                    THEN answer_type = 'DONT_KNOW' AND selected_session_ref IS NULL
+                WHEN status = 'ANSWERED' AND answer_type IN ('NOT_PERFORMED', 'NOT_SYNCHRONIZED')
+                    THEN selected_session_ref IS NULL
+                WHEN status = 'ANSWERED' AND answer_type IN ('SELECT_CANDIDATE', 'MANUAL_ASSOCIATION')
+                    THEN selected_session_ref IS NOT NULL
+                WHEN status = 'SUPERSEDED' THEN 1
+                ELSE 0 END)
         );
         CREATE INDEX idx_mp_confirmations_result ON maintain_plan_confirmations(matching_result_ref);
         CREATE INDEX idx_mp_confirmations_snapshot ON maintain_plan_confirmations(prescription_snapshot_ref);

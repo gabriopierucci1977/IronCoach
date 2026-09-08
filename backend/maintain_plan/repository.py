@@ -6,7 +6,7 @@ import sqlite3
 from pathlib import Path
 from typing import Any, Mapping
 
-from .models import (ActualSession, Confirmation, ConfirmationStatus, ExecutionEvaluation, FeedbackEvent, FeedbackEventLog,
+from .models import (ActualSession, Confirmation, ConfirmationAnswerType, ExecutionEvaluation, FeedbackEvent, FeedbackEventLog,
                      FeedbackProjection, MatchingResult, PrescriptionMapping,
                      PrescriptionSnapshot, SourceConflictProjection,
                      SourceConflictResolutionEvent, SourceConflictResolutionLog)
@@ -18,7 +18,8 @@ from .lifecycle_service import (project_feedback, project_source_conflict,
 from .schema import run_migrations
 from .serialization import PAYLOAD_SCHEMA_VERSION, deserialize_contract, serialize_contract
 from .validators import (validate_actual_session, validate_execution_evaluation,
-                         validate_mapping, validate_matching_result, validate_prescription)
+                         validate_confirmation, validate_mapping, validate_matching_result,
+                         validate_prescription)
 
 
 class MaintainPlanRepository:
@@ -148,13 +149,21 @@ class MaintainPlanRepository:
         observed_repetitions = {(component.component_id, block.block_id, repetition.repetition_id)
                                 for component in session.components for block in component.blocks
                                 for repetition in block.repetitions}
+        planned_repetitions = {
+            (component.component_id, block.block_id, index)
+            for component in snapshot.components for block in component.structure.blocks
+            for index in range(block.planned_repetitions or 0)
+        }
         if any(item.planned_block_ref and
                (item.planned_block_ref.component_id, item.planned_block_ref.block_id) not in planned_blocks
                or item.observed_block_ref and
                (item.observed_block_ref.component_id, item.observed_block_ref.block_id) not in observed_blocks
                for item in value.block_mappings):
             raise ValueError("mapping contains an unresolvable block reference")
-        if any(item.observed_repetition_ref and
+        if any(item.planned_repetition_ref and
+               (item.planned_repetition_ref.component_id, item.planned_repetition_ref.block_id,
+                item.planned_repetition_ref.repetition_index) not in planned_repetitions
+               or item.observed_repetition_ref and
                (item.observed_repetition_ref.component_id, item.observed_repetition_ref.block_id,
                 item.observed_repetition_ref.repetition_id) not in observed_repetitions
                for item in value.repetition_mappings):
@@ -167,20 +176,22 @@ class MaintainPlanRepository:
             raise ValueError("mapping contains an unresolvable transition reference")
 
     def create_confirmation(self, value: Confirmation) -> None:
+        self._require_valid(validate_confirmation(value))
         result = self.get_matching_result(value.matching_result_ref)
         if result is None or result.prescription_snapshot_ref != value.prescription_snapshot_ref:
             raise ValueError("confirmation must reference the exact persisted matching result")
         if result.candidate_set != value.candidate_session_refs:
             raise ValueError("confirmation candidate set differs from matching result")
+        if value.declared_session_refs != result.declared_session_refs:
+            raise ValueError("confirmation declared sessions differ from matching result")
         if value.selected_session_ref is not None:
-            if value.selected_session_ref not in value.candidate_session_refs:
-                raise ValueError("confirmation selected session is outside candidate set")
+            allowed = (value.declared_session_refs
+                       if value.answer_type is ConfirmationAnswerType.MANUAL_ASSOCIATION
+                       else value.candidate_session_refs)
+            if value.selected_session_ref not in allowed:
+                raise ValueError("confirmation selected session is outside allowed sessions")
             if self.get_actual_session(value.selected_session_ref) is None:
                 raise ValueError("confirmation selected session is unresolved")
-        if value.status is ConfirmationStatus.REQUIRED and (
-                value.answer_type is not None or value.selected_session_ref is not None or
-                value.actor is not None or value.answered_at is not None):
-            raise ValueError("unanswered confirmation contains answer data")
         self._insert(
             "INSERT INTO maintain_plan_confirmations VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             (value.confirmation_id, value.matching_result_ref,
@@ -195,6 +206,7 @@ class MaintainPlanRepository:
         if stored is None:
             return None
         row, value = stored
+        self._require_valid(validate_confirmation(value))
         metadata = (value.confirmation_id, value.matching_result_ref,
                     value.prescription_snapshot_ref, value.status.value,
                     None if value.answer_type is None else value.answer_type.value,
@@ -204,8 +216,10 @@ class MaintainPlanRepository:
                 row["selected_session_ref"]) != metadata:
             raise ValueError("stored confirmation metadata does not match payload")
         result = self.get_matching_result(value.matching_result_ref)
-        if result is None or result.prescription_snapshot_ref != value.prescription_snapshot_ref or \
-                result.candidate_set != value.candidate_session_refs:
+        if (result is None or
+                result.prescription_snapshot_ref != value.prescription_snapshot_ref or
+                result.candidate_set != value.candidate_session_refs or
+                result.declared_session_refs != value.declared_session_refs):
             raise ValueError("stored confirmation references are incoherent")
         return value
 

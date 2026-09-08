@@ -702,18 +702,21 @@ class ComponentMapping(_DeepFrozen):
 class BlockMapping(_DeepFrozen):
     planned_block_ref: PlannedBlockRef | None
     observed_block_ref: ObservedBlockRef | None
+    match_status: MatchStatus = MatchStatus.MATCHED
 
 
 @dataclass(frozen=True)
 class RepetitionMapping(_DeepFrozen):
     planned_repetition_ref: PlannedRepetitionRef | None
     observed_repetition_ref: ObservedRepetitionRef | None
+    match_status: MatchStatus = MatchStatus.MATCHED
 
 
 @dataclass(frozen=True)
 class TransitionMapping(_DeepFrozen):
     planned_transition_ref: PlannedTransitionRef | None
     observed_transition_ref: ObservedTransitionRef | None
+    match_status: MatchStatus = MatchStatus.MATCHED
 
 
 @dataclass(frozen=True)
@@ -770,6 +773,7 @@ class Confirmation(_DeepFrozen):
     evidence: Mapping[str, Any]
     provenance: Mapping[str, Any]
     policy: PolicyRef = PolicyRef("ironcoach-confirmation-governance", "1.0.0-draft")
+    declared_session_refs: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -785,6 +789,7 @@ class MatchingResult(_DeepFrozen):
     provenance: Mapping[str, Any] = MappingProxyType({})
     missing_fields: tuple[str, ...] = ()
     warnings: tuple[str, ...] = ()
+    declared_session_refs: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)

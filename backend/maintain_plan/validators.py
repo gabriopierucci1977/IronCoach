@@ -9,7 +9,8 @@ import math
 from typing import Iterable
 
 from .models import (
-    ActualSession, ComponentEvaluation, Composition, CoverageStatus, DoseEvaluation,
+    ActualSession, ComponentEvaluation, Composition, Confirmation, ConfirmationAnswerType,
+    ConfirmationStatus, CoverageStatus, DoseEvaluation,
     DoseStatus, EvaluationApplicability, ExecutionEvaluation, MatchStatus,
     Applicability, MatchingStatus, PolicyRef, PrescriptionMapping, PrescriptionSnapshot,
     PlannedComponent, PlannedComponentRef, PrescribedTarget, QuantityMetric,
@@ -351,16 +352,34 @@ def validate_mapping(mapping: PrescriptionMapping) -> tuple[str, ...]:
             errors.append("observed component reference is not qualified by mapped session")
         errors.extend(validate_policy_ref(item.capability_policy, required=True))
     for item in mapping.block_mappings:
+        if item.match_status is MatchStatus.MATCHED and (item.planned_block_ref is None or item.observed_block_ref is None):
+            errors.append("MATCHED block mapping requires planned and observed references")
+        if item.match_status is MatchStatus.PLANNED_ONLY and (item.planned_block_ref is None or item.observed_block_ref is not None):
+            errors.append("PLANNED_ONLY block mapping requires only a planned reference")
+        if item.match_status is MatchStatus.OBSERVED_ONLY and (item.planned_block_ref is not None or item.observed_block_ref is None):
+            errors.append("OBSERVED_ONLY block mapping requires only an observed reference")
         if item.planned_block_ref and item.planned_block_ref.prescription_snapshot_id != mapping.prescription_snapshot_ref:
             errors.append("planned block reference is not qualified by mapped snapshot")
         if item.observed_block_ref and item.observed_block_ref.session_id != mapping.actual_session_ref:
             errors.append("observed block reference is not qualified by mapped session")
     for item in mapping.repetition_mappings:
+        if item.match_status is MatchStatus.MATCHED and (item.planned_repetition_ref is None or item.observed_repetition_ref is None):
+            errors.append("MATCHED repetition mapping requires planned and observed references")
+        if item.match_status is MatchStatus.PLANNED_ONLY and (item.planned_repetition_ref is None or item.observed_repetition_ref is not None):
+            errors.append("PLANNED_ONLY repetition mapping requires only a planned reference")
+        if item.match_status is MatchStatus.OBSERVED_ONLY and (item.planned_repetition_ref is not None or item.observed_repetition_ref is None):
+            errors.append("OBSERVED_ONLY repetition mapping requires only an observed reference")
         if item.planned_repetition_ref and item.planned_repetition_ref.prescription_snapshot_id != mapping.prescription_snapshot_ref:
             errors.append("planned repetition reference is not qualified by mapped snapshot")
         if item.observed_repetition_ref and item.observed_repetition_ref.session_id != mapping.actual_session_ref:
             errors.append("observed repetition reference is not qualified by mapped session")
     for item in mapping.transition_mappings:
+        if item.match_status is MatchStatus.MATCHED and (item.planned_transition_ref is None or item.observed_transition_ref is None):
+            errors.append("MATCHED transition mapping requires planned and observed references")
+        if item.match_status is MatchStatus.PLANNED_ONLY and (item.planned_transition_ref is None or item.observed_transition_ref is not None):
+            errors.append("PLANNED_ONLY transition mapping requires only a planned reference")
+        if item.match_status is MatchStatus.OBSERVED_ONLY and (item.planned_transition_ref is not None or item.observed_transition_ref is None):
+            errors.append("OBSERVED_ONLY transition mapping requires only an observed reference")
         if item.planned_transition_ref and item.planned_transition_ref.prescription_snapshot_id != mapping.prescription_snapshot_ref:
             errors.append("planned transition reference is not qualified by mapped snapshot")
         if item.observed_transition_ref and item.observed_transition_ref.session_id != mapping.actual_session_ref:
@@ -381,6 +400,57 @@ def validate_matching_result(result) -> tuple[str, ...]:
     if result.status is MatchingStatus.MATCHED and result.candidate_set and (
             result.prescription_mapping.actual_session_ref not in result.candidate_set):
         errors.append("matched session must belong to candidate set")
+    return tuple(errors)
+
+
+def validate_confirmation(value: Confirmation) -> tuple[str, ...]:
+    errors = list(validate_policy_ref(value.policy, required=True))
+    if not value.confirmation_id or not value.matching_result_ref or not value.prescription_snapshot_ref:
+        errors.append("confirmation identifiers and references are required")
+    if not value.question or not _is_timezone_aware(value.asked_at):
+        errors.append("confirmation question and timezone-aware asked_at are required")
+    if value.status is ConfirmationStatus.REQUIRED and not value.interpretations:
+        errors.append("required confirmation must offer at least one interpretation")
+    if _duplicates(value.candidate_session_refs) or _duplicates(value.declared_session_refs):
+        errors.append("confirmation session references must be unique")
+    if not set(value.candidate_session_refs).issubset(value.declared_session_refs):
+        errors.append("candidate sessions must belong to declared sessions")
+    answered = value.status in (ConfirmationStatus.ANSWERED, ConfirmationStatus.UNKNOWN_ANSWER)
+    if value.status in (ConfirmationStatus.REQUIRED, ConfirmationStatus.NOT_REQUIRED):
+        if any(item is not None for item in (value.answer_type, value.selected_session_ref,
+                                              value.actor, value.answered_at)):
+            errors.append("unanswered confirmation must not contain answer fields")
+    elif answered:
+        if value.answer_type is None or not value.actor or value.answered_at is None or not _is_timezone_aware(value.answered_at):
+            errors.append("answered confirmation requires answer, actor, and timezone-aware timestamp")
+        elif _is_timezone_aware(value.asked_at) and value.answered_at < value.asked_at:
+            errors.append("confirmation answered_at must not precede asked_at")
+        if value.status is ConfirmationStatus.UNKNOWN_ANSWER:
+            if value.answer_type is not ConfirmationAnswerType.DONT_KNOW:
+                errors.append("UNKNOWN_ANSWER requires DONT_KNOW")
+        elif value.answer_type is ConfirmationAnswerType.DONT_KNOW:
+            errors.append("DONT_KNOW requires UNKNOWN_ANSWER status")
+    elif value.status is ConfirmationStatus.SUPERSEDED:
+        if not value.actor or value.answered_at is None or not _is_timezone_aware(value.answered_at):
+            errors.append("SUPERSEDED confirmation requires actor and timestamp")
+    selecting = value.answer_type in (ConfirmationAnswerType.SELECT_CANDIDATE,
+                                      ConfirmationAnswerType.MANUAL_ASSOCIATION)
+    if selecting and value.selected_session_ref is None:
+        errors.append("selecting confirmation answer requires a session")
+    if not selecting and value.selected_session_ref is not None:
+        errors.append("non-selecting confirmation answer forbids a session")
+    if value.answer_type is ConfirmationAnswerType.SELECT_CANDIDATE and \
+            value.selected_session_ref not in value.candidate_session_refs:
+        errors.append("selected candidate is outside candidate set")
+    if value.answer_type is ConfirmationAnswerType.MANUAL_ASSOCIATION and \
+            value.selected_session_ref not in value.declared_session_refs:
+        errors.append("manual association is outside declared sessions")
+    if value.answer_type is not None:
+        offered = any(item.get("answer_type") == value.answer_type.value and
+                      (not selecting or item.get("session_id") == value.selected_session_ref)
+                      for item in value.interpretations)
+        if not offered:
+            errors.append("confirmation answer was not offered by the request")
     return tuple(errors)
 
 
@@ -465,7 +535,8 @@ def validate_execution_evaluation(
     planned = {component.component_id: component for component in snapshot.components}
     mapping_by_planned = {
         item.planned_component_ref.component_id: item for item in mapping.component_mappings
-        if item.planned_component_ref.prescription_snapshot_id == snapshot.prescription_snapshot_id
+        if item.planned_component_ref is not None and
+        item.planned_component_ref.prescription_snapshot_id == snapshot.prescription_snapshot_id
     }
     for component_id, item in mapping_by_planned.items():
         component = planned.get(component_id)

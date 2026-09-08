@@ -287,6 +287,16 @@ def test_feedback_payload_rejects_invalid_types_ranges_enums_and_nested_shapes(f
     assert validate_feedback_payload(dict(BASELINE, **{field: value}))
 
 
+@pytest.mark.parametrize("field,value,valid", [
+    ("rpe", 0, False), ("rpe", 1, True), ("rpe", 10, True), ("rpe", 11, False),
+    ("pain", -1, False), ("pain", 0, True), ("pain", 10, True), ("pain", 11, False),
+    ("rpe", float("nan"), False), ("rpe", float("inf"), False),
+    ("pain", float("-inf"), False), ("pain", True, False),
+])
+def test_feedback_numeric_boundaries_are_distinct(field, value, valid):
+    assert (validate_feedback_payload(dict(BASELINE, **{field: value})) == ()) is valid
+
+
 @pytest.mark.parametrize("payload", [
     {key: value for key, value in BASELINE.items() if key != "note"},
     dict(BASELINE, unexpected=True),

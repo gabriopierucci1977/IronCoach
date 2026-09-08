@@ -121,11 +121,12 @@ def validate_feedback_payload(payload: Mapping[str, Any] | None, *,
     digest = payload["payload_hash"]
     if not isinstance(digest, str) or re.fullmatch(r"[0-9a-f]{64}", digest) is None:
         errors.append("feedback payload_hash must be a lowercase SHA-256 digest")
-    for name in ("rpe", "pain"):
+    for name, minimum in (("rpe", 1), ("pain", 0)):
         value = payload[name]
         if value is not None and (type(value) not in (int, float) or
-                                  not math.isfinite(value) or value < 0 or value > 10):
-            errors.append(f"feedback {name} must be null or a finite number from 0 to 10")
+                                  not math.isfinite(value) or value < minimum or value > 10):
+            errors.append(
+                f"feedback {name} must be null or a finite number from {minimum} to 10")
     if payload["unusual_fatigue"] not in (None, "NONE", "MILD", "MODERATE", "HIGH"):
         errors.append("feedback unusual_fatigue is invalid")
     if payload["interruption"] is not None and type(payload["interruption"]) is not bool:
