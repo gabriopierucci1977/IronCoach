@@ -215,8 +215,8 @@ def test_mapping_rejects_ambiguous_duplicates_and_allows_multiple_null_observed_
     assert "observed component" in " ".join(validate_mapping(replace(RUN_MAPPING, component_mappings=(first, bike))))
     assert validate_mapping(BRICK_MAPPING) == ()
 
-    null_run = replace(first, observed_component_ref=None)
-    null_bike = replace(bike, observed_component_ref=None)
+    null_run = replace(first, observed_component_ref=None, match_status=MatchStatus.PLANNED_ONLY)
+    null_bike = replace(bike, observed_component_ref=None, match_status=MatchStatus.PLANNED_ONLY)
     assert validate_mapping(replace(RUN_MAPPING, component_mappings=(null_run, null_bike))) == ()
 
 

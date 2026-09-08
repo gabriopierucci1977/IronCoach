@@ -183,6 +183,22 @@ class ResolutionMethod(ValueEnum):
     ATHLETE_CONFIRMATION = "ATHLETE_CONFIRMATION"
 
 
+class ConfirmationStatus(ValueEnum):
+    NOT_REQUIRED = "NOT_REQUIRED"
+    REQUIRED = "REQUIRED"
+    ANSWERED = "ANSWERED"
+    UNKNOWN_ANSWER = "UNKNOWN_ANSWER"
+    SUPERSEDED = "SUPERSEDED"
+
+
+class ConfirmationAnswerType(ValueEnum):
+    SELECT_CANDIDATE = "SELECT_CANDIDATE"
+    NOT_PERFORMED = "NOT_PERFORMED"
+    NOT_SYNCHRONIZED = "NOT_SYNCHRONIZED"
+    MANUAL_ASSOCIATION = "MANUAL_ASSOCIATION"
+    DONT_KNOW = "DONT_KNOW"
+
+
 class OverallStatus(ValueEnum):
     IN_LINE = "IN_LINE"
     PARTIALLY_IN_LINE = "PARTIALLY_IN_LINE"
@@ -670,11 +686,37 @@ class SourceConflictProjection(_DeepFrozen):
 
 @dataclass(frozen=True)
 class ComponentMapping(_DeepFrozen):
-    planned_component_ref: PlannedComponentRef
+    planned_component_ref: PlannedComponentRef | None
     observed_component_ref: ObservedComponentRef | None
-    requiredness: Requiredness
+    requiredness: Requiredness | None
     support_status: SupportStatus
     capability_policy: PolicyRef
+    match_status: MatchStatus = MatchStatus.MATCHED
+    evidence: Mapping[str, Any] = MappingProxyType({})
+    provenance: Mapping[str, Any] = MappingProxyType({})
+    missing_fields: tuple[str, ...] = ()
+    warnings: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class BlockMapping(_DeepFrozen):
+    planned_block_ref: PlannedBlockRef | None
+    observed_block_ref: ObservedBlockRef | None
+    match_status: MatchStatus = MatchStatus.MATCHED
+
+
+@dataclass(frozen=True)
+class RepetitionMapping(_DeepFrozen):
+    planned_repetition_ref: PlannedRepetitionRef | None
+    observed_repetition_ref: ObservedRepetitionRef | None
+    match_status: MatchStatus = MatchStatus.MATCHED
+
+
+@dataclass(frozen=True)
+class TransitionMapping(_DeepFrozen):
+    planned_transition_ref: PlannedTransitionRef | None
+    observed_transition_ref: ObservedTransitionRef | None
+    match_status: MatchStatus = MatchStatus.MATCHED
 
 
 @dataclass(frozen=True)
@@ -684,6 +726,54 @@ class PrescriptionMapping(_DeepFrozen):
     actual_session_ref: str
     resolution_method: ResolutionMethod
     component_mappings: tuple[ComponentMapping, ...]
+    block_mappings: tuple[BlockMapping, ...] = ()
+    repetition_mappings: tuple[RepetitionMapping, ...] = ()
+    transition_mappings: tuple[TransitionMapping, ...] = ()
+    confirmation_ref: str | None = None
+    actor: str | None = None
+    confirmed_at: datetime | None = None
+    created_at: datetime | None = None
+    provenance: Mapping[str, Any] = MappingProxyType({})
+    missing_fields: tuple[str, ...] = ()
+    warnings: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class CandidateEvidence(_DeepFrozen):
+    session_id: str
+    included: bool
+    checks: Mapping[str, Any]
+    reasons: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class DirectIdEvidence(_DeepFrozen):
+    evidence_id: str
+    session_id: str
+    returned_prescription_id: str | None
+    source: str
+    provenance: Mapping[str, Any]
+
+
+@dataclass(frozen=True)
+class Confirmation(_DeepFrozen):
+    confirmation_id: str
+    matching_result_ref: str
+    prescription_snapshot_ref: str
+    candidate_session_refs: tuple[str, ...]
+    status: ConfirmationStatus
+    question: str
+    ambiguous_data: tuple[Mapping[str, Any], ...]
+    interpretations: tuple[Mapping[str, Any], ...]
+    answer_type: ConfirmationAnswerType | None
+    selected_session_ref: str | None
+    actor: str | None
+    asked_at: datetime
+    answered_at: datetime | None
+    evidence: Mapping[str, Any]
+    provenance: Mapping[str, Any]
+    policy: PolicyRef = PolicyRef("ironcoach-confirmation-governance", "1.0.0-draft")
+    declared_session_refs: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -692,6 +782,14 @@ class MatchingResult(_DeepFrozen):
     status: MatchingStatus
     prescription_mapping: PrescriptionMapping | None
     policy: PolicyRef
+    prescription_snapshot_ref: str = ""
+    candidate_set: tuple[str, ...] = ()
+    candidate_evidence: tuple[CandidateEvidence, ...] = ()
+    confirmation_ref: str | None = None
+    provenance: Mapping[str, Any] = MappingProxyType({})
+    missing_fields: tuple[str, ...] = ()
+    warnings: tuple[str, ...] = ()
+    declared_session_refs: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)

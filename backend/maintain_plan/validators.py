@@ -9,7 +9,8 @@ import math
 from typing import Iterable
 
 from .models import (
-    ActualSession, ComponentEvaluation, Composition, CoverageStatus, DoseEvaluation,
+    ActualSession, ComponentEvaluation, Composition, Confirmation, ConfirmationAnswerType,
+    ConfirmationStatus, CoverageStatus, DoseEvaluation,
     DoseStatus, EvaluationApplicability, ExecutionEvaluation, MatchStatus,
     Applicability, MatchingStatus, PolicyRef, PrescriptionMapping, PrescriptionSnapshot,
     PlannedComponent, PlannedComponentRef, PrescribedTarget, QuantityMetric,
@@ -314,20 +315,173 @@ def validate_actual_session(session: ActualSession) -> tuple[str, ...]:
 
 def validate_mapping(mapping: PrescriptionMapping) -> tuple[str, ...]:
     errors: list[str] = []
-    planned_refs = [item.planned_component_ref for item in mapping.component_mappings]
+    planned_refs = [item.planned_component_ref for item in mapping.component_mappings
+                    if item.planned_component_ref is not None]
     observed_refs = [item.observed_component_ref for item in mapping.component_mappings
                      if item.observed_component_ref is not None]
     if len(set(planned_refs)) != len(planned_refs):
         errors.append("planned component reference must occur at most once in canonical mapping")
     if len(set(observed_refs)) != len(observed_refs):
         errors.append("non-null observed component reference must occur at most once in canonical mapping")
+    for label, values in (
+        ("planned block", [item.planned_block_ref for item in mapping.block_mappings if item.planned_block_ref]),
+        ("observed block", [item.observed_block_ref for item in mapping.block_mappings if item.observed_block_ref]),
+        ("planned repetition", [item.planned_repetition_ref for item in mapping.repetition_mappings if item.planned_repetition_ref]),
+        ("observed repetition", [item.observed_repetition_ref for item in mapping.repetition_mappings if item.observed_repetition_ref]),
+        ("planned transition", [item.planned_transition_ref for item in mapping.transition_mappings if item.planned_transition_ref]),
+        ("observed transition", [item.observed_transition_ref for item in mapping.transition_mappings if item.observed_transition_ref]),
+    ):
+        if len(set(values)) != len(values):
+            errors.append(f"{label} reference must occur at most once in canonical mapping")
     for item in mapping.component_mappings:
-        if item.planned_component_ref.prescription_snapshot_id != mapping.prescription_snapshot_ref:
+        if item.match_status is MatchStatus.MATCHED and (
+                item.planned_component_ref is None or item.observed_component_ref is None):
+            errors.append("MATCHED mapping requires planned and observed references")
+        if item.match_status is MatchStatus.PLANNED_ONLY and (
+                item.planned_component_ref is None or item.observed_component_ref is not None):
+            errors.append("PLANNED_ONLY mapping requires only a planned reference")
+        if item.match_status is MatchStatus.OBSERVED_ONLY and (
+                item.planned_component_ref is not None or item.observed_component_ref is None or
+                item.requiredness is not None):
+            errors.append("OBSERVED_ONLY mapping requires only an observed reference")
+        if (item.planned_component_ref is not None and
+                item.planned_component_ref.prescription_snapshot_id != mapping.prescription_snapshot_ref):
             errors.append("planned component reference is not qualified by mapped snapshot")
         if (item.observed_component_ref is not None and
                 item.observed_component_ref.session_id != mapping.actual_session_ref):
             errors.append("observed component reference is not qualified by mapped session")
         errors.extend(validate_policy_ref(item.capability_policy, required=True))
+    for item in mapping.block_mappings:
+        if item.match_status is MatchStatus.MATCHED and (item.planned_block_ref is None or item.observed_block_ref is None):
+            errors.append("MATCHED block mapping requires planned and observed references")
+        if item.match_status is MatchStatus.PLANNED_ONLY and (item.planned_block_ref is None or item.observed_block_ref is not None):
+            errors.append("PLANNED_ONLY block mapping requires only a planned reference")
+        if item.match_status is MatchStatus.OBSERVED_ONLY and (item.planned_block_ref is not None or item.observed_block_ref is None):
+            errors.append("OBSERVED_ONLY block mapping requires only an observed reference")
+        if item.planned_block_ref and item.planned_block_ref.prescription_snapshot_id != mapping.prescription_snapshot_ref:
+            errors.append("planned block reference is not qualified by mapped snapshot")
+        if item.observed_block_ref and item.observed_block_ref.session_id != mapping.actual_session_ref:
+            errors.append("observed block reference is not qualified by mapped session")
+    for item in mapping.repetition_mappings:
+        if item.match_status is MatchStatus.MATCHED and (item.planned_repetition_ref is None or item.observed_repetition_ref is None):
+            errors.append("MATCHED repetition mapping requires planned and observed references")
+        if item.match_status is MatchStatus.PLANNED_ONLY and (item.planned_repetition_ref is None or item.observed_repetition_ref is not None):
+            errors.append("PLANNED_ONLY repetition mapping requires only a planned reference")
+        if item.match_status is MatchStatus.OBSERVED_ONLY and (item.planned_repetition_ref is not None or item.observed_repetition_ref is None):
+            errors.append("OBSERVED_ONLY repetition mapping requires only an observed reference")
+        if item.planned_repetition_ref and item.planned_repetition_ref.prescription_snapshot_id != mapping.prescription_snapshot_ref:
+            errors.append("planned repetition reference is not qualified by mapped snapshot")
+        if item.observed_repetition_ref and item.observed_repetition_ref.session_id != mapping.actual_session_ref:
+            errors.append("observed repetition reference is not qualified by mapped session")
+    for item in mapping.transition_mappings:
+        if item.match_status is MatchStatus.MATCHED and (item.planned_transition_ref is None or item.observed_transition_ref is None):
+            errors.append("MATCHED transition mapping requires planned and observed references")
+        if item.match_status is MatchStatus.PLANNED_ONLY and (item.planned_transition_ref is None or item.observed_transition_ref is not None):
+            errors.append("PLANNED_ONLY transition mapping requires only a planned reference")
+        if item.match_status is MatchStatus.OBSERVED_ONLY and (item.planned_transition_ref is not None or item.observed_transition_ref is None):
+            errors.append("OBSERVED_ONLY transition mapping requires only an observed reference")
+        if item.planned_transition_ref and item.planned_transition_ref.prescription_snapshot_id != mapping.prescription_snapshot_ref:
+            errors.append("planned transition reference is not qualified by mapped snapshot")
+        if item.observed_transition_ref and item.observed_transition_ref.session_id != mapping.actual_session_ref:
+            errors.append("observed transition reference is not qualified by mapped session")
+    return tuple(errors)
+
+
+def validate_mapping_ownership(mapping: PrescriptionMapping, snapshot: PrescriptionSnapshot,
+                               session: ActualSession) -> tuple[str, ...]:
+    """Resolve every mapping reference through its complete canonical parent chain."""
+    errors = list(validate_mapping(mapping))
+    if mapping.prescription_snapshot_ref != snapshot.prescription_snapshot_id or \
+            mapping.actual_session_ref != session.session_id:
+        errors.append("mapping ownership root does not match snapshot and session")
+    planned_components = {item.component_id: item for item in snapshot.components}
+    observed_components = {item.component_id: item for item in session.components}
+    component_pairs = {
+        (None if item.planned_component_ref is None else item.planned_component_ref.component_id,
+         None if item.observed_component_ref is None else item.observed_component_ref.component_id)
+        for item in mapping.component_mappings
+    }
+    for item in mapping.component_mappings:
+        if item.planned_component_ref and item.planned_component_ref.component_id not in planned_components:
+            errors.append("mapping planned component is dangling")
+        if item.observed_component_ref and item.observed_component_ref.component_id not in observed_components:
+            errors.append("mapping observed component is dangling")
+    planned_blocks = {(component.component_id, block.block_id): block
+                      for component in snapshot.components for block in component.structure.blocks}
+    observed_blocks = {(component.component_id, block.block_id): block
+                       for component in session.components for block in component.blocks}
+    block_pairs = set()
+    for item in mapping.block_mappings:
+        planned_key = (None if item.planned_block_ref is None else
+                       (item.planned_block_ref.component_id, item.planned_block_ref.block_id))
+        observed_key = (None if item.observed_block_ref is None else
+                        (item.observed_block_ref.component_id, item.observed_block_ref.block_id))
+        if planned_key is not None and planned_key not in planned_blocks:
+            errors.append("mapping planned block is dangling or cross-component")
+        if observed_key is not None and observed_key not in observed_blocks:
+            errors.append("mapping observed block is dangling or cross-component")
+        parent_pair = (None if planned_key is None else planned_key[0],
+                       None if observed_key is None else observed_key[0])
+        parent_valid = (parent_pair in component_pairs if all(parent_pair) else
+                        any((parent_pair[0] is None or pair[0] == parent_pair[0]) and
+                            (parent_pair[1] is None or pair[1] == parent_pair[1])
+                            for pair in component_pairs))
+        if not parent_valid:
+            errors.append("block mapping does not belong to a canonical component mapping")
+        block_pairs.add((planned_key, observed_key))
+    planned_repetitions = {
+        (component.component_id, block.block_id, index)
+        for component in snapshot.components for block in component.structure.blocks
+        for index in range(block.planned_repetitions or 0)
+    }
+    observed_repetitions = {
+        (component.component_id, block.block_id, repetition.repetition_id)
+        for component in session.components for block in component.blocks
+        for repetition in block.repetitions
+    }
+    for item in mapping.repetition_mappings:
+        planned_key = (None if item.planned_repetition_ref is None else (
+            item.planned_repetition_ref.component_id, item.planned_repetition_ref.block_id,
+            item.planned_repetition_ref.repetition_index))
+        observed_key = (None if item.observed_repetition_ref is None else (
+            item.observed_repetition_ref.component_id, item.observed_repetition_ref.block_id,
+            item.observed_repetition_ref.repetition_id))
+        if planned_key is not None and planned_key not in planned_repetitions:
+            errors.append("mapping planned repetition is dangling or cross-block")
+        if observed_key is not None and observed_key not in observed_repetitions:
+            errors.append("mapping observed repetition is dangling or cross-block")
+        parent_pair = (None if planned_key is None else planned_key[:2],
+                       None if observed_key is None else observed_key[:2])
+        parent_valid = (parent_pair in block_pairs if all(parent_pair) else
+                        any((parent_pair[0] is None or pair[0] == parent_pair[0]) and
+                            (parent_pair[1] is None or pair[1] == parent_pair[1])
+                            for pair in block_pairs))
+        if not parent_valid:
+            errors.append("repetition mapping does not belong to a canonical block mapping")
+    planned_transitions = {item.transition_id: item for item in snapshot.transitions}
+    observed_transitions = {item.transition_id: item for item in session.transitions}
+    for item in mapping.transition_mappings:
+        planned = (None if item.planned_transition_ref is None else
+                   planned_transitions.get(item.planned_transition_ref.transition_id))
+        observed = (None if item.observed_transition_ref is None else
+                    observed_transitions.get(item.observed_transition_ref.transition_id))
+        if item.planned_transition_ref is not None and planned is None:
+            errors.append("mapping planned transition is dangling")
+        if item.observed_transition_ref is not None and observed is None:
+            errors.append("mapping observed transition is dangling")
+        if planned is not None and observed is not None:
+            endpoints = ((planned.from_component_id, observed.from_component_ref),
+                         (planned.to_component_id, observed.to_component_ref))
+            if any(pair not in component_pairs for pair in endpoints):
+                errors.append("transition endpoints do not correspond through component mappings")
+        elif planned is not None and any(not any(pair[0] == endpoint for pair in component_pairs)
+                                         for endpoint in (planned.from_component_id,
+                                                          planned.to_component_id)):
+            errors.append("planned-only transition endpoints lack component ownership")
+        elif observed is not None and any(not any(pair[1] == endpoint for pair in component_pairs)
+                                          for endpoint in (observed.from_component_ref,
+                                                           observed.to_component_ref)):
+            errors.append("observed-only transition endpoints lack component ownership")
     return tuple(errors)
 
 
@@ -339,6 +493,62 @@ def validate_matching_result(result) -> tuple[str, ...]:
         errors.append("unresolved matching result must not contain a mapping")
     if result.prescription_mapping:
         errors.extend(validate_mapping(result.prescription_mapping))
+    if len(set(result.candidate_set)) != len(result.candidate_set):
+        errors.append("candidate set must not contain duplicates")
+    if result.status is MatchingStatus.MATCHED and result.candidate_set and (
+            result.prescription_mapping.actual_session_ref not in result.candidate_set):
+        errors.append("matched session must belong to candidate set")
+    return tuple(errors)
+
+
+def validate_confirmation(value: Confirmation) -> tuple[str, ...]:
+    errors = list(validate_policy_ref(value.policy, required=True))
+    if not value.confirmation_id or not value.matching_result_ref or not value.prescription_snapshot_ref:
+        errors.append("confirmation identifiers and references are required")
+    if not value.question or not _is_timezone_aware(value.asked_at):
+        errors.append("confirmation question and timezone-aware asked_at are required")
+    if value.status is ConfirmationStatus.REQUIRED and not value.interpretations:
+        errors.append("required confirmation must offer at least one interpretation")
+    if _duplicates(value.candidate_session_refs) or _duplicates(value.declared_session_refs):
+        errors.append("confirmation session references must be unique")
+    if not set(value.candidate_session_refs).issubset(value.declared_session_refs):
+        errors.append("candidate sessions must belong to declared sessions")
+    answered = value.status in (ConfirmationStatus.ANSWERED, ConfirmationStatus.UNKNOWN_ANSWER)
+    if value.status in (ConfirmationStatus.REQUIRED, ConfirmationStatus.NOT_REQUIRED):
+        if any(item is not None for item in (value.answer_type, value.selected_session_ref,
+                                              value.actor, value.answered_at)):
+            errors.append("unanswered confirmation must not contain answer fields")
+    elif answered:
+        if value.answer_type is None or not value.actor or value.answered_at is None or not _is_timezone_aware(value.answered_at):
+            errors.append("answered confirmation requires answer, actor, and timezone-aware timestamp")
+        elif _is_timezone_aware(value.asked_at) and value.answered_at < value.asked_at:
+            errors.append("confirmation answered_at must not precede asked_at")
+        if value.status is ConfirmationStatus.UNKNOWN_ANSWER:
+            if value.answer_type is not ConfirmationAnswerType.DONT_KNOW:
+                errors.append("UNKNOWN_ANSWER requires DONT_KNOW")
+        elif value.answer_type is ConfirmationAnswerType.DONT_KNOW:
+            errors.append("DONT_KNOW requires UNKNOWN_ANSWER status")
+    elif value.status is ConfirmationStatus.SUPERSEDED:
+        if not value.actor or value.answered_at is None or not _is_timezone_aware(value.answered_at):
+            errors.append("SUPERSEDED confirmation requires actor and timestamp")
+    selecting = value.answer_type in (ConfirmationAnswerType.SELECT_CANDIDATE,
+                                      ConfirmationAnswerType.MANUAL_ASSOCIATION)
+    if selecting and value.selected_session_ref is None:
+        errors.append("selecting confirmation answer requires a session")
+    if not selecting and value.selected_session_ref is not None:
+        errors.append("non-selecting confirmation answer forbids a session")
+    if value.answer_type is ConfirmationAnswerType.SELECT_CANDIDATE and \
+            value.selected_session_ref not in value.candidate_session_refs:
+        errors.append("selected candidate is outside candidate set")
+    if value.answer_type is ConfirmationAnswerType.MANUAL_ASSOCIATION and \
+            value.selected_session_ref not in value.declared_session_refs:
+        errors.append("manual association is outside declared sessions")
+    if value.answer_type is not None:
+        offered = any(item.get("answer_type") == value.answer_type.value and
+                      (not selecting or item.get("session_id") == value.selected_session_ref)
+                      for item in value.interpretations)
+        if not offered:
+            errors.append("confirmation answer was not offered by the request")
     return tuple(errors)
 
 
@@ -403,8 +613,10 @@ def validate_execution_evaluation(
     evaluation: ExecutionEvaluation,
     mapping: PrescriptionMapping,
     snapshot: PrescriptionSnapshot,
+    session: ActualSession | None = None,
 ) -> tuple[str, ...]:
-    errors = list(validate_mapping(mapping))
+    errors = list(validate_mapping(mapping) if session is None else
+                  validate_mapping_ownership(mapping, snapshot, session))
     if evaluation.prescription_mapping_ref != mapping.mapping_id:
         errors.append("execution evaluation must reference the identified canonical mapping")
     if evaluation.prescription_snapshot_ref != mapping.prescription_snapshot_ref or evaluation.actual_session_ref != mapping.actual_session_ref:
@@ -423,7 +635,8 @@ def validate_execution_evaluation(
     planned = {component.component_id: component for component in snapshot.components}
     mapping_by_planned = {
         item.planned_component_ref.component_id: item for item in mapping.component_mappings
-        if item.planned_component_ref.prescription_snapshot_id == snapshot.prescription_snapshot_id
+        if item.planned_component_ref is not None and
+        item.planned_component_ref.prescription_snapshot_id == snapshot.prescription_snapshot_id
     }
     for component_id, item in mapping_by_planned.items():
         component = planned.get(component_id)
@@ -433,7 +646,27 @@ def validate_execution_evaluation(
               item.support_status is not component.support_status):
             errors.append("canonical mapping requiredness/support must match authoritative prescription")
     results_by_planned: dict[str, list[ComponentEvaluation]] = {}
+    mapping_signatures = [
+        (item.match_status, item.planned_component_ref, item.observed_component_ref,
+         item.requiredness, item.support_status, item.capability_policy)
+        for item in mapping.component_mappings
+    ]
+    matched_mapping_indexes: set[int] = set()
     for result in evaluation.component_results:
+        signature = (result.match_status, result.planned_component_ref,
+                     result.observed_component_ref, result.requiredness,
+                     result.support_status, result.capability_policy)
+        matches = [index for index, candidate in enumerate(mapping_signatures)
+                   if candidate == signature]
+        if len(matches) != 1 or matches[0] in matched_mapping_indexes:
+            errors.append("component result must resolve exactly once through canonical mapping")
+        else:
+            matched_mapping_indexes.add(matches[0])
+        if session is not None and result.observed_component_ref is not None:
+            if (result.observed_component_ref.session_id != session.session_id or
+                    sum(component.component_id == result.observed_component_ref.component_id
+                        for component in session.components) != 1):
+                errors.append("component result observed reference is dangling or foreign-session")
         ref = result.planned_component_ref
         if ref is None:
             continue
@@ -448,6 +681,8 @@ def validate_execution_evaluation(
             errors.append("component result requiredness/support must match authoritative prescription")
         if item is None or result.observed_component_ref != item.observed_component_ref:
             errors.append("component result references must resolve through canonical mapping")
+    if len(matched_mapping_indexes) != len(mapping.component_mappings):
+        errors.append("each canonical component mapping requires exactly one component result")
     required_components = [component for component in snapshot.components
                            if component.requiredness is Requiredness.REQUIRED]
     for component in required_components:

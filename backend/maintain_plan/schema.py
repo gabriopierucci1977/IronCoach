@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Callable, Iterable
 
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 4
 
 
 @dataclass(frozen=True)
@@ -218,6 +218,96 @@ MIGRATIONS = MIGRATIONS + (Migration(
     2,
     hashlib.sha256(_MIGRATION_2_SQL.encode("utf-8")).hexdigest(),
     _migration_2,
+),)
+
+
+_MIGRATION_3_SQL = """
+        CREATE TABLE maintain_plan_confirmations (
+            confirmation_id TEXT PRIMARY KEY,
+            matching_result_ref TEXT NOT NULL REFERENCES maintain_plan_matching_results(matching_result_id),
+            prescription_snapshot_ref TEXT NOT NULL REFERENCES maintain_plan_prescription_snapshots(prescription_snapshot_id),
+            status TEXT NOT NULL CHECK (status IN ('NOT_REQUIRED', 'REQUIRED', 'ANSWERED', 'UNKNOWN_ANSWER', 'SUPERSEDED')),
+            answer_type TEXT CHECK (answer_type IS NULL OR answer_type IN
+                ('SELECT_CANDIDATE', 'NOT_PERFORMED', 'NOT_SYNCHRONIZED', 'MANUAL_ASSOCIATION', 'DONT_KNOW')),
+            selected_session_ref TEXT REFERENCES maintain_plan_actual_sessions(session_id),
+            payload_schema_version TEXT NOT NULL,
+            payload_json TEXT NOT NULL
+        );
+        CREATE INDEX idx_mp_confirmations_result ON maintain_plan_confirmations(matching_result_ref);
+        CREATE INDEX idx_mp_confirmations_snapshot ON maintain_plan_confirmations(prescription_snapshot_ref);
+        """
+
+
+def _migration_3(connection: sqlite3.Connection) -> None:
+    for statement in _MIGRATION_3_SQL.split(";"):
+        if statement.strip():
+            connection.execute(statement)
+
+
+MIGRATIONS = MIGRATIONS + (Migration(
+    3,
+    hashlib.sha256(_MIGRATION_3_SQL.encode("utf-8")).hexdigest(),
+    _migration_3,
+),)
+
+
+_CONFIRMATION_STATE_IS_VALID_SQL = """
+        COALESCE(CASE
+            WHEN status IN ('REQUIRED', 'NOT_REQUIRED')
+                THEN answer_type IS NULL AND selected_session_ref IS NULL
+            WHEN status = 'UNKNOWN_ANSWER'
+                THEN answer_type = 'DONT_KNOW' AND selected_session_ref IS NULL
+            WHEN status = 'ANSWERED' AND answer_type IN ('NOT_PERFORMED', 'NOT_SYNCHRONIZED')
+                THEN selected_session_ref IS NULL
+            WHEN status = 'ANSWERED' AND answer_type IN ('SELECT_CANDIDATE', 'MANUAL_ASSOCIATION')
+                THEN selected_session_ref IS NOT NULL
+            WHEN status = 'SUPERSEDED' THEN 1
+            ELSE 0
+        END, 0)
+        """
+_CONFIRMATION_TRIGGER_STATE_IS_VALID_SQL = (
+    _CONFIRMATION_STATE_IS_VALID_SQL
+    .replace("selected_session_ref", "NEW.selected_session_ref")
+    .replace("answer_type", "NEW.answer_type")
+    .replace("status", "NEW.status")
+)
+
+_MIGRATION_4_STATEMENTS = (f"""
+        CREATE TRIGGER maintain_plan_confirmations_validate_insert
+        BEFORE INSERT ON maintain_plan_confirmations
+        WHEN NOT ({_CONFIRMATION_TRIGGER_STATE_IS_VALID_SQL})
+        BEGIN
+            SELECT RAISE(ABORT, 'invalid maintain_plan confirmation state');
+        END
+        """, f"""
+        CREATE TRIGGER maintain_plan_confirmations_validate_update
+        BEFORE UPDATE ON maintain_plan_confirmations
+        WHEN NOT ({_CONFIRMATION_TRIGGER_STATE_IS_VALID_SQL})
+        BEGIN
+            SELECT RAISE(ABORT, 'invalid maintain_plan confirmation state');
+        END
+        """)
+_MIGRATION_4_SQL = ";\n".join(_MIGRATION_4_STATEMENTS)
+
+
+def _migration_4(connection: sqlite3.Connection) -> None:
+    invalid = connection.execute(
+        f"SELECT confirmation_id FROM maintain_plan_confirmations "
+        f"WHERE NOT ({_CONFIRMATION_STATE_IS_VALID_SQL}) LIMIT 1"
+    ).fetchone()
+    if invalid is not None:
+        raise RuntimeError(
+            "cannot apply MAINTAIN_PLAN migration 4: invalid existing confirmation "
+            f"{invalid[0]}"
+        )
+    for statement in _MIGRATION_4_STATEMENTS:
+        connection.execute(statement)
+
+
+MIGRATIONS = MIGRATIONS + (Migration(
+    4,
+    hashlib.sha256(_MIGRATION_4_SQL.encode("utf-8")).hexdigest(),
+    _migration_4,
 ),)
 
 
