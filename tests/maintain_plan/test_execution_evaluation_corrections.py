@@ -13,10 +13,13 @@ from tests.maintain_plan.test_lifecycle_service import CONFLICT, conflict_projec
 
 
 def interval_case(targets, *, valid=None, window=EvaluationWindow.AVERAGE,
-                  include_recovery=True, order=None):
+                  include_recovery=True, order=None, recovery_required=False):
     count = len(targets)
     block = replace(INTERVAL_PRESCRIPTION.components[0].structure.blocks[0],
-                    planned_repetitions=count, evaluation_window=window)
+                    planned_repetitions=count, evaluation_window=window,
+                    recovery=(INTERVAL_PRESCRIPTION.components[0].structure.blocks[0].recovery
+                              if recovery_required else RecoveryContract(
+                                  Applicability.NOT_APPLICABLE, None)))
     component = replace(INTERVAL_PRESCRIPTION.components[0],
         structure=replace(INTERVAL_PRESCRIPTION.components[0].structure, blocks=(block,)))
     snapshot = replace(INTERVAL_PRESCRIPTION, components=(component,))
@@ -85,7 +88,8 @@ def test_wrong_or_missing_evaluation_window_is_unevaluable():
 
 
 def test_missing_recovery_and_wrong_repetition_order_affect_structure():
-    no_recovery = evaluated(interval_case([.8] * 6, valid=[.8] * 6, include_recovery=False))
+    no_recovery = evaluated(interval_case([.8] * 6, valid=[.8] * 6,
+                                           include_recovery=False, recovery_required=True))
     assert no_recovery.component_results[0].structure.status is AdherenceStatus.NOT_MET
     wrong_order = evaluated(interval_case([.8] * 6, valid=[.8] * 6,
                                            order=[0, 2, 1, 3, 4, 5]))

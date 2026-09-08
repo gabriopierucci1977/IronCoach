@@ -181,6 +181,18 @@ def _interval_intensity(component: PlannedComponent, observed: ObservedComponent
     if missing or not repetitions:
         return DimensionResult(result_id, AdherenceStatus.INSUFFICIENT_DATA,
             component.intensity.policy, missing_fields=tuple(missing or ("repetitions",)))
+    recovery_missing = tuple(sorted(
+        f"prescription_snapshot.{snapshot.prescription_snapshot_id}.components."
+        f"{component.component_id}.blocks.{block.block_id}.recovery.evidence"
+        for block in required
+        if block.recovery.applicability is Applicability.REQUIRED
+    ))
+    if recovery_missing:
+        return DimensionResult(
+            result_id, AdherenceStatus.INSUFFICIENT_DATA, component.intensity.policy,
+            missing_fields=recovery_missing,
+            warnings=("required interval recovery target is not evaluable by the beta 0.4 policy",),
+        )
     conformity = sum(repetitions) / len(repetitions)
     if conformity >= .9:
         status, band = AdherenceStatus.MET, SeverityBand.MAIN
@@ -256,13 +268,20 @@ def _structure(component, observed, mapping, snapshot, session):
         if [item.repetition_index for item in mapped_repetitions] != sorted(
                 item.repetition_index for item in mapped_repetitions):
             return AdherenceStatus.PARTIALLY_MET
-        if (block.recovery.applicability is Applicability.REQUIRED and block.recovery.target is not None and
-                not any(candidate.block_type is BlockType.RECOVERY and
-                        any(item.observed_block_ref == ObservedBlockRef(
-                            session.session_id, observed.component_id, candidate.block_id)
-                            for item in block_maps)
-                        for candidate in observed.blocks)):
-            return AdherenceStatus.NOT_MET
+        if block.recovery.applicability is Applicability.REQUIRED:
+            observed_recoveries = [candidate for candidate in observed.blocks
+                                   if candidate.block_type is BlockType.RECOVERY]
+            if observed_recoveries:
+                # Beta 0.4 has no qualified RecoveryMapping/parent reference: even a
+                # mapped or unique observed recovery cannot be associated implicitly.
+                return AdherenceStatus.INSUFFICIENT_DATA
+            incomplete = any("block" in field.lower() or "structure" in field.lower()
+                             for field in (*session.missing_fields,
+                                           *observed.missing_fields,
+                                           *(field for candidate in observed.blocks
+                                             for field in candidate.missing_fields)))
+            return (AdherenceStatus.INSUFFICIENT_DATA if incomplete
+                    else AdherenceStatus.NOT_MET)
     if snapshot.composition is Composition.BRICK:
         for transition in snapshot.transitions:
             planned_ref = PlannedTransitionRef(snapshot.prescription_snapshot_id, transition.transition_id)
