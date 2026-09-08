@@ -11,7 +11,7 @@ from backend.maintain_plan.models import (
     ActualSession, MatchingResult, MatchingStatus, PolicyRef,
 )
 from backend.maintain_plan.repository import MaintainPlanRepository
-from backend.maintain_plan.schema import Migration, run_migrations
+from backend.maintain_plan.schema import MIGRATIONS, SCHEMA_VERSION, Migration, run_migrations
 from backend.maintain_plan.serialization import PAYLOAD_SCHEMA_VERSION
 from backend.maintain_plan.serialization import deserialize_contract, serialize_contract
 from tests.maintain_plan.fixtures import (
@@ -47,7 +47,7 @@ def test_migration_on_empty_database_is_versioned_and_idempotent(tmp_path):
         versions = connection.execute(
             "SELECT version, checksum FROM maintain_plan_schema_migrations"
         ).fetchall()
-        assert [item[0] for item in versions] == [1, 2, 3]
+        assert [item[0] for item in versions] == [1, 2, 3, 4]
         assert all(len(item[1]) == 64 for item in versions)
     run_migrations(path)
     with sqlite3.connect(path) as connection:
@@ -57,7 +57,109 @@ def test_migration_on_empty_database_is_versioned_and_idempotent(tmp_path):
         assert before == after
         assert connection.execute(
             "SELECT count(*) FROM maintain_plan_schema_migrations"
-            ).fetchone() == (3,)
+            ).fetchone() == (4,)
+
+
+def _seed_confirmation_parents(connection):
+    connection.execute(
+        "INSERT INTO maintain_plan_prescription_snapshots VALUES "
+        "('snapshot', 'workout', 'decision', 'contract', 'payload-v', 'snapshot-payload')")
+    connection.execute(
+        "INSERT INTO maintain_plan_actual_sessions VALUES "
+        "('session', '2026-01-01T00:00:00+00:00', 'single', 'contract', 'payload-v', 'session-payload')")
+    connection.execute(
+        "INSERT INTO maintain_plan_matching_results VALUES "
+        "('matching', 'CONFIRMATION_REQUIRED', NULL, 'policy', 'version', 'payload-v', 'matching-payload')")
+
+
+def test_historical_v3_checksum_and_upgrade_to_v4_preserve_existing_rows(tmp_path):
+    path = tmp_path / "historical-v3.db"
+    run_migrations(path, MIGRATIONS[:3])
+    with sqlite3.connect(path) as connection:
+        _seed_confirmation_parents(connection)
+        connection.execute(
+            "INSERT INTO maintain_plan_confirmations VALUES "
+            "('confirmation', 'matching', 'snapshot', 'REQUIRED', NULL, NULL, 'payload-v', 'payload')")
+        before = connection.execute("SELECT * FROM maintain_plan_confirmations").fetchall()
+        assert connection.execute(
+            "SELECT checksum FROM maintain_plan_schema_migrations WHERE version=3"
+        ).fetchone() == ("7607d1dd4e9d6a7bf7ebae0668986d9a938572560e52f46d506b22123303ba00",)
+    run_migrations(path)
+    with sqlite3.connect(path) as connection:
+        assert connection.execute("SELECT * FROM maintain_plan_confirmations").fetchall() == before
+        assert [row[0] for row in connection.execute(
+            "SELECT version FROM maintain_plan_schema_migrations ORDER BY version")] == [1, 2, 3, 4]
+        assert {row[0] for row in connection.execute(
+            "SELECT name FROM sqlite_master WHERE type='trigger'")} == {
+                "maintain_plan_confirmations_validate_insert",
+                "maintain_plan_confirmations_validate_update",
+            }
+
+
+@pytest.mark.parametrize("status,answer,selected", [
+    ("REQUIRED", None, None), ("NOT_REQUIRED", None, None),
+    ("UNKNOWN_ANSWER", "DONT_KNOW", None),
+    ("ANSWERED", "NOT_PERFORMED", None), ("ANSWERED", "NOT_SYNCHRONIZED", None),
+    ("ANSWERED", "SELECT_CANDIDATE", "session"),
+    ("ANSWERED", "MANUAL_ASSOCIATION", "session"),
+    ("SUPERSEDED", None, None),
+])
+def test_v4_accepts_every_valid_confirmation_column_state(tmp_path, status, answer, selected):
+    path = tmp_path / f"valid-{status}-{answer}.db"
+    run_migrations(path)
+    with sqlite3.connect(path) as connection:
+        connection.execute("PRAGMA foreign_keys=ON")
+        _seed_confirmation_parents(connection)
+        connection.execute(
+            "INSERT INTO maintain_plan_confirmations VALUES (?, 'matching', 'snapshot', ?, ?, ?, 'v', 'payload')",
+            (f"confirmation-{status}-{answer}", status, answer, selected))
+
+
+@pytest.mark.parametrize("status,answer,selected", [
+    ("REQUIRED", "DONT_KNOW", None), ("NOT_REQUIRED", None, "session"),
+    ("UNKNOWN_ANSWER", None, None), ("UNKNOWN_ANSWER", "DONT_KNOW", "session"),
+    ("ANSWERED", None, None), ("ANSWERED", "DONT_KNOW", None),
+    ("ANSWERED", "SELECT_CANDIDATE", None),
+    ("ANSWERED", "NOT_PERFORMED", "session"),
+])
+def test_v4_rejects_invalid_confirmation_inserts_and_updates(tmp_path, status, answer, selected):
+    path = tmp_path / f"invalid-{status}-{answer}-{selected}.db"
+    run_migrations(path)
+    with sqlite3.connect(path) as connection:
+        connection.execute("PRAGMA foreign_keys=ON")
+        _seed_confirmation_parents(connection)
+        with pytest.raises(sqlite3.IntegrityError, match="invalid maintain_plan confirmation state"):
+            connection.execute(
+                "INSERT INTO maintain_plan_confirmations VALUES ('bad', 'matching', 'snapshot', ?, ?, ?, 'v', 'payload')",
+                (status, answer, selected))
+        connection.execute(
+            "INSERT INTO maintain_plan_confirmations VALUES "
+            "('valid', 'matching', 'snapshot', 'REQUIRED', NULL, NULL, 'v', 'payload')")
+        with pytest.raises(sqlite3.IntegrityError, match="invalid maintain_plan confirmation state"):
+            connection.execute(
+                "UPDATE maintain_plan_confirmations SET status=?, answer_type=?, selected_session_ref=? "
+                "WHERE confirmation_id='valid'", (status, answer, selected))
+
+
+def test_v4_rejects_invalid_historical_rows_atomically(tmp_path):
+    path = tmp_path / "invalid-historical-v3.db"
+    run_migrations(path, MIGRATIONS[:3])
+    with sqlite3.connect(path) as connection:
+        _seed_confirmation_parents(connection)
+        connection.execute(
+            "INSERT INTO maintain_plan_confirmations VALUES "
+            "('bad', 'matching', 'snapshot', 'ANSWERED', NULL, NULL, 'v', 'payload')")
+        before = connection.execute("SELECT * FROM maintain_plan_confirmations").fetchall()
+    with pytest.raises(RuntimeError, match="invalid existing confirmation bad"):
+        run_migrations(path)
+    with sqlite3.connect(path) as connection:
+        assert connection.execute("SELECT * FROM maintain_plan_confirmations").fetchall() == before
+        assert [row[0] for row in connection.execute(
+            "SELECT version FROM maintain_plan_schema_migrations ORDER BY version")] == [1, 2, 3]
+        assert connection.execute(
+            "SELECT count(*) FROM sqlite_master WHERE type='trigger' AND name LIKE 'maintain_plan_confirmations_validate_%'"
+        ).fetchone() == (0,)
+    assert SCHEMA_VERSION == 4
 
 
 def test_migration_preserves_legacy_schema_and_record_exactly(tmp_path):
