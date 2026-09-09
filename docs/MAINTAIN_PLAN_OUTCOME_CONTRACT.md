@@ -56,10 +56,12 @@ Le seguenti decisioni sono **APPROVATE**:
 6. **Stati e testi utente.** La corrispondenza della sezione 9 è vincolante.
    Missingness, ambiguità e interruzioni di sicurezza non sono presentate come
    fallimenti dell'atleta.
-7. **Stabilità.** Usa la baseline recovery impiegata per formulare la
-   prescrizione e il primo follow-up valido dopo la seduta e prima della
-   decisione successiva. Considera problemi soggettivi e safety signal; non
-   formula diagnosi. Performance non è obbligatoria nella prima versione.
+7. **Stabilità.** Usa esclusivamente l'assessment recovery canonico e
+   immutabile esplicitamente registrato come usato per formulare la
+   prescrizione e il primo assessment canonico temporalmente ammissibile del
+   candidate set congelato. Considera reported problems e safety signal
+   canonici; non formula diagnosi. Performance è `NOT_APPLICABLE` nella prima
+   versione.
 8. **Metriche primarie.** Ogni prescrizione dichiara la metrica primaria. Le
    metriche secondarie sono contestuali e non sostituiscono quella primaria.
 9. **Policy della quantità.** Le fasce approvate sono esplicite, indipendenti
@@ -79,9 +81,11 @@ Le seguenti decisioni sono **APPROVATE**:
     recovery successivo guida internamente la seduta seguente. Le finestre 72h
     e 7d restano trend interni. Nessun aggiornamento tardivo genera un nuovo
     report della vecchia seduta ormai superata.
-14. **Deterioramento.** Riusa analyzer e categorie già approvati; i segnali di
-    sicurezza hanno priorità e segnali insufficienti o contraddittori non
-    producono conclusioni inventate.
+14. **Deterioramento.** Usa soltanto le categorie crescenti `LOW < MODERATE <
+    HIGH < CRITICAL` del contratto stability. Nessun analyzer legacy, score,
+    soglia o mapping è canonico implicitamente; i safety signal affidabili e
+    canonici hanno priorità e i segnali insufficienti non producono
+    conclusioni inventate.
 15. **Matrice finale.** L'aggregazione execution × stability della sezione 11
     è vincolante.
 16. **Brick e multisport.** Sono sessioni composte con componenti distinti da
@@ -147,9 +151,10 @@ Le seguenti decisioni sono **APPROVATE**:
 39. **Conflitti di sorgente.** Nessuna media, fusione o sovrascrittura
     silenziosa. I valori discordanti restano con provenance; si chiede conferma
     se il conflitto può cambiare un risultato.
-40. **Feedback soggettivo.** È facoltativo, auditabile e privato. L'assenza
-    completa di segnalazioni significa `NO_KNOWN_ISSUE`, non certificazione
-    medica, e non costituisce di per sé ambiguità.
+40. **Reported problems.** È una dimensione stability obbligatoria, auditabile
+    e privata. Soltanto l'assenza verificata di feedback nel canale canonico
+    fino al cutoff significa `NO_KNOWN_ISSUE`, che non è una certificazione
+    clinica; un canale non verificato produce `INSUFFICIENT_DATA`.
 41. **Rollout.** Tipi/validator/fixture precedono il runtime; feature flag
     separano snapshot, normalization, matching, shadow, report e learning.
 42. **Shadow e learning.** Lo shadow non cambia outcome ufficiale, confidence
@@ -284,6 +289,45 @@ Le seguenti decisioni sono **APPROVATE**:
 76. **Nullabilità degli aggregati.** I quattro aggregati dimensionali di
     sessione esistono soltanto con coverage `FULLY_SUPPORTED`; negli altri tre
     stati sono tutti null, pur conservando i dettagli supportati.
+77. **Domini recovery separati.** Il recovery assessment di
+    `general_stability` è distinto dal recovery incorporato nei blocchi
+    `INTERVALS`: non condivide automaticamente schema, target, observation,
+    evidence, analyzer, policy o mapping. `RecoveryContract`, le observation
+    di `ObservedBlock` e payload generici non sono stability assessment.
+78. **Assessment recovery canonico.** Assessment, riferimenti, analyzer,
+    compatibility, eligibility/freshness, reported problems e stability
+    evaluation usano contratti tipizzati, immutabili e separati definiti nella
+    sezione 11. Il consumer non ripara, converte o reinterpreta assessment.
+79. **Compatibility C1.** Baseline e follow-up sono compatibili soltanto con
+    uguaglianza esatta di contract version, analyzer ID, analyzer version,
+    assessment schema version e subject ref. Una differenza è `INCOMPATIBLE`,
+    un metadato mancante è `UNDETERMINED`; entrambi impediscono un recovery
+    definitivo. Non esistono registry, conversioni o equivalenze implicite.
+80. **Baseline recovery esplicita.** La baseline è esclusivamente
+    l'assessment immutabile registrato come usato per formulare la
+    prescrizione. È fornita separatamente al servizio e non viene ricercata,
+    classificata o incorporata nelle dataclass persistite esistenti.
+81. **Follow-up deterministico.** Il servizio riceve un candidate set
+    esplicito e congelato e seleziona il candidato integro, compatibile e
+    temporalmente ammissibile con `observed_at` più antico. Esclusioni,
+    duplicati logici e ambiguità sono registrati deterministicamente secondo
+    la sezione 11, senza tie-break impliciti.
+82. **Freshness v1.** Freshness significa soltanto appartenenza alla finestra
+    strettamente successiva alla fine della sessione e precedente alla
+    decisione successiva, oppure non successiva a `evaluated_at` quando tale
+    decisione non esiste. Non esistono durata massima, TTL o limiti di età
+    impliciti.
+83. **Confirmation stability separata.** La `Confirmation` del matching non è
+    riutilizzata. La prima versione non introduce confirmation stability e
+    ogni selection ambiguity produce `INSUFFICIENT_DATA`.
+84. **Safety canonica.** Un safety signal affidabile e canonico produce
+    `DETERIORATED` con precedenza. Testo libero, payload generici o la sola
+    assenza di record non sono promossi automaticamente a safety evidence.
+85. **Persistenza P0.** Il primo incremento recovery stability comprenderà
+    soltanto nuovi tipi frozen separati, validator, selezione deterministica,
+    servizio puro, fixture sintetiche e test. Non comprenderà repository,
+    persistenza, codec, modifiche alle dataclass persistite, schema v7,
+    migrazioni, runtime wiring, report, learning, analyzer o adapter reali.
 
 ## 3. Prescrizione autorevole e audit
 
@@ -492,8 +536,11 @@ auditabile, senza riscrivere o cancellare i dati originali, gli ID o la
 provenance. «Non lo so» renderà non valutabile la parte interessata. Una
 correzione successiva dovrà restare auditabile.
 
-L'assenza completa di segnalazioni soggettive non è di per sé ambigua:
-significa «nessun problema noto», non certificazione medica.
+Per il matching, l'assenza completa di segnalazioni soggettive non crea da
+sola una confirmation. Per la stability significa `NO_KNOWN_ISSUE` soltanto
+quando è verificato il canale canonico fino al cutoff; non è una certificazione
+clinica. La `Confirmation` qui definita resta specifica del matching e non è
+riutilizzata dalla stability.
 
 ## 5. Attività eseguita e matching
 
@@ -2212,11 +2259,14 @@ Campi facoltativi:
 - motivo: `HEALTH`, `WORK_TIME`, `WEATHER`, `EQUIPMENT`, `OTHER`;
 - nota libera.
 
-Nessun questionario è obbligatorio. L'assenza completa significa «nessun
-problema noto» e non certificazione medica. Non si convertono automaticamente
-i segnali e non si formulano diagnosi o nuove soglie cliniche. Ambiguità o
-contraddizioni rilevanti richiedono conferma; correzioni successive saranno
-eventi auditabili nel registro append-only separato.
+Nessun questionario è obbligatorio. Ai fini della stability, l'assenza completa
+significa «nessun problema noto» soltanto quando è verificato il canale
+canonico fino al cutoff, e non è una certificazione clinica; un canale non
+verificato produce `INSUFFICIENT_DATA`. Non si convertono automaticamente i
+segnali e non si formulano diagnosi o nuove soglie cliniche. Ambiguità o
+contraddizioni del feedback restano auditabili, ma la prima stability non usa
+la `Confirmation` del matching e resta `INSUFFICIENT_DATA`; correzioni
+successive saranno eventi auditabili nel registro append-only separato.
 
 La cattura iniziale in `actual_session.athlete_feedback` sarà la baseline
 immutabile, collegata soltanto all'episodio e all'atleta proprietario, e
@@ -2278,60 +2328,282 @@ quinta dimensione. I codici tecnici restano interni.
 
 Policy draft: `maintain-plan-stability/1.0.0-draft`.
 
-Baseline e follow-up devono essere compatibili e versionati:
+### 11.0 Separazione normativa dei domini recovery
 
-- baseline: recovery assessment usato per formulare la prescrizione;
-- follow-up: prima valutazione valida dopo la seduta e prima della decisione
-  successiva.
+Il recovery assessment di `general_stability` è un dominio distinto dal
+recovery incorporato nella prescrizione e nell'osservazione dei blocchi
+`INTERVALS`. I due domini non condividono automaticamente schema, target,
+observation, evidence, analyzer, policy o mapping. In particolare, nessun
+`RecoveryContract`, `ObservedBlock.quantity_observation`,
+`ObservedBlock.intensity_observation` o payload generico può essere promosso,
+convertito o interpretato come assessment di stability.
+
+Il primo incremento consumerà esclusivamente `RecoveryAssessment` canonici già
+prodotti. Nessun analyzer legacy è automaticamente canonico. Analyzer reali,
+adapter e mapping Garmin/Airtable richiederanno una decisione separata e sono
+fuori dal primo incremento; non sono definite conversioni da score e non sono
+importate soglie dagli analyzer legacy.
+
+### 11.1 Contratti canonici tipizzati e immutabili
+
+I tipi qui definiti dovranno essere separati e frozen. Oggetti annidati,
+collezioni, provenance, missing fields e warning dovranno essere profondamente
+immutabili. Identità, versioni, riferimenti qualificati e hash fanno parte del
+contratto consumato e non possono essere ricostruiti dal consumer.
 
 ```yaml
-general_stability:
-  contract_version: maintain-plan/1.0.0-draft
-  recovery:
-    analyzer_version: string
-    baseline: object | null
-    follow_up: object | null
-    freshness: object
-    compatibility: object
-    result: STABLE | DETERIORATED | INSUFFICIENT_DATA
-  reported_problems:
-    result: NO_KNOWN_ISSUE | ISSUE_REPORTED | INSUFFICIENT_DATA
-    evidence: object
-    provenance: object
+analyzer_ref:  # AnalyzerRef
+  analyzer_id: string
+  analyzer_version: string
+  assessment_schema_version: string
+
+immutable_evidence_ref:  # ImmutableEvidenceRef
+  qualified_ref: string
+  evidence_hash: string
+  hash_algorithm: SHA-256
+  schema_version: string
+
+recovery_assessment_ref:  # RecoveryAssessmentRef
+  assessment_id: string
+  contract_version: maintain-plan-stability/1.0.0-draft
+  subject_ref: string
+  qualified_ref: string
+  assessment_hash: string
+  hash_algorithm: SHA-256
+
+recovery_assessment:  # RecoveryAssessment
+  assessment_id: string
+  contract_version: maintain-plan-stability/1.0.0-draft
+  analyzer_ref: AnalyzerRef
+  subject_ref: string
+  observed_at: datetime
+  assessed_at: datetime
+  category: LOW | MODERATE | HIGH | CRITICAL | null
+  category_missingness: NOT_MISSING | MISSING | NOT_ASSESSABLE
+  evidence_refs: [ImmutableEvidenceRef]
+  provenance: object
+  missing_fields: []
+  warnings: []
+
+recovery_compatibility:  # RecoveryAssessmentCompatibility
+  baseline_ref: RecoveryAssessmentRef
+  follow_up_ref: RecoveryAssessmentRef
+  status: COMPATIBLE | INCOMPATIBLE | UNDETERMINED
+  compared_fields:
+    contract_version: EQUAL | DIFFERENT | MISSING
+    analyzer_id: EQUAL | DIFFERENT | MISSING
+    analyzer_version: EQUAL | DIFFERENT | MISSING
+    assessment_schema_version: EQUAL | DIFFERENT | MISSING
+    subject_ref: EQUAL | DIFFERENT | MISSING
+  evidence: object
+  missing_fields: []
+  warnings: []
+
+recovery_temporal_eligibility:  # RecoveryTemporalEligibility
+  candidate_ref: RecoveryAssessmentRef
+  status: ELIGIBLE | EXCLUDED | UNDETERMINED
+  session_end: datetime | null
+  next_decision_at: datetime | null
+  evaluated_at: datetime
+  freshness_status: IN_WINDOW | OUT_OF_WINDOW | UNDETERMINED
+  reasons: []
+  evidence: object
+  missing_fields: []
+  warnings: []
+
+reported_problems_assessment:  # ReportedProblemsAssessment
+  assessment_id: string
+  contract_version: maintain-plan-stability/1.0.0-draft
+  subject_ref: string
+  cutoff_at: datetime
+  canonical_channel_ref: string
+  channel_check_status: VERIFIED | NOT_VERIFIED
+  result: NO_KNOWN_ISSUE | ISSUE_REPORTED | INSUFFICIENT_DATA
+  reliable_canonical_safety_signal: boolean | null
+  stability_result: STABLE | DETERIORATED | INSUFFICIENT_DATA
+  evidence_refs: [ImmutableEvidenceRef]
+  provenance: object
+  missing_fields: []
+  warnings: []
+
+general_stability_evaluation:  # GeneralStabilityEvaluation
+  evaluation_id: string
+  contract_version: maintain-plan-stability/1.0.0-draft
+  evaluated_at: datetime
+  subject_ref: string
+  baseline_ref: RecoveryAssessmentRef
+  frozen_candidate_refs: [RecoveryAssessmentRef]
+  selected_follow_up_ref: RecoveryAssessmentRef | null
+  recovery_compatibility: RecoveryAssessmentCompatibility | null
+  temporal_eligibility: [RecoveryTemporalEligibility]
+  selection_evidence: object
+  recovery_result: STABLE | DETERIORATED | INSUFFICIENT_DATA
+  reported_problems: ReportedProblemsAssessment
   performance:
-    applicability: OPTIONAL | NOT_APPLICABLE
-    evidence: object | null
-  safety_signals: []
-  confirmation_ref: string | null
-  overall:
-    status: STABLE | DETERIORATED | INSUFFICIENT_DATA
-    policy_id: maintain-plan-stability
-    policy_version: 1.0.0-draft
-    evidence: object
+    applicability: NOT_APPLICABLE
+    result: null
+    evidence_refs: []
+  overall: STABLE | DETERIORATED | INSUFFICIENT_DATA
+  policy_id: maintain-plan-stability
+  policy_version: 1.0.0-draft
+  provenance: object
+  missing_fields: []
+  warnings: []
 ```
 
-Nella prima versione della stability, `performance.applicability` dovrà essere
-`NOT_APPLICABLE`. Una versione futura potrà renderla `OPTIONAL` soltanto
-attraverso policy e schema versionati. `OPTIONAL` e `NOT_APPLICABLE` non sono
-sinonimi.
+Ogni `RecoveryAssessment` deve avere identità immutabile e includere tutti i
+campi mostrati: contract version; analyzer ID e version; assessment schema
+version; subject ref; `observed_at`; `assessed_at`; categoria canonica oppure
+missingness esplicita; riferimenti immutabili all'evidenza; provenance;
+missing fields; warning. Timestamp e cutoff devono essere timezone-aware.
+Categoria e `category_missingness` sono coerenti: `NOT_MISSING` richiede una
+categoria, mentre `MISSING` e `NOT_ASSESSABLE` richiedono `category: null`.
+Riferimenti o hash mancanti/non verificabili rendono l'assessment non integro.
 
-Gli unici stati tecnici sono `STABLE`, `DETERIORATED` e
-`INSUFFICIENT_DATA`:
+Il consumer valida e confronta l'assessment così ricevuto, ma non può ripararlo,
+convertirlo, completarlo, ricalcolarne l'hash o reinterpretarne categoria,
+evidence o metadata. Un assessment non integro non può produrre un recovery
+risultato definitivo.
 
-- recovery nella stessa categoria o migliore → `STABLE`;
-- recovery peggiore → `DETERIORATED`;
-- recovery missing, stale, incompatibile o ambiguo → `INSUFFICIENT_DATA`;
-- dolore, problema, affaticamento insolito o interruzione per salute
-  chiaramente segnalati → safety `DETERIORATED`;
-- assenza di segnalazioni → `NO_KNOWN_ISSUE`, non certificazione medica;
-- segnale ambiguo → confirmation e `INSUFFICIENT_DATA` fino alla risposta.
+### 11.2 Categorie e confronto recovery
 
-La futura implementazione dovrà aggregare in ordine:
+Per `maintain-plan-stability/1.0.0-draft` l'ordine canonico, esplicitamente
+crescente per severità, è:
 
-1. almeno una dimensione con deterioramento affidabile → `DETERIORATED`;
-2. altrimenti una dimensione obbligatoria non valutabile →
+`LOW < MODERATE < HIGH < CRITICAL`
+
+Il confronto si applica soltanto a baseline e follow-up integri, compatibili e
+con categoria presente:
+
+- stessa categoria nel follow-up → recovery `STABLE`;
+- categoria inferiore nel follow-up → recovery `STABLE`;
+- categoria superiore nel follow-up → recovery `DETERIORATED`;
+- categoria assente o non valutabile in uno dei due assessment → recovery
+  `INSUFFICIENT_DATA`.
+
+Non esistono conversioni da score, soglie recovery implicite o importazioni di
+categorie e soglie da analyzer legacy.
+
+### 11.3 Compatibility C1
+
+Baseline e follow-up sono `COMPATIBLE` soltanto se sono esattamente uguali
+tutti i seguenti metadati:
+
+1. `contract_version`;
+2. `analyzer_ref.analyzer_id`;
+3. `analyzer_ref.analyzer_version`;
+4. `analyzer_ref.assessment_schema_version`;
+5. `subject_ref`.
+
+Almeno un valore differente produce `INCOMPATIBLE`. In assenza di differenze
+accertate, almeno un metadato mancante produce `UNDETERMINED`. Entrambi gli
+stati impediscono un recovery definitivo e producono recovery
+`INSUFFICIENT_DATA`. La prima versione non ammette registry, conversioni,
+compatibility matrix o equivalenze implicite.
+
+### 11.4 Baseline esplicita e immutabile
+
+La baseline è esclusivamente il `RecoveryAssessment` immutabile esplicitamente
+registrato come utilizzato per formulare la prescrizione. Non viene cercata o
+sostituita per prossimità temporale, ranking, source priority, somiglianza o
+fallback. Riferimento e assessment di baseline saranno forniti separatamente
+al servizio puro.
+
+Il primo incremento non modifica `PrescriptionSnapshot` né alcuna altra
+dataclass persistita. Una baseline assente, non risolvibile, non integra o non
+coerente con il proprio riferimento produce recovery `INSUFFICIENT_DATA`.
+
+### 11.5 Candidate set, eligibility, freshness e selezione
+
+Il servizio riceve un candidate set esplicito e congelato. Non interroga
+repository o sorgenti e non amplia, aggiorna o riordina semanticamente il set.
+Per ciascun elemento produce evidence deterministica di validazione,
+compatibility ed eligibility, incluse tutte le ragioni di esclusione.
+
+Un candidato è temporalmente ammissibile soltanto quando sono vere tutte le
+condizioni seguenti:
+
+1. appartiene allo stesso `subject_ref` della baseline;
+2. è integro e il proprio riferimento/hash è verificato;
+3. è `COMPATIBLE` secondo C1;
+4. `observed_at` è strettamente successivo ad `actual_session.end`;
+5. se esiste una decisione successiva, `observed_at` è strettamente precedente
+   al relativo timestamp;
+6. se non esiste una decisione successiva, `observed_at <= evaluated_at`.
+
+`actual_session.end` mancante rende il recovery `INSUFFICIENT_DATA`. La
+freshness della prima versione significa esclusivamente appartenenza a questa
+finestra sessione–decisione/evaluation: non è prevista alcuna durata massima,
+TTL, limite d'età o ulteriore policy inferibile.
+
+Candidati invalidi, non integri, di altro soggetto, incompatibili,
+`UNDETERMINED` o fuori finestra vengono esclusi e registrati in ordine
+canonico nella `selection_evidence`; non sono ignorati silenziosamente e non
+bloccano un successivo candidato valido. Il follow-up è il candidato valido,
+compatibile e temporalmente ammissibile con il più antico `observed_at`.
+
+Per le parità temporali valgono esclusivamente queste regole:
+
+- stesso timestamp e stesso qualified ref/hash rappresentano un solo candidato
+  logico; tutte le occorrenze duplicate restano registrate nell'evidenza;
+- stesso primo timestamp ammissibile ma qualified ref/hash differenti produce
+  `selection ambiguity`;
+- non sono ammessi tie-break per ID, ordine di input, sorgente, qualità o altro
+  metadata;
+- `selection ambiguity` produce recovery `INSUFFICIENT_DATA`.
+
+Nessun candidato ammissibile produce recovery `INSUFFICIENT_DATA`. Il
+candidate set congelato, le esclusioni, i duplicati logici, l'ordine canonico
+delle evidence e l'eventuale ambiguità devono essere riproducibili dagli input
+immutabili.
+
+### 11.6 Confirmation
+
+La `Confirmation` esistente è specifica del matching e non viene riutilizzata.
+La prima versione non introduce una stability confirmation: ogni ambiguità
+resta `INSUFFICIENT_DATA`.
+
+Una futura confirmation stability separata potrà soltanto selezionare elementi
+già presenti nel candidate set congelato. Non potrà creare evidence, correggere
+hash, riparare assessment o rendere compatibili analyzer incompatibili.
+
+### 11.7 Reported problems e safety
+
+`reported_problems` è una dimensione obbligatoria e separata. Un safety signal
+affidabile e canonico produce `ISSUE_REPORTED` e stability `DETERIORATED` con
+precedenza. Testo libero e payload generici non possono essere promossi
+automaticamente a safety evidence.
+
+L'assenza verificata di feedback nel canale canonico fino al cutoff produce
+`NO_KNOWN_ISSUE`; significa soltanto che non risultano problemi noti nel canale
+verificato e non costituisce certificazione clinica. Se non è dimostrato che il
+canale canonico sia stato controllato fino al cutoff, il risultato è
+`INSUFFICIENT_DATA`. La sola assenza di record non dimostra un controllo.
+`NO_KNOWN_ISSUE` impone `stability_result: STABLE`; un `ISSUE_REPORTED` con
+`reliable_canonical_safety_signal: true` impone `DETERIORATED`; ogni segnale
+non canonico, non affidabile o non valutabile impone `INSUFFICIENT_DATA`, senza
+reinterpretazione del contenuto.
+
+### 11.8 Aggregazione stability
+
+Nella prima versione le dimensioni hanno questa applicability:
+
+- recovery: `REQUIRED`;
+- reported problems/safety: `REQUIRED`;
+- performance: esclusivamente `NOT_APPLICABLE`.
+
+Gli unici stati tecnici della stability sono `STABLE`, `DETERIORATED` e
+`INSUFFICIENT_DATA`. L'aggregazione applica nell'ordine la prima condizione
+vera:
+
+1. almeno una dimensione affidabile deteriorata → `DETERIORATED`;
+2. altrimenti almeno una dimensione obbligatoria non valutabile →
    `INSUFFICIENT_DATA`;
 3. altrimenti → `STABLE`.
+
+Un safety signal affidabile e canonico soddisfa sempre la prima condizione,
+anche quando recovery o un'altra dimensione obbligatoria non sono valutabili.
+Gli stati non formulano diagnosi e non introducono soglie cliniche.
 
 Testi utente obbligatori:
 
@@ -2341,14 +2613,31 @@ Testi utente obbligatori:
 - `INSUFFICIENT_DATA`: «Non ci sono abbastanza informazioni per valutare il
   recupero».
 
-Questi stati non formulano diagnosi e non introducono soglie cliniche.
-
 Il report visibile dovrà restare immediato. Il controllo recovery successivo
-dovrà restare interno, guidare la prossima seduta e non produrre un nuovo
-report tardivo della vecchia seduta. Il learning sarà ammesso soltanto dopo una
-verifica interna valida.
+resterà interno, guiderà la prossima seduta e non produrrà un nuovo report
+tardivo della vecchia seduta. Il learning sarà ammesso soltanto dopo una
+verifica interna valida e una separata approvazione.
 
-### 11.1 Matrice finale approvata
+### 11.9 Persistenza P0 e perimetro del primo incremento
+
+Il primo incremento implementativo recovery stability comprenderà soltanto:
+
+- nuovi tipi separati e frozen;
+- validator;
+- selezione deterministica;
+- servizio puro;
+- fixture sintetiche;
+- test.
+
+Non comprenderà repository, persistenza, modifica del codec, modifica delle
+dataclass già persistite, schema v7, runtime wiring, report, learning, analyzer
+o adapter reali. Le migrazioni v1–v6 e i relativi checksum restano immutabili.
+Il servizio riceverà direttamente baseline, candidate set congelato,
+`actual_session.end`, timestamp della decisione successiva se presente,
+reported problems canonici ed `evaluated_at`, senza accessi esterni o side
+effect.
+
+### 11.10 Matrice finale approvata
 
 | Esecuzione | Stabilità | Outcome `MAINTAIN_PLAN` |
 |---|---|---|
@@ -2489,8 +2778,12 @@ attività normalizzata, policy, analyzer, conferme, evidence e risultati
 dovranno essere versionati e auditabili. Il raw non dovrà sostituire i campi
 canonici.
 
-La prima unità implementativa comprenderà soltanto tipi, validator e fixture
-sintetiche, senza runtime wiring. Feature flag separati dovranno governare:
+Per recovery stability, il primo incremento P0 comprenderà soltanto nuovi tipi
+frozen separati, validator, selezione deterministica, servizio puro, fixture
+sintetiche e test, senza repository, persistenza, codec, modifiche alle
+dataclass persistite, schema v7, runtime wiring, report, learning, analyzer o
+adapter reali. Per il rollout complessivo, feature flag separati dovranno
+governare:
 
 - snapshot;
 - normalization;
@@ -2546,7 +2839,8 @@ Le policy di prodotto descritte in questo documento sono approvate. Restano
 aperte, senza autorizzare comportamenti impliciti:
 
 - progettazione tecnica dei tipi, validator, storage, migrazioni additive,
-  servizi di confirmation e interfacce fra moduli;
+  servizi di confirmation e interfacce fra moduli per le parti non vincolate
+  da P0; recovery stability resta limitata al perimetro della sezione 11.9;
 - progettazione tecnica dei registri append-only, delle proiezioni versionate e
   della minimizzazione dei metadati audit dopo cancellazione, nel rispetto
   delle invarianti approvate;
@@ -2659,7 +2953,10 @@ o feedback approvati nel presente draft.
       precedenza deterministica ed esempi normativi;
 - [x] applicability delle dimensioni obbligatorie definita;
 - [x] direzioni `MIXED` e `UNDETERMINED` definite;
-- [x] stabilità iniziale definita semanticamente;
+- [x] recovery stability definita con domini separati, assessment e riferimenti
+      canonici immutabili, categorie ordinate, compatibility C1, baseline
+      esplicita, candidate set congelato, eligibility/freshness, parità
+      temporali, reported problems/safety, aggregazione e perimetro P0;
 - [x] meteo/privacy, conflitti e feedback definiti;
 - [x] baseline immutabile del feedback, evento `CAPTURED` senza duplicazione
       del payload sensibile, invarianti del registro append-only e algoritmo
@@ -2680,6 +2977,8 @@ o feedback approvati nel presente draft.
       valutativi verificata end-to-end;
 - [ ] invarianti di `recovery.applicability` e `recovery.target` validate con
       fixture sintetiche;
+- [ ] tipi frozen, validator, selezione deterministica, servizio puro, fixture
+      e test recovery stability P0 implementati senza persistenza o wiring;
 - [ ] matching e confirmation coperti per zero/una/più candidate e direct ID;
 - [ ] casi Brick/multisport coperti, inclusi componenti mancanti, fuori ordine,
       sovrapposti, interposti e oltre 15 minuti;
