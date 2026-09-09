@@ -9,7 +9,8 @@ from typing import Any, Mapping
 from .models import (ActualSession, Confirmation, ConfirmationAnswerType, ExecutionEvaluation, FeedbackEvent, FeedbackEventLog,
                      FeedbackProjection, MatchingResult, PrescriptionMapping,
                      PrescriptionSnapshot, SourceConflictProjection,
-                     SourceConflictResolutionEvent, SourceConflictResolutionLog)
+                     SourceConflictImpactEvaluation, SourceConflictResolutionEvent,
+                     SourceConflictResolutionLog)
 from .lifecycle_service import (project_feedback, project_source_conflict,
                                 structurally_equivalent, validate_feedback_payload,
                                 validate_feedback_event, validate_feedback_log,
@@ -19,7 +20,8 @@ from .schema import run_migrations
 from .serialization import PAYLOAD_SCHEMA_VERSION, deserialize_contract, serialize_contract
 from .validators import (validate_actual_session, validate_execution_evaluation,
                          validate_confirmation, validate_mapping, validate_matching_result,
-                         validate_mapping_ownership, validate_prescription)
+                         validate_mapping_ownership, validate_prescription,
+                         validate_source_conflict_impact)
 
 
 class MaintainPlanRepository:
@@ -271,6 +273,29 @@ class MaintainPlanRepository:
         session = self.get_actual_session(value.actual_session_ref)
         if session is None:
             raise ValueError("execution evaluation must reference a persisted actual session")
+        projection_conflicts = []
+        for ref in value.source_conflict_projection_refs:
+            projection = self.get_source_conflict_projection(ref.projection_id)
+            if projection is None or (projection.projection_version, projection.projection_hash,
+                    projection.projection_hash_algorithm,
+                    projection.projection_serialization_policy_id,
+                    projection.projection_serialization_policy_version) != (
+                    ref.projection_version, ref.projection_hash, ref.projection_hash_algorithm,
+                    ref.projection_serialization_policy_id,
+                    ref.projection_serialization_policy_version):
+                raise ValueError("execution evaluation source-conflict projection reference is unresolved or divergent")
+            projection_conflicts.append(projection.source_conflict_id)
+        impact_conflicts = []
+        for ref in value.source_conflict_impact_evaluation_refs:
+            impact = self.get_source_conflict_impact_evaluation(ref.conflict_impact_evaluation_id)
+            if (impact is None or impact.evaluation_version != ref.evaluation_version or
+                    impact.prescription_mapping_ref != mapping.mapping_id or
+                    impact.source_conflict_ref.session_id != session.session_id):
+                raise ValueError("execution evaluation conflict-impact reference is unresolved or divergent")
+            impact_conflicts.append(impact.source_conflict_ref.conflict_id)
+        expected_conflicts = sorted(item.get("conflict_id") for item in session.source_conflicts)
+        if sorted(projection_conflicts) != expected_conflicts or sorted(impact_conflicts) != expected_conflicts:
+            raise ValueError("execution evaluation conflict references are incomplete or extraneous")
         self._require_valid(validate_execution_evaluation(value, mapping, snapshot, session))
         self._insert(
             "INSERT INTO maintain_plan_execution_evaluations VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -300,7 +325,93 @@ class MaintainPlanRepository:
         session = self.get_actual_session(value.actual_session_ref)
         if mapping is None or snapshot is None or session is None:
             raise ValueError("stored execution evaluation has unresolved references")
+        projection_conflicts = []
+        for ref in value.source_conflict_projection_refs:
+            projection = self.get_source_conflict_projection(ref.projection_id)
+            if projection is None or (projection.projection_version, projection.projection_hash,
+                    projection.projection_hash_algorithm,
+                    projection.projection_serialization_policy_id,
+                    projection.projection_serialization_policy_version) != (
+                    ref.projection_version, ref.projection_hash, ref.projection_hash_algorithm,
+                    ref.projection_serialization_policy_id,
+                    ref.projection_serialization_policy_version):
+                raise ValueError("stored execution evaluation has divergent source-conflict projection")
+            projection_conflicts.append(projection.source_conflict_id)
+        impact_conflicts = []
+        for ref in value.source_conflict_impact_evaluation_refs:
+            impact = self.get_source_conflict_impact_evaluation(ref.conflict_impact_evaluation_id)
+            if (impact is None or impact.evaluation_version != ref.evaluation_version or
+                    impact.prescription_mapping_ref != mapping.mapping_id or
+                    impact.source_conflict_ref.session_id != session.session_id):
+                raise ValueError("stored execution evaluation has divergent conflict impact")
+            impact_conflicts.append(impact.source_conflict_ref.conflict_id)
+        expected_conflicts = sorted(item.get("conflict_id") for item in session.source_conflicts)
+        if sorted(projection_conflicts) != expected_conflicts or sorted(impact_conflicts) != expected_conflicts:
+            raise ValueError("stored execution evaluation conflict references are incomplete or extraneous")
         self._require_valid(validate_execution_evaluation(value, mapping, snapshot, session))
+        return value
+
+    def create_source_conflict_impact_evaluation(self, value: SourceConflictImpactEvaluation) -> None:
+        self._require_valid(validate_source_conflict_impact(value))
+        mapping = (None if value.prescription_mapping_ref is None else
+                   self.get_prescription_mapping(value.prescription_mapping_ref))
+        session = self.get_actual_session(value.source_conflict_ref.session_id)
+        if session is None or (value.prescription_mapping_ref is not None and
+                               (mapping is None or mapping.actual_session_ref != session.session_id)):
+            raise ValueError("conflict impact ownership is unresolved")
+        conflicts = [item for item in session.source_conflicts
+                     if item.get("conflict_id") == value.source_conflict_ref.conflict_id]
+        if len(conflicts) != 1:
+            raise ValueError("conflict impact source reference is ghost or duplicated")
+        from .execution_evaluation_service import evaluate_source_conflict_impact
+        canonical = evaluate_source_conflict_impact(
+            session, mapping, conflicts[0],
+            impact_evaluation_id=value.conflict_impact_evaluation_id,
+            evaluation_version=value.evaluation_version,
+            evaluated_at=value.evaluated_at, provenance=value.provenance)
+        if value != canonical:
+            raise ValueError("source-conflict impact is not canonical")
+        self._insert(
+            "INSERT INTO maintain_plan_source_conflict_impact_evaluations VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (value.conflict_impact_evaluation_id, value.evaluation_version,
+             value.source_conflict_ref.session_id, value.source_conflict_ref.conflict_id,
+             value.prescription_mapping_ref, value.status.value, value.policy.policy_id,
+             value.policy.policy_version, PAYLOAD_SCHEMA_VERSION, serialize_contract(value)))
+
+    def get_source_conflict_impact_evaluation(self, identifier: str) -> SourceConflictImpactEvaluation | None:
+        stored = self._get("maintain_plan_source_conflict_impact_evaluations",
+                           "conflict_impact_evaluation_id", identifier,
+                           SourceConflictImpactEvaluation)
+        if stored is None:
+            return None
+        row, value = stored
+        self._require_valid(validate_source_conflict_impact(value))
+        metadata = (value.conflict_impact_evaluation_id, value.evaluation_version,
+                    value.source_conflict_ref.session_id, value.source_conflict_ref.conflict_id,
+                    value.prescription_mapping_ref, value.status.value, value.policy.policy_id,
+                    value.policy.policy_version)
+        if tuple(row[key] for key in ("conflict_impact_evaluation_id", "evaluation_version",
+                "session_id", "conflict_id", "prescription_mapping_ref", "status",
+                "policy_id", "policy_version")) != metadata:
+            raise ValueError("stored source-conflict impact metadata does not match payload")
+        mapping = (None if value.prescription_mapping_ref is None else
+                   self.get_prescription_mapping(value.prescription_mapping_ref))
+        session = self.get_actual_session(value.source_conflict_ref.session_id)
+        if session is None or (value.prescription_mapping_ref is not None and
+                (mapping is None or mapping.actual_session_ref != session.session_id)) or sum(
+                item.get("conflict_id") == value.source_conflict_ref.conflict_id
+                for item in session.source_conflicts) != 1:
+            raise ValueError("stored source-conflict impact has unresolved ownership")
+        from .execution_evaluation_service import evaluate_source_conflict_impact
+        conflict = next(item for item in session.source_conflicts
+                        if item.get("conflict_id") == value.source_conflict_ref.conflict_id)
+        canonical = evaluate_source_conflict_impact(
+            session, mapping, conflict,
+            impact_evaluation_id=value.conflict_impact_evaluation_id,
+            evaluation_version=value.evaluation_version,
+            evaluated_at=value.evaluated_at, provenance=value.provenance)
+        if value != canonical:
+            raise ValueError("stored source-conflict impact is not canonical")
         return value
 
     def create_feedback_log(self, value: FeedbackEventLog) -> None:

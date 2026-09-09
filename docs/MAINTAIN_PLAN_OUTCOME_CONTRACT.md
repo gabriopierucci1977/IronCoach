@@ -1758,6 +1758,37 @@ Per ogni ripetizione `EVALUABLE`:
   `recovery.applicability` sarà `REQUIRED` e il target esplicito sarà
   valorizzato; `NOT_APPLICABLE` non sarà interpretato come target mancante.
 
+**Regola transitoria beta 0.4 per il recovery degli intervalli.** In questa
+versione non esiste ancora un'evidenza recovery osservata tipizzata e
+qualificata, né un `RecoveryMapping` che associ il recovery incorporato nel
+work block pianificato a uno specifico recovery block osservato. Di
+conseguenza, per ogni recovery `REQUIRED` con target esplicito, il target sarà
+conservato integralmente ma non sarà interpretato o confrontato:
+
+- l'intensità del componente sarà `INSUFFICIENT_DATA`, con `direction` e
+  `band` null, un `missing_fields` completamente qualificato verso l'evidenza
+  recovery non disponibile e un warning deterministico della policy beta 0.4;
+- quantità o intensità osservate generiche, durata, HR, power, pace, RPE, nome,
+  posizione, adiacenza, cardinalità e aggregati continuous non costituiranno
+  evidence recovery e non potranno produrre `MET`;
+- le ripetizioni work resteranno valutabili secondo le regole ordinarie, ma un
+  loro esito favorevole non compenserà il recovery non valutabile;
+- la dose del componente, gli aggregati e l'overall applicheranno le normali
+  precedenze a partire dall'intensità `INSUFFICIENT_DATA`, e il risultato sarà
+  escluso dal learning;
+- la structure resterà separata dall'intensità: un recovery osservato non
+  associabile mediante un riferimento normativo esplicito produrrà
+  `INSUFFICIENT_DATA` per il requisito recovery, anche se unico, vicino,
+  successivo, nello stesso componente o `OBSERVED_ONLY`; l'assenza accertata
+  nel set canonico completo dei blocchi produrrà `NOT_MET`, mentre un set
+  dichiaratamente incompleto produrrà `INSUFFICIENT_DATA`.
+
+Con `recovery.applicability: NOT_APPLICABLE`, `target` resterà null, non sarà
+prodotta alcuna valutazione recovery e non vi saranno effetti su intensity,
+structure, dose o overall. Il contratto recovery osservato tipizzato è
+rinviato a una versione successiva. Le evaluation già pubblicate resteranno
+immutabili; la regola si applicherà soltanto a nuove evaluation versionate.
+
 Se almeno una ripetizione obbligatoria è `UNEVALUABLE`, la dimensione
 d'intensità dell'intervallo è `INSUFFICIENT_DATA`, con `direction: null` e
 band/severity applicabile null. Non si applicano le soglie 90%/70%, la

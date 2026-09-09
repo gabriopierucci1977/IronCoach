@@ -206,6 +206,20 @@ class OverallStatus(ValueEnum):
     INSUFFICIENT_DATA = "INSUFFICIENT_DATA"
 
 
+class ConflictImpactStatus(ValueEnum):
+    EVALUATED = "EVALUATED"
+    UNRESOLVED = "UNRESOLVED"
+
+
+class AffectedDimension(ValueEnum):
+    IDENTITY = "IDENTITY"
+    QUANTITY = "QUANTITY"
+    INTENSITY = "INTENSITY"
+    STRUCTURE = "STRUCTURE"
+    DOSE = "DOSE"
+    DECISION = "DECISION"
+
+
 @dataclass(frozen=True)
 class PolicyRef(_DeepFrozen):
     policy_id: str | None
@@ -799,6 +813,10 @@ class DimensionResult(_DeepFrozen):
     policy: PolicyRef
     direction: Direction | None = None
     band: SeverityBand | None = None
+    evidence: Mapping[str, Any] = MappingProxyType({})
+    provenance: Mapping[str, Any] = MappingProxyType({})
+    missing_fields: tuple[str, ...] = ()
+    warnings: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -810,6 +828,41 @@ class DoseEvaluation(_DeepFrozen):
     quantity_result_ref: str | None
     intensity_result_ref: str | None
     policy: PolicyRef
+    provenance: Mapping[str, Any] = MappingProxyType({})
+    computed_at: datetime | None = None
+    missing_fields: tuple[str, ...] = ()
+    warnings: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class SourceConflictProjectionRef(_DeepFrozen):
+    projection_id: str
+    projection_version: str
+    projection_hash: str
+    projection_hash_algorithm: str
+    projection_serialization_policy_id: str
+    projection_serialization_policy_version: str
+
+
+@dataclass(frozen=True)
+class SourceConflictImpactEvaluation(_DeepFrozen):
+    conflict_impact_evaluation_id: str
+    evaluation_version: str
+    source_conflict_ref: SourceConflictRef
+    prescription_mapping_ref: str | None
+    status: ConflictImpactStatus
+    affected_dimensions: tuple[AffectedDimension, ...]
+    policy: PolicyRef
+    provenance: Mapping[str, Any]
+    evaluated_at: datetime
+    missing_fields: tuple[str, ...] = ()
+    warnings: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class ConflictImpactEvaluationRef(_DeepFrozen):
+    conflict_impact_evaluation_id: str
+    evaluation_version: str
 
 
 @dataclass(frozen=True)
@@ -827,6 +880,9 @@ class ComponentEvaluation(_DeepFrozen):
     intensity: DimensionResult | None = None
     structure: DimensionResult | None = None
     dose: DoseEvaluation | None = None
+    provenance: Mapping[str, Any] = MappingProxyType({})
+    missing_fields: tuple[str, ...] = ()
+    warnings: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -874,3 +930,6 @@ class ExecutionEvaluation(_DeepFrozen):
     dose_aggregate: DoseEvaluation | None
     overall: OverallStatus | None
     policy: PolicyRef
+    source_conflict_projection_refs: tuple[SourceConflictProjectionRef, ...] = ()
+    source_conflict_impact_evaluation_refs: tuple[ConflictImpactEvaluationRef, ...] = ()
+    provenance: Mapping[str, Any] = MappingProxyType({})

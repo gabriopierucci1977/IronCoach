@@ -6,15 +6,16 @@ from collections import Counter
 from datetime import datetime
 from dataclasses import fields, is_dataclass
 import math
-from typing import Iterable
+from typing import Iterable, Mapping
 
 from .models import (
-    ActualSession, ComponentEvaluation, Composition, Confirmation, ConfirmationAnswerType,
+    ActualSession, AffectedDimension, ComponentEvaluation, Composition, Confirmation, ConfirmationAnswerType,
+    ConflictImpactStatus,
     ConfirmationStatus, CoverageStatus, DoseEvaluation,
     DoseStatus, EvaluationApplicability, ExecutionEvaluation, MatchStatus,
     Applicability, MatchingStatus, PolicyRef, PrescriptionMapping, PrescriptionSnapshot,
     PlannedComponent, PlannedComponentRef, PrescribedTarget, QuantityMetric,
-    Requiredness, SessionType, SupportStatus,
+    Requiredness, SessionType, SourceConflictRef, SupportStatus,
     CONTRACT_VERSION,
 )
 
@@ -560,9 +561,9 @@ def validate_dose(dose: DoseEvaluation) -> tuple[str, ...]:
                       dose.quantity_result_ref is None or dose.intensity_result_ref is None):
         errors.append("EVALUATED dose requires quantity, intensity, direction, and severity")
     if not evaluated and (dose.direction is not None or dose.severity_band is not None or
-                          dose.quantity_result_ref is not None or dose.intensity_result_ref is not None or
+                          (dose.quantity_result_ref is None) != (dose.intensity_result_ref is None) or
                           dose.policy != PolicyRef(None, None)):
-        errors.append("INSUFFICIENT_DATA dose requires null input references, direction, severity, and policy")
+        errors.append("INSUFFICIENT_DATA dose requires paired input references and null direction, severity, and policy")
     return tuple(errors)
 
 
@@ -593,6 +594,31 @@ def validate_component_evaluation(result: ComponentEvaluation) -> tuple[str, ...
                 result.dose.quantity_result_ref != result.quantity.result_id or
                 result.dose.intensity_result_ref != result.intensity.result_id):
             errors.append("component dose must reference its own quantity and intensity results")
+    return tuple(errors)
+
+
+def validate_source_conflict_impact(value) -> tuple[str, ...]:
+    errors = []
+    if type(value.conflict_impact_evaluation_id) is not str or not value.conflict_impact_evaluation_id or type(value.evaluation_version) is not str or not value.evaluation_version:
+        errors.append("conflict impact requires stable identifiers and version")
+    if value.policy != PolicyRef("maintain-plan-source-conflict-impact", "1.0.0-draft"):
+        errors.append("conflict impact requires the normative policy/version")
+    if len(value.affected_dimensions) != len(set(value.affected_dimensions)):
+        errors.append("conflict impact affected dimensions must be unique")
+    if not isinstance(value.affected_dimensions, tuple) or any(not isinstance(d, AffectedDimension) for d in value.affected_dimensions):
+        errors.append("conflict impact affected dimensions must be canonical enums")
+    if not isinstance(value.evaluated_at, datetime) or value.evaluated_at.tzinfo is None:
+        errors.append("conflict impact timestamp must be timezone-aware")
+    if not isinstance(value.provenance, Mapping) or not isinstance(value.missing_fields, tuple) or not isinstance(value.warnings, tuple):
+        errors.append("conflict impact audit metadata has invalid types")
+    if not isinstance(value.source_conflict_ref, SourceConflictRef):
+        errors.append("conflict impact requires a qualified conflict reference")
+    if not isinstance(value.status, ConflictImpactStatus):
+        errors.append("conflict impact status must be canonical")
+    elif value.status is ConflictImpactStatus.EVALUATED and value.prescription_mapping_ref is None:
+        errors.append("EVALUATED conflict impact requires canonical mapping")
+    elif value.status is ConflictImpactStatus.UNRESOLVED and value.prescription_mapping_ref is not None:
+        errors.append("UNRESOLVED conflict impact forbids a mapping")
     return tuple(errors)
 
 

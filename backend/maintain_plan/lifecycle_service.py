@@ -414,6 +414,20 @@ def project_source_conflict(*, projection_id: str, projection_version: str,
 
 def validate_source_conflict_projection(value: SourceConflictProjection) -> tuple[str, ...]:
     errors = []
+    if type(value.projection_id) is not str or not value.projection_id or type(value.projection_version) is not str or not value.projection_version:
+        errors.append("projection requires stable string identifiers")
+    if not isinstance(value.actual_session_ref, ActualSessionRef) or not value.actual_session_ref.session_id:
+        errors.append("projection requires a qualified actual-session reference")
+    if type(value.source_conflict_id) is not str or not value.source_conflict_id:
+        errors.append("projection requires a source-conflict identifier")
+    if not isinstance(value.resolution_log_ref, ResolutionLogRef):
+        errors.append("projection requires a qualified resolution-log reference")
+    if not isinstance(value.status, SourceConflictProjectionStatus):
+        errors.append("projection status must be canonical")
+    if not isinstance(value.computed_at, datetime) or value.computed_at.tzinfo is None:
+        errors.append("projection timestamp must be timezone-aware")
+    if not isinstance(value.provenance, Mapping) or not isinstance(value.missing_fields, tuple) or not isinstance(value.warnings, tuple):
+        errors.append("projection audit metadata has invalid types")
     if value.projection_hash_algorithm != PROJECTION_HASH_ALGORITHM:
         errors.append("projection hash algorithm is unsupported")
     if (value.projection_serialization_policy_id != CONFLICT_SERIALIZATION_POLICY_ID or

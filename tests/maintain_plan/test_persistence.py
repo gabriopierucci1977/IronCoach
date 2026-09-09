@@ -47,7 +47,7 @@ def test_migration_on_empty_database_is_versioned_and_idempotent(tmp_path):
         versions = connection.execute(
             "SELECT version, checksum FROM maintain_plan_schema_migrations"
         ).fetchall()
-        assert [item[0] for item in versions] == [1, 2, 3, 4]
+        assert [item[0] for item in versions] == [1, 2, 3, 4, 5, 6]
         assert all(len(item[1]) == 64 for item in versions)
     run_migrations(path)
     with sqlite3.connect(path) as connection:
@@ -57,7 +57,7 @@ def test_migration_on_empty_database_is_versioned_and_idempotent(tmp_path):
         assert before == after
         assert connection.execute(
             "SELECT count(*) FROM maintain_plan_schema_migrations"
-            ).fetchone() == (4,)
+            ).fetchone() == (6,)
 
 
 def _seed_confirmation_parents(connection):
@@ -88,7 +88,7 @@ def test_historical_v3_checksum_and_upgrade_to_v4_preserve_existing_rows(tmp_pat
     with sqlite3.connect(path) as connection:
         assert connection.execute("SELECT * FROM maintain_plan_confirmations").fetchall() == before
         assert [row[0] for row in connection.execute(
-            "SELECT version FROM maintain_plan_schema_migrations ORDER BY version")] == [1, 2, 3, 4]
+            "SELECT version FROM maintain_plan_schema_migrations ORDER BY version")] == [1, 2, 3, 4, 5, 6]
         assert {row[0] for row in connection.execute(
             "SELECT name FROM sqlite_master WHERE type='trigger'")} == {
                 "maintain_plan_confirmations_validate_insert",
@@ -159,7 +159,7 @@ def test_v4_rejects_invalid_historical_rows_atomically(tmp_path):
         assert connection.execute(
             "SELECT count(*) FROM sqlite_master WHERE type='trigger' AND name LIKE 'maintain_plan_confirmations_validate_%'"
         ).fetchone() == (0,)
-    assert SCHEMA_VERSION == 4
+    assert SCHEMA_VERSION == 6
 
 
 def test_migration_preserves_legacy_schema_and_record_exactly(tmp_path):
