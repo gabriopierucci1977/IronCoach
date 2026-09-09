@@ -250,62 +250,85 @@ def _observed_block_collection_is_incomplete(observed: ObservedComponent) -> boo
 
 def _structure(component, observed, mapping, snapshot, session):
     block_collection_incomplete = _observed_block_collection_is_incomplete(observed)
+    definitive_violation = False
+    insufficient_data = False
+    partial_nonconformity = False
     block_maps = [b for b in mapping.block_mappings if
                   (b.planned_block_ref and b.planned_block_ref.component_id == component.component_id) or
                   (b.observed_block_ref and b.observed_block_ref.component_id == observed.component_id)]
     planned_by_id = {b.block_id: b for b in component.structure.blocks}
     missing = [b for b in block_maps if b.match_status is MatchStatus.PLANNED_ONLY and
                b.planned_block_ref and planned_by_id[b.planned_block_ref.block_id].requiredness is Requiredness.REQUIRED]
-    if missing and block_collection_incomplete:
-        return AdherenceStatus.INSUFFICIENT_DATA
-    if any(planned_by_id[b.planned_block_ref.block_id].block_type in (BlockType.MAIN_SET, BlockType.WORK) for b in missing):
-        return AdherenceStatus.NOT_MET
-    if missing:
-        return AdherenceStatus.PARTIALLY_MET
+    for block_mapping in missing:
+        planned = planned_by_id[block_mapping.planned_block_ref.block_id]
+        if block_collection_incomplete:
+            insufficient_data = True
+        elif planned.block_type in (BlockType.MAIN_SET, BlockType.WORK):
+            definitive_violation = True
+        else:
+            partial_nonconformity = True
     for block in component.structure.blocks:
         if block.requiredness is not Requiredness.REQUIRED or block.planned_repetitions is None:
             continue
         observed_block = _mapped_block(component, observed, block, mapping, snapshot, session)
         if observed_block is None:
             if block_collection_incomplete:
-                return AdherenceStatus.INSUFFICIENT_DATA
-            return AdherenceStatus.NOT_MET if block.block_type in (BlockType.MAIN_SET, BlockType.WORK) else AdherenceStatus.PARTIALLY_MET
+                insufficient_data = True
+            elif block.block_type in (BlockType.MAIN_SET, BlockType.WORK):
+                definitive_violation = True
+            else:
+                partial_nonconformity = True
+            continue
         mapped_repetitions = [_mapped_repetition(component, observed, block, index,
             observed_block, mapping, snapshot, session)
             for index in range(block.planned_repetitions)]
         if any(item is None for item in mapped_repetitions):
-            return AdherenceStatus.NOT_MET if block.block_type in (BlockType.MAIN_SET, BlockType.WORK) else AdherenceStatus.PARTIALLY_MET
+            if block.block_type in (BlockType.MAIN_SET, BlockType.WORK):
+                definitive_violation = True
+            else:
+                partial_nonconformity = True
+            continue
         if [item.repetition_index for item in mapped_repetitions] != sorted(
                 item.repetition_index for item in mapped_repetitions):
-            return AdherenceStatus.PARTIALLY_MET
+            definitive_violation = True
         if block.recovery.applicability is Applicability.REQUIRED:
             observed_recoveries = [candidate for candidate in observed.blocks
                                    if candidate.block_type is BlockType.RECOVERY]
             if observed_recoveries:
                 # Beta 0.4 has no qualified RecoveryMapping/parent reference: even a
                 # mapped or unique observed recovery cannot be associated implicitly.
-                return AdherenceStatus.INSUFFICIENT_DATA
-            return (AdherenceStatus.INSUFFICIENT_DATA
-                    if block_collection_incomplete
-                    else AdherenceStatus.NOT_MET)
+                insufficient_data = True
+            elif block_collection_incomplete:
+                insufficient_data = True
+            else:
+                definitive_violation = True
     if snapshot.composition is Composition.BRICK:
         for transition in snapshot.transitions:
             planned_ref = PlannedTransitionRef(snapshot.prescription_snapshot_id, transition.transition_id)
             transition_maps = [item for item in mapping.transition_mappings if item.planned_transition_ref == planned_ref]
             if len(transition_maps) != 1 or transition_maps[0].match_status is not MatchStatus.MATCHED or transition_maps[0].observed_transition_ref is None:
-                return AdherenceStatus.INSUFFICIENT_DATA
+                insufficient_data = True
+                continue
             observed_ref = transition_maps[0].observed_transition_ref
             matches = [item for item in session.transitions if
                        item.transition_id == observed_ref.transition_id and
                        observed_ref.session_id == session.session_id]
             component_map = {item.planned_component_ref.component_id: item.observed_component_ref.component_id
                 for item in mapping.component_mappings if item.planned_component_ref and item.observed_component_ref}
-            if (len(matches) != 1 or matches[0].duration_minutes is None or
-                    matches[0].from_component_ref != component_map.get(transition.from_component_id) or
+            if len(matches) != 1 or matches[0].duration_minutes is None:
+                insufficient_data = True
+                continue
+            if (matches[0].from_component_ref != component_map.get(transition.from_component_id) or
                     matches[0].to_component_ref != component_map.get(transition.to_component_id)):
-                return AdherenceStatus.INSUFFICIENT_DATA
+                definitive_violation = True
             if matches[0].duration_minutes > transition.applicable_limit_minutes:
-                return AdherenceStatus.NOT_MET
+                definitive_violation = True
+    if definitive_violation:
+        return AdherenceStatus.NOT_MET
+    if insufficient_data:
+        return AdherenceStatus.INSUFFICIENT_DATA
+    if partial_nonconformity:
+        return AdherenceStatus.PARTIALLY_MET
     return AdherenceStatus.MET
 
 

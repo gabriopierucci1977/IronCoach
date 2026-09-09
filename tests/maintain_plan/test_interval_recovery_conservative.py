@@ -212,3 +212,70 @@ def test_exact_block_marker_does_not_override_missing_required_repetition():
     result = evaluate(snapshot, session, mapping,
                       evaluation_id="missing-repetition", evaluated_at=NOW)
     assert result.component_results[0].structure.status is AdherenceStatus.NOT_MET
+
+
+def two_work_blocks_with_proven_and_uncertain_absence():
+    snapshot, session, _ = interval_case([.8] * 3, valid=[.8] * 3,
+        include_recovery=False, recovery_required=False)
+    first = snapshot.components[0].structure.blocks[0]
+    second = replace(first, block_id="second-work", block_index=1)
+    prescribed = replace(snapshot.components[0], structure=replace(
+        snapshot.components[0].structure, blocks=(first, second)))
+    snapshot = replace(snapshot, components=(prescribed,))
+
+    observed_first = replace(session.components[0].blocks[0],
+                             repetitions=session.components[0].blocks[0].repetitions[:2])
+    observed = replace(session.components[0], blocks=(observed_first,),
+                       missing_fields=("structure.blocks",))
+    session = replace(session, components=(observed,))
+    mapping = build_mapping(snapshot, session, mapping_id="mixed-evidence",
+                            created_at=NOW,
+                            resolution_method=ResolutionMethod.AUTOMATIC)
+    return snapshot, session, mapping
+
+
+def test_proven_repetition_violation_precedes_uncertain_planned_only_block():
+    snapshot, session, mapping = two_work_blocks_with_proven_and_uncertain_absence()
+    assert any(item.match_status is MatchStatus.MATCHED
+               for item in mapping.block_mappings)
+    assert any(item.match_status is MatchStatus.PLANNED_ONLY
+               for item in mapping.block_mappings)
+
+    result = evaluate(snapshot, session, mapping,
+                      evaluation_id="mixed-evidence", evaluated_at=NOW)
+    assert result.component_results[0].structure.status is AdherenceStatus.NOT_MET
+
+
+def test_structure_evidence_aggregation_is_mapping_order_independent():
+    snapshot, session, mapping = two_work_blocks_with_proven_and_uncertain_absence()
+    baseline = evaluate(snapshot, session, mapping,
+                        evaluation_id="permuted", evaluated_at=NOW)
+    permuted = replace(
+        mapping,
+        component_mappings=tuple(reversed(mapping.component_mappings)),
+        block_mappings=tuple(reversed(mapping.block_mappings)),
+        repetition_mappings=tuple(reversed(mapping.repetition_mappings)),
+        transition_mappings=tuple(reversed(mapping.transition_mappings)),
+    )
+    reordered = evaluate(snapshot, session, permuted,
+                         evaluation_id="permuted", evaluated_at=NOW)
+    assert reordered == baseline
+    assert reordered.component_results[0].structure.status is AdherenceStatus.NOT_MET
+
+
+def test_proven_repetition_order_violation_precedes_uncertain_block():
+    snapshot, session, mapping = two_work_blocks_with_proven_and_uncertain_absence()
+    matched = [item for item in mapping.repetition_mappings
+               if item.match_status is MatchStatus.MATCHED]
+    swapped_refs = {
+        matched[0].planned_repetition_ref: matched[1].observed_repetition_ref,
+        matched[1].planned_repetition_ref: matched[0].observed_repetition_ref,
+    }
+    mapping = replace(mapping, repetition_mappings=tuple(
+        replace(item, observed_repetition_ref=swapped_refs[item.planned_repetition_ref])
+        if item.planned_repetition_ref in swapped_refs else item
+        for item in mapping.repetition_mappings
+    ))
+    result = evaluate(snapshot, session, mapping,
+                      evaluation_id="wrong-order", evaluated_at=NOW)
+    assert result.component_results[0].structure.status is AdherenceStatus.NOT_MET
