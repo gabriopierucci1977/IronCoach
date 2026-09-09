@@ -20,14 +20,48 @@ locale era `work`, ma il contenuto di `HEAD` coincideva esattamente con il merge
 atteso della PR #26, `cf91162`. La materializzazione della PR #26 è quindi stata
 verificata per contenuto e commit, senza aggiornare alcun ramo remoto.
 
-Dopo il checkpoint `.quater`, il repository contiene due commit di codice
-MAINTAIN_PLAN rilevanti e verificabili:
+La cronologia effettiva `6a7580b..cf91162` contiene una sequenza normativa e
+implementativa MAINTAIN_PLAN più ampia dei soli ultimi due commit. L'inventario
+verificato con `git log` e con l'ispezione individuale dei commit è:
 
-- `835b3c3` — `feat(maintain_plan): add deterministic matching and immutable confirmation workflow`;
-- `cf91162` — `feat: add maintain plan execution and conflict evaluation (#26)`.
+### Provenienza normativa
 
-Solo il secondo commit espone nel log locale un numero di PR verificabile: PR
-`#26`. Non viene attribuito un numero di PR a `835b3c3`.
+- `1b1e7ec` — crea il contratto outcome MAINTAIN_PLAN in stato draft;
+- `76a727e` e `2065eb2` — registrano decisioni outcome approvate;
+- `e937c0f` — formalizza il contratto della dose;
+- `c76ec45` — riconcilia la tassonomia degli sport;
+- `a74fb4e` — rappresenta le discipline delle sessioni composte;
+- `ee74d6a` — disambigua i riferimenti dei risultati e gli ID canonici della
+  dose (`#9` nel subject verificato).
+
+Nel range sono presenti anche i merge commit `7f68156` (PR #5), `53a0070`
+(PR #6) e `111eaa0` (PR #8), riconoscibili direttamente dai rispettivi subject.
+Non vengono dedotti numeri di PR per commit che non li espongono.
+
+### Provenienza implementativa
+
+- `e15bb98` — introduce modelli, validator, fixture e test dei domain contract;
+- `e7faeb2` — rafforza gli invarianti dei contratti (`#19` nel subject);
+- `c4ffe73` — preserva target completi di prescrizione, incluse dimensioni e
+  policy (`#20` nel subject);
+- `62b582d` — introduce e irrobustisce schema, codec e repository SQLite
+  append-only (`#21` nel subject);
+- `40401e7` — aggiunge l'acquisizione esplicita e persistita del prescription
+  snapshot (`#22` nel subject);
+- `7ba1fa2` — aggiunge la normalizzazione canonica delle actual session
+  (`#23` nel subject);
+- `fef3458` — aggiunge lifecycle append-only di feedback e projection dei
+  source conflict (`#24` nel subject);
+- `835b3c3` — aggiunge matching deterministico, confirmation immutabile,
+  ownership del mapping e preservazione della storia delle migrazioni; il
+  subject non espone un numero di PR;
+- `cf91162` — aggiunge execution evaluation e conflict-impact evaluation
+  (`#26` nel subject), inclusi gli hardening per intervalli, recovery e
+  aggregazione structure.
+
+Il medesimo range contiene anche commit relativi alla Decision Memory legacy,
+alla CI e alla documentazione operativa generale; non sono attribuiti al nuovo
+sottosistema MAINTAIN_PLAN soltanto perché compaiono nel range Git.
 
 ---
 
@@ -281,9 +315,21 @@ Per il sottosistema MAINTAIN_PLAN introdotto dopo `.quater`:
 - nessun learning MAINTAIN_PLAN;
 - nessuna rete o servizio esterno.
 
-I test controllano inoltre che i file runtime esterni al package non importino
-il repository o il servizio di acquisizione MAINTAIN_PLAN. Database e input dei
-test sono sintetici e confinati nelle directory temporanee pytest.
+L'assenza generale di wiring è stata **osservata nel tree corrente** mediante
+ricerca repository-wide; non è una garanzia generica attribuibile ai test. I
+test automatici hanno uno scope più preciso e cercano, nei file Python sotto
+`backend` esterni al package `maintain_plan`, soltanto le rispettive stringhe di
+import completamente qualificate:
+
+- `test_actual_session_normalizer.py` controlla
+  `backend.maintain_plan.actual_session_normalizer`;
+- `test_prescription_snapshot_service.py` controlla
+  `backend.maintain_plan.prescription_snapshot_service`;
+- `test_persistence.py` controlla `backend.maintain_plan.repository`.
+
+Questi controlli non dimostrano l'assenza di ogni possibile stile di import o
+di ogni futura forma di wiring. Database e input dei test sono sintetici e
+confinati nelle directory temporanee pytest.
 
 Questo isolamento non contraddice `.quater`: il runtime legacy e le sue
 integrazioni descritte lì esistono, ma il nuovo sottosistema MAINTAIN_PLAN non è

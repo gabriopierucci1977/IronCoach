@@ -1,6 +1,6 @@
 # IronCoach Beta 0.4 — START HERE
 
-Ultimo aggiornamento: 2 settembre 2026.
+Ultimo aggiornamento: 9 settembre 2026.
 
 Questo documento è il punto di ripartenza operativo per una nuova chat.
 Supera i vecchi checkpoint quando esiste un'informazione più recente qui.
@@ -17,24 +17,17 @@ Branch di sviluppo:
 
 `feature/beta-0.4-decision-memory`
 
-Ultimo commit presente nel branch:
+Checkpoint sequenziale più recente:
 
-`45ad2b2 Merge pull request #3 from gabriopierucci1977/codex/esegui-manutenzione-ambiente-di-sviluppo`
+`docs/IronCoach Beta 0.4.quinquies — Handoff.md`
 
-Ultimi commit rilevanti:
+Baseline di codice MAINTAIN_PLAN dopo la PR #26:
 
-- `84cd265 chore: align local python version`
-- `9e97aa8 Merge pull request #2 from gabriopierucci1977/codex/verifica-stato-working-tree-e-test-pytest`
-- `af6d8f8 feat: process pending decision memory episodes`
-- `20efb3f docs: add beta 0.4 start here`
-- `38a0247 feat: evaluate injury protection outcomes`
-- `9e82982 docs: checkpoint injury outcome coverage`
-- `3a3c1d7 feat: evaluate uncertainty reduction outcomes`
-- `b504db3 docs: checkpoint decision memory outcome coverage`
-- `e5502bb fix: complete insufficient recovery outcomes`
-- `2c4dbe0 ci: run tests on python 3.12`
-- `c27187e fix: resolve ambiguous activity matching safely`
-- `8ac51b7 fix: treat unknown workout sport as unspecified`
+`cf91162 feat: add maintain plan execution and conflict evaluation (#26)`
+
+Il contratto `docs/MAINTAIN_PLAN_OUTCOME_CONTRACT.md` resta
+`DRAFT — NON IMPLEMENTATO`. Il sottosistema `backend/maintain_plan/` è validato
+ma isolato: non è collegato al runtime IronCoach.
 
 CI GitHub Actions:
 
@@ -54,11 +47,12 @@ Python locale (`.python-version`):
 
 Motivo: `garminconnect==0.3.11` richiede Python >= 3.12.
 
-Suite locale completa verificata il 2 settembre 2026:
+Baseline locale verificata il 9 settembre 2026, distinta per perimetro:
 
-`508 passed, 5 skipped`
+- MAINTAIN_PLAN: `332 passed`;
+- suite completa: `840 passed, 5 skipped`.
 
-Working tree verificato pulito il 2 settembre 2026.
+Working tree verificato pulito il 9 settembre 2026.
 
 ---
 
@@ -435,13 +429,19 @@ Load stale/future deve diventare `UNKNOWN` nel coaching runtime.
 
 ## 14. File handoff precedenti
 
-Documentazione storica:
+Checkpoint sequenziale più recente e stato tecnico MAINTAIN_PLAN da leggere:
+
+- `docs/IronCoach Beta 0.4.quinquies — Handoff.md`
+
+Documentazione storica precedente:
 
 - `docs/IronCoach Beta 0.4.bis — Handoff.md`
 - `docs/IronCoach Beta 0.4.ter — Handoff.md`
 - `docs/IronCoach Beta 0.4.quater — Handoff.md`
 
-Questo file `START HERE` contiene lo stato operativo più recente.
+Questo file `START HERE` resta l'entry point del repository e rinvia a
+`.quinquies` per il checkpoint sequenziale più recente. `.quater` conserva il
+proprio significato storico, ma non rappresenta più l'ultimo stato tecnico.
 
 Consultare gli handoff precedenti solo per dettagli storici.
 
