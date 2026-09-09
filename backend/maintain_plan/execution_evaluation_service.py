@@ -249,12 +249,15 @@ def _observed_block_collection_is_incomplete(observed: ObservedComponent) -> boo
 
 
 def _structure(component, observed, mapping, snapshot, session):
+    block_collection_incomplete = _observed_block_collection_is_incomplete(observed)
     block_maps = [b for b in mapping.block_mappings if
                   (b.planned_block_ref and b.planned_block_ref.component_id == component.component_id) or
                   (b.observed_block_ref and b.observed_block_ref.component_id == observed.component_id)]
     planned_by_id = {b.block_id: b for b in component.structure.blocks}
     missing = [b for b in block_maps if b.match_status is MatchStatus.PLANNED_ONLY and
                b.planned_block_ref and planned_by_id[b.planned_block_ref.block_id].requiredness is Requiredness.REQUIRED]
+    if missing and block_collection_incomplete:
+        return AdherenceStatus.INSUFFICIENT_DATA
     if any(planned_by_id[b.planned_block_ref.block_id].block_type in (BlockType.MAIN_SET, BlockType.WORK) for b in missing):
         return AdherenceStatus.NOT_MET
     if missing:
@@ -264,6 +267,8 @@ def _structure(component, observed, mapping, snapshot, session):
             continue
         observed_block = _mapped_block(component, observed, block, mapping, snapshot, session)
         if observed_block is None:
+            if block_collection_incomplete:
+                return AdherenceStatus.INSUFFICIENT_DATA
             return AdherenceStatus.NOT_MET if block.block_type in (BlockType.MAIN_SET, BlockType.WORK) else AdherenceStatus.PARTIALLY_MET
         mapped_repetitions = [_mapped_repetition(component, observed, block, index,
             observed_block, mapping, snapshot, session)
@@ -281,7 +286,7 @@ def _structure(component, observed, mapping, snapshot, session):
                 # mapped or unique observed recovery cannot be associated implicitly.
                 return AdherenceStatus.INSUFFICIENT_DATA
             return (AdherenceStatus.INSUFFICIENT_DATA
-                    if _observed_block_collection_is_incomplete(observed)
+                    if block_collection_incomplete
                     else AdherenceStatus.NOT_MET)
     if snapshot.composition is Composition.BRICK:
         for transition in snapshot.transitions:

@@ -151,3 +151,64 @@ def test_missing_field_inside_present_block_does_not_mark_collection_incomplete(
     result = evaluate(snapshot, session, mapping,
                       evaluation_id="block-local", evaluated_at=NOW)
     assert result.component_results[0].structure.status is AdherenceStatus.NOT_MET
+
+
+def absent_work_case(*, component_missing=(), session_missing=(), block_missing=()):
+    snapshot, session, _ = required_case(recovery=False)
+    blocks = (() if not block_missing else
+              (ObservedBlock("unrelated", 0, block_type=BlockType.RECOVERY,
+                             missing_fields=block_missing),))
+    observed = replace(session.components[0], blocks=blocks,
+                       missing_fields=component_missing)
+    session = replace(session, components=(observed,), missing_fields=session_missing)
+    mapping = build_mapping(snapshot, session, mapping_id="absent-work", created_at=NOW,
+                            resolution_method=ResolutionMethod.AUTOMATIC)
+    return evaluate(snapshot, session, mapping, evaluation_id="absent-work", evaluated_at=NOW)
+
+
+def test_exact_component_marker_precedes_planned_only_work_absence():
+    result = absent_work_case(component_missing=("structure.blocks",))
+    assert result.component_results[0].structure.status is AdherenceStatus.INSUFFICIENT_DATA
+
+
+@pytest.mark.parametrize("component_missing", [
+    (), ("weather.blocking_clouds",), ("notes.structure_comment",),
+    ("components.other.structure.blocks",),
+])
+def test_complete_or_unrelated_marker_keeps_planned_only_work_not_met(component_missing):
+    result = absent_work_case(component_missing=component_missing)
+    assert result.component_results[0].structure.status is AdherenceStatus.NOT_MET
+
+
+def test_session_or_present_block_marker_does_not_override_planned_only_work():
+    session_marker = absent_work_case(session_missing=("structure.blocks",))
+    block_marker = absent_work_case(block_missing=("structure.blocks",))
+    assert session_marker.component_results[0].structure.status is AdherenceStatus.NOT_MET
+    assert block_marker.component_results[0].structure.status is AdherenceStatus.NOT_MET
+
+
+def test_mapping_order_does_not_change_incomplete_planned_only_result():
+    snapshot, session, _ = required_case(recovery=False)
+    session = replace(session, components=(replace(session.components[0], blocks=(),
+        missing_fields=("structure.blocks",)),))
+    mapping = build_mapping(snapshot, session, mapping_id="ordered-absence", created_at=NOW,
+                            resolution_method=ResolutionMethod.AUTOMATIC)
+    first = evaluate(snapshot, session, mapping, evaluation_id="same", evaluated_at=NOW)
+    second = evaluate(snapshot, session, replace(mapping,
+        block_mappings=tuple(reversed(mapping.block_mappings))),
+        evaluation_id="same", evaluated_at=NOW)
+    assert first == second
+
+
+def test_exact_block_marker_does_not_override_missing_required_repetition():
+    snapshot, session, _ = interval_case([.8] * 6, valid=[.8] * 6,
+        include_recovery=False, recovery_required=False)
+    work = replace(session.components[0].blocks[0],
+                   repetitions=session.components[0].blocks[0].repetitions[:-1])
+    session = replace(session, components=(replace(session.components[0], blocks=(work,),
+        missing_fields=("structure.blocks",)),))
+    mapping = build_mapping(snapshot, session, mapping_id="missing-repetition", created_at=NOW,
+                            resolution_method=ResolutionMethod.AUTOMATIC)
+    result = evaluate(snapshot, session, mapping,
+                      evaluation_id="missing-repetition", evaluated_at=NOW)
+    assert result.component_results[0].structure.status is AdherenceStatus.NOT_MET
