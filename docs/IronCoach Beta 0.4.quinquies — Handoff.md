@@ -250,9 +250,6 @@ metadati canonici, e non esiste backfill implicito.
 - v5: `7a9f07febe192eedc230b927bc582d4b069c6a21b3d5acb64482f1021da058a8`
 - v6: `f037b70d3fc8b7638ab0bf4b25dfbc28f05aabfd91a5840f6bd154da867441b8`
 
-La stringa v5 fornita nella richiesta conteneva il refuso `dennials`; sopra è
-riportato il digest reale calcolato dal codice.
-
 ---
 
 ## 6. Baseline test verificata
