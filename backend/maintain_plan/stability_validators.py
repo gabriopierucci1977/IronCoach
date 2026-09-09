@@ -92,7 +92,7 @@ def validate_assessment(value: RecoveryAssessment, name="assessment") -> tuple[s
     if aware(value.observed_at) and aware(value.assessed_at) and value.observed_at > value.assessed_at:
         errors.append(f"{name}.observed_at must not follow assessed_at")
     if value.category_missingness is CategoryMissingness.NOT_MISSING:
-        if not isinstance(value.category, RecoveryCategory):
+        if type(value.category) is not RecoveryCategory:
             errors.append(f"{name}.category is required when NOT_MISSING")
     elif value.category_missingness in (CategoryMissingness.MISSING, CategoryMissingness.NOT_ASSESSABLE):
         if value.category is not None:
@@ -200,11 +200,34 @@ def validate_projection_structure(value: ReportedProblemsProjectionSnapshot) -> 
     _text(value.subject_ref, "projection.subject_ref", errors)
     errors.extend(validate_artifact_ref(value.actual_session_ref, "projection.actual_session_ref"))
     errors.extend(validate_provenance(value.provenance_ref, "projection.provenance_ref"))
-    if value.event_cursor is not None:
-        _text(value.event_cursor.event_id, "event_cursor.event_id", errors)
-        if type(value.event_cursor.event_sequence) is not int or value.event_cursor.event_sequence < 0:
-            errors.append("event_cursor.event_sequence must be a non-negative integer")
+    for field, enum_type in (
+        ("projection_status", ProjectionStatus),
+        ("channel_check_status", ChannelCheckStatus),
+        ("result", ReportedProblemsResult),
+    ):
+        item = getattr(value, field)
+        if item is not None and type(item) is not enum_type:
+            errors.append(f"projection.{field} must be {enum_type.__name__} or null")
+    if (value.reliable_canonical_safety_signal is not None and
+            type(value.reliable_canonical_safety_signal) is not bool):
+        errors.append("projection.reliable_canonical_safety_signal must be bool or null")
     if value.event_window is not None:
+        if type(value.event_window) is not ReportedProblemsEventWindow:
+            errors.append("projection.event_window must be ReportedProblemsEventWindow or null")
+        else:
+            _datetime(value.event_window.start_at, "projection.event_window.start_at", errors)
+            _datetime(value.event_window.end_at, "projection.event_window.end_at", errors)
+            for field in ("start_boundary", "end_boundary"):
+                if type(getattr(value.event_window, field)) is not EventBoundary:
+                    errors.append(f"projection.event_window.{field} must be EventBoundary")
+    if value.event_cursor is not None:
+        if type(value.event_cursor) is not ReportedProblemsEventCursor:
+            errors.append("projection.event_cursor must be ReportedProblemsEventCursor or null")
+        else:
+            _text(value.event_cursor.event_id, "event_cursor.event_id", errors)
+            if type(value.event_cursor.event_sequence) is not int or value.event_cursor.event_sequence < 0:
+                errors.append("event_cursor.event_sequence must be a non-negative integer")
+    if type(value.event_window) is ReportedProblemsEventWindow:
         _datetime(value.event_window.start_at, "event_window.start_at", errors)
         _datetime(value.event_window.end_at, "event_window.end_at", errors)
         if aware(value.event_window.start_at) and aware(value.event_window.end_at) and value.event_window.start_at > value.event_window.end_at:

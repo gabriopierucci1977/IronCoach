@@ -189,6 +189,76 @@ def test_complete_reported_problems_matrix(result, safety, evidence, stability, 
         assert evaluated.reported_problems.stability_result is stability
 
 
+@pytest.mark.parametrize(("field", "invalid"), [
+    ("projection_status", ProjectionStatus.ACTIVE.value),
+    ("projection_status", ChannelCheckStatus.VERIFIED),
+    ("channel_check_status", ChannelCheckStatus.VERIFIED.value),
+    ("channel_check_status", ProjectionStatus.ACTIVE),
+    ("result", "BOGUS"),
+    ("result", ReportedProblemsResult.NO_KNOWN_ISSUE.value),
+    ("result", ProjectionStatus.ACTIVE),
+    ("reliable_canonical_safety_signal", 0),
+    ("reliable_canonical_safety_signal", 1),
+    ("reliable_canonical_safety_signal", "false"),
+])
+def test_projection_rejects_raw_strings_foreign_enums_and_non_boolean_flags(field, invalid):
+    value = make_input()
+    projection = replace(value.reported_problems_projection, **{field: invalid})
+    with pytest.raises(ValueError, match=field):
+        evaluate_general_stability(replace(value, reported_problems_projection=projection),
+                                   evaluation_id="e")
+
+
+@pytest.mark.parametrize(("field", "invalid"), [
+    ("category", RecoveryCategory.LOW.value),
+    ("category", ProjectionStatus.ACTIVE),
+    ("category_missingness", CategoryMissingness.NOT_MISSING.value),
+    ("category_missingness", ProjectionStatus.ACTIVE),
+])
+def test_recovery_assessment_rejects_raw_strings_and_foreign_enums(field, invalid):
+    value = make_input()
+    baseline = replace(value.baseline_assessment, **{field: invalid})
+    binding = replace(value.prescription_binding,
+                      baseline_assessment_ref=recovery_assessment_ref(baseline))
+    with pytest.raises(ValueError, match=field):
+        evaluate_general_stability(replace(value, baseline_assessment=baseline,
+                                           prescription_binding=binding), evaluation_id="e")
+
+
+@pytest.mark.parametrize(("field", "invalid"), [
+    ("start_boundary", EventBoundary.EXCLUSIVE.value),
+    ("start_boundary", ProjectionStatus.ACTIVE),
+    ("end_boundary", EventBoundary.INCLUSIVE.value),
+    ("end_boundary", ChannelCheckStatus.VERIFIED),
+])
+def test_event_window_rejects_raw_strings_and_foreign_enums(field, invalid):
+    value = make_input()
+    window = replace(value.reported_problems_projection.event_window, **{field: invalid})
+    projection = replace(value.reported_problems_projection, event_window=window)
+    with pytest.raises(ValueError, match=field):
+        evaluate_general_stability(replace(value, reported_problems_projection=projection),
+                                   evaluation_id="e")
+
+
+@pytest.mark.parametrize(("field", "missing_path"), [
+    ("projection_status", "reported_problems_projection.projection_status"),
+    ("channel_check_status", "reported_problems_projection.channel_check_status"),
+    ("result", "reported_problems_projection.result"),
+    ("reliable_canonical_safety_signal",
+     "reported_problems_projection.reliable_canonical_safety_signal"),
+])
+def test_nullable_projection_fields_remain_legitimate_missingness(field, missing_path):
+    value = make_input()
+    changes = {field: None}
+    if field == "reliable_canonical_safety_signal":
+        changes["result"] = ReportedProblemsResult.INSUFFICIENT_DATA
+    projection = replace(value.reported_problems_projection, **changes)
+    output = evaluate_general_stability(replace(value, reported_problems_projection=projection),
+                                        evaluation_id="e")
+    assert output.reported_problems.stability_result is StabilityResult.INSUFFICIENT_DATA
+    assert missing_path in output.reported_problems.missing_fields
+
+
 def test_safety_deterioration_precedes_insufficient_recovery_and_aggregation_is_complete():
     value = make_input(baseline=None)
     projection = replace(value.reported_problems_projection,
