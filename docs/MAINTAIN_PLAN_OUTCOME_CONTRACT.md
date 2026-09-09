@@ -2430,7 +2430,9 @@ questi restano input validi, producono `INCOMPATIBLE` e quindi recovery
 Ogni assessment include identità, versioni, subject, timestamp, categoria o
 missingness esplicita, evidence strutturale versionata e provenance tipizzata.
 `NOT_MISSING` richiede una categoria; `MISSING` e `NOT_ASSESSABLE` richiedono
-`category: null`. P0 non ripara, converte o reinterpreta assessment.
+`category: null`. `observed_at` e `assessed_at` sono timezone-aware e
+`observed_at <= assessed_at`; una violazione rende l'assessment strutturalmente
+invalido. P0 non ripara, converte o reinterpreta assessment.
 
 ### 11.3 Categorie e compatibility C1
 
@@ -2516,10 +2518,10 @@ recovery_assessment_candidate_set:  # RecoveryAssessmentCandidateSet
   provenance_ref: ProvenanceRef
 
 candidate_disposition:  # CandidateDisposition
-  value: SELECTED | ELIGIBLE_NOT_SELECTED | EXCLUDED | DUPLICATE
+  value: SELECTED | ELIGIBLE_NOT_SELECTED | EXCLUDED
 
 candidate_disposition_reason:  # CandidateDispositionReason
-  value: SELECTED_EARLIEST | LATER_THAN_SELECTED | DUPLICATE_IDENTICAL | FOREIGN_SUBJECT | INCOMPATIBLE | COMPATIBILITY_UNDETERMINED | AT_OR_BEFORE_SESSION_END | AT_OR_AFTER_NEXT_DECISION | AFTER_EVALUATED_AT | CATEGORY_UNAVAILABLE | FIRST_TIMESTAMP_AMBIGUITY
+  value: SELECTED_EARLIEST | LATER_THAN_SELECTED | DUPLICATE_IDENTICAL | FOREIGN_SUBJECT | INCOMPATIBLE | COMPATIBILITY_UNDETERMINED | OBSERVED_AT_OR_BEFORE_SESSION_END | ASSESSED_AT_OR_BEFORE_SESSION_END | OBSERVED_AT_OR_AFTER_NEXT_DECISION | ASSESSED_AT_OR_AFTER_NEXT_DECISION | CATEGORY_UNAVAILABLE | FIRST_TIMESTAMP_AMBIGUITY
 
 candidate_selection_record:  # CandidateSelectionRecord
   candidate_ref: RecoveryAssessmentRef
@@ -2528,17 +2530,24 @@ candidate_selection_record:  # CandidateSelectionRecord
   compatibility: RecoveryAssessmentCompatibility
   temporal_eligibility: ELIGIBLE | EXCLUDED | UNDETERMINED
   freshness: IN_WINDOW | OUT_OF_WINDOW | UNDETERMINED
-  duplicate_count: integer
+  occurrence_count: integer  # >= 1
   missing_fields: tuple[string]
   warnings: tuple[string]
 
+recovery_assessment_candidate_occurrence:  # RecoveryAssessmentCandidateOccurrence
+  candidate_ref: RecoveryAssessmentRef
+  occurrence_count: integer  # >= 1
+
+recovery_assessment_candidate_set_ref:  # RecoveryAssessmentCandidateSetRef
+  contract_version: maintain-plan-stability/1.0.0-draft
+  actual_session_ref: VersionedArtifactRef
+  subject_ref: string
+  captured_at: datetime
+  evaluated_cutoff_at: datetime
+  logical_candidates: tuple[RecoveryAssessmentCandidateOccurrence]
+
 follow_up_selection_evidence:  # FollowUpSelectionEvidence
-  candidate_set_ref:
-    contract_version: maintain-plan-stability/1.0.0-draft
-    actual_session_ref: VersionedArtifactRef
-    subject_ref: string
-    captured_at: datetime
-    evaluated_cutoff_at: datetime
+  candidate_set_ref: RecoveryAssessmentCandidateSetRef
   records: tuple[CandidateSelectionRecord]
   selected_follow_up_ref: RecoveryAssessmentRef | null
   status: SELECTED | NO_ELIGIBLE_CANDIDATE | AMBIGUOUS
@@ -2553,17 +2562,39 @@ della sezione 11.2. Candidati di altro soggetto non sono consumabili come
 follow-up e ricevono `EXCLUDED + FOREIGN_SUBJECT`; una discordanza di ownership
 fra candidate set e input principale rende invece invalido l'input.
 
-La deduplicazione precede la selezione:
+La funzione normativa pura
+`RecoveryAssessmentCandidateSet -> RecoveryAssessmentCandidateSetRef` copia
+contract version, actual session ref, subject ref, `captured_at` ed
+`evaluated_cutoff_at`, deduplica gli assessment e produce la tuple canonica
+`logical_candidates`. Ogni elemento contiene il ref derivato e il numero esatto
+di occorrenze ed è ordinato con la stessa chiave totale della sezione 11.6.
+La funzione non usa hash, repository o resolver.
+
+La deduplicazione precede la selezione e produce un solo
+`CandidateSelectionRecord` per candidato logico:
 
 - stesso ref derivato e assessment strutturalmente identico dopo l'ordinamento
-  canonico delle tuple → un solo candidato logico e record `DUPLICATE`, con
-  `duplicate_count` esatto;
+  canonico delle tuple → un solo candidato logico con `occurrence_count >= 1`;
+  quando il conteggio è maggiore di uno, le reasons includono obbligatoriamente
+  `DUPLICATE_IDENTICAL`, ma la disposition resta `SELECTED`,
+  `ELIGIBLE_NOT_SELECTED` oppure `EXCLUDED` secondo le regole ordinarie;
 - stesso ref derivato e assessment strutturalmente differente → input invalido,
   nessuna evaluation pubblicabile;
 - assessment distinti al medesimo primo timestamp UTC ammissibile → tutti
   ricevono `FIRST_TIMESTAMP_AMBIGUITY`, selection `AMBIGUOUS` e recovery
   `INSUFFICIENT_DATA`;
 - nessun tie-break implicito è consentito.
+
+Le disposition sono esaustive: l'unico candidato scelto è `SELECTED`; ogni
+candidato ammissibile successivo è `ELIGIBLE_NOT_SELECTED` con reason
+`LATER_THAN_SELECTED`; in caso di ambiguity, tutti i candidati al primo
+timestamp sono `ELIGIBLE_NOT_SELECTED` con reason
+`FIRST_TIMESTAMP_AMBIGUITY`; ogni candidato non ammissibile è `EXCLUDED` con
+tutte e sole le reasons applicabili.
+`CATEGORY_UNAVAILABLE` non rende strutturalmente invalido o temporalmente
+inammissibile l'assessment: il candidato conserva la disposition altrimenti
+applicabile, ma se selezionato produce recovery `INSUFFICIENT_DATA` e non viene
+saltato in favore di un assessment successivo.
 
 I candidati C1 `INCOMPATIBLE` o `UNDETERMINED` sono esclusi e registrati, ma
 non bloccano un candidato successivo compatibile e temporalmente ammissibile.
@@ -2590,6 +2621,14 @@ folding, trimming o normalizzazione fuzzy. Gli evidence ref sono ordinati per
 warning sono tuple prive di duplicati e ordinate per rispettivo valore
 canonico. I path di missingness sono nomi completi definiti dallo schema, mai
 riconosciuti tramite substring.
+
+Per ciascun campo nullable presente in una chiave canonica, incluso ogni campo
+di `AnalyzerRef`, l'ordinamento usa la coppia tipizzata `(null_rank, value)`:
+`null` ha `null_rank: 0` e precede ogni stringa; una stringa non nulla ha
+`null_rank: 1` ed è confrontata per code point. `null` non viene mai convertito
+in stringa vuota. Stringhe vuote o composte soltanto da whitespace sono input
+strutturalmente invalidi, non missingness e non equivalenti a `null`. La stessa
+regola si applica a ogni futura chiave canonica contenente valori nullable.
 
 L'ordine della tuple `candidates` fornita dal chiamante non modifica ref,
 deduplicazione, records, selezione o evaluation. La chiave totale serve soltanto
@@ -2623,16 +2662,21 @@ Prima di pubblicare una evaluation il validator impone:
 2. baseline ref del binding esattamente uguale al ref derivato dalla baseline;
 3. snapshot e decision ref non vuoti, versionati e qualificati;
 4. actual session ref del candidate set uguale a quello del session boundary;
-5. `session_end`, `prescription_communicated_at`, `evaluated_at`, timestamp del
-   candidate set e, se presente, `decision_at` timezone-aware;
+5. `session_end`, `prescription_communicated_at`, `evaluated_at`, tutti gli
+   `observed_at`/`assessed_at`, i timestamp del candidate set e, se presente,
+   `decision_at` timezone-aware;
 6. baseline `observed_at` e `assessed_at` non successivi a
    `prescription_communicated_at`;
-7. next decision dello stesso soggetto e strettamente successiva a
+7. quando `session_end` esiste,
+   `prescription_communicated_at <= session_end`;
+8. next decision dello stesso soggetto e strettamente successiva a
    `session_end`;
-8. `evaluated_at` non precedente a `session_end`;
-9. `candidate_set.evaluated_cutoff_at == evaluated_at` e nessun
-   `candidate.observed_at` successivo a `evaluated_at`;
-10. `candidate_set.captured_at <= evaluated_at`.
+9. `evaluated_at` non precedente a `session_end`;
+10. `candidate_set.evaluated_cutoff_at == evaluated_at`;
+11. per ogni candidato, `observed_at <= assessed_at <=
+    candidate_set.captured_at`;
+12. `candidate_set.captured_at <= evaluated_at` e nessun `observed_at` o
+    `assessed_at` del candidate set successivo a `evaluated_at`.
 
 Ownership, ref o binding presenti ma discordanti rendono l'input invalido e
 impediscono qualsiasi evaluation pubblicabile. Dati legittimamente mancanti,
@@ -2642,14 +2686,40 @@ discordanza. P0 verifica solo la coerenza strutturale dei binding frozen
 ricevuti; non risolve repository né dimostra crittograficamente attestazioni o
 provenance.
 
-I path P0 di missingness essenziale sono esattamente
-`prescription_binding.baseline_assessment_ref`, `baseline_assessment`,
-`actual_session_boundary.session_end`, `reported_problems_projection`,
-`reported_problems_projection.projection_version`,
-`reported_problems_projection.projection_schema_version`,
-`reported_problems_projection.event_cursor` e
-`reported_problems_projection.checked_through_at`. Nuovi path richiedono una
-versione di contratto; token parziali o simili non hanno significato.
+La grammatica/allowlist `maintain-plan-stability-missing-paths/1.0.0-draft`
+ammette esclusivamente i seguenti path essenziali:
+
+- `prescription_binding.baseline_assessment_ref`;
+- `baseline_assessment`;
+- `baseline_assessment.analyzer_ref.analyzer_id`;
+- `baseline_assessment.analyzer_ref.analyzer_version`;
+- `baseline_assessment.analyzer_ref.assessment_schema_version`;
+- `baseline_assessment.category`;
+- `actual_session_boundary.session_end`;
+- `candidate_set.candidates` per candidate set vuoto;
+- `candidate_set.candidates[].analyzer_ref.analyzer_id`;
+- `candidate_set.candidates[].analyzer_ref.analyzer_version`;
+- `candidate_set.candidates[].analyzer_ref.assessment_schema_version`;
+- `candidate_set.candidates[].category`;
+- `reported_problems_projection`;
+- `reported_problems_projection.projection_version`;
+- `reported_problems_projection.projection_schema_version`;
+- `reported_problems_projection.projection_status`;
+- `reported_problems_projection.event_cursor`;
+- `reported_problems_projection.event_window`;
+- `reported_problems_projection.checked_through_at`;
+- `reported_problems_projection.channel_check_status`;
+- `reported_problems_projection.result`;
+- `reported_problems_projection.reliable_canonical_safety_signal`;
+- `reported_problems_projection.safety_signal_evidence_refs` quando
+  `ISSUE_REPORTED + true` non ha evidence.
+
+Per i membri del candidate set il token `[]` è letterale e non viene sostituito
+con indice o ID. Ogni condizione legittimamente non valutabile usa esattamente
+un path della allowlist; i path sono ordinati per code point e privi di
+duplicati. Nuovi path richiedono una nuova versione della grammatica. Token
+parziali, indici, substring o nomi simili non hanno significato. Discordanze
+strutturali non sono missingness: invalidano l'input.
 
 ### 11.8 Eligibility, freshness e cutoff unico
 
@@ -2658,9 +2728,12 @@ Un candidato è temporalmente ammissibile quando:
 1. appartiene allo stesso soggetto;
 2. è strutturalmente valido;
 3. è C1 `COMPATIBLE`;
-4. `observed_at > actual_session_boundary.session_end`;
-5. `observed_at <= evaluated_at`;
-6. se esiste una next decision, anche `observed_at < next_decision_at`.
+4. `observed_at` e `assessed_at` sono entrambi strettamente successivi ad
+   `actual_session_boundary.session_end`;
+5. `observed_at` e `assessed_at` sono entrambi non successivi a
+   `evaluated_at`;
+6. se esiste una next decision, `observed_at` e `assessed_at` sono entrambi
+   strettamente precedenti a `next_decision_at`.
 
 I confronti sono sugli istanti UTC. Il boundary della sessione è esclusivo, il
 boundary `evaluated_at` è inclusivo e quello della next decision è esclusivo.
@@ -2668,13 +2741,20 @@ boundary `evaluated_at` è inclusivo e quello della next decision è esclusivo.
 significa soltanto appartenenza a questa finestra; non esiste durata massima o
 TTL.
 
-Il cutoff normativo dei reported problems è
-`min(evaluated_at, next_decision_at)` quando la next decision esiste, altrimenti
-è `evaluated_at`. La copertura della projection è inclusiva fino a
-`evaluated_at`; quando il minimo è `next_decision_at`, la copertura del canale
-arriva a quell'istante ma gli eventi attribuiti alla stability devono essere
-strettamente precedenti alla decisione. `checked_through_at >= cutoff` attesta
-che non rimane un intervallo non controllato prima del boundary applicabile.
+La selezione resta basata sul più antico `observed_at` fra i candidati
+ammissibili. Le reasons temporali distinguono quale dei due timestamp viola il
+boundary di sessione o next decision. Non esistono reasons per timestamp
+successivi a `evaluated_at` o ad `candidate_set.captured_at`, perché tali casi
+violano le invarianti strutturali del candidate set e invalidano l'input prima
+della selezione.
+
+Il cutoff normativo dei reported problems è `evaluated_at` se non esiste una
+next decision con `next_decision_at <= evaluated_at`; altrimenti è
+`next_decision_at`. Nel caso di uguaglianza prevale quindi il boundary
+esclusivo della next decision. `checked_through_at >= cutoff` attesta che non
+rimane un intervallo del canale non controllato prima del boundary applicabile;
+questa attestazione di controllo è distinta dall'intervallo degli eventi
+effettivamente incluso nella projection.
 
 ### 11.9 Reported problems projection canonica
 
@@ -2682,6 +2762,21 @@ che non rimane un intervallo non controllato prima del boundary applicabile.
 reported_problems_event_cursor:  # ReportedProblemsEventCursor
   event_id: string
   event_sequence: integer
+
+reported_problems_event_window:  # ReportedProblemsEventWindow
+  start_at: datetime
+  start_boundary: EXCLUSIVE
+  end_at: datetime
+  end_boundary: INCLUSIVE | EXCLUSIVE
+
+reported_problems_projection_ref:  # ReportedProblemsProjectionRef
+  projection_id: string
+  projection_version: string
+  projection_schema_version: string
+  actual_session_ref: VersionedArtifactRef
+  subject_ref: string
+  event_cursor: ReportedProblemsEventCursor | null
+  checked_through_at: datetime | null
 
 reported_problems_projection_snapshot:  # ReportedProblemsProjectionSnapshot
   projection_id: string
@@ -2691,6 +2786,7 @@ reported_problems_projection_snapshot:  # ReportedProblemsProjectionSnapshot
   subject_ref: string
   projection_status: ACTIVE | DELETED | INVALID | INSUFFICIENT_DATA
   event_cursor: ReportedProblemsEventCursor | null
+  event_window: ReportedProblemsEventWindow
   checked_through_at: datetime | null
   channel_check_status: VERIFIED | NOT_VERIFIED
   result: NO_KNOWN_ISSUE | ISSUE_REPORTED | INSUFFICIENT_DATA
@@ -2701,7 +2797,7 @@ reported_problems_projection_snapshot:  # ReportedProblemsProjectionSnapshot
   warnings: tuple[string]
 
 reported_problems_evaluation:  # ReportedProblemsEvaluation
-  projection_ref: VersionedArtifactRef | null
+  projection_ref: ReportedProblemsProjectionRef | null
   cutoff_at: datetime
   result: NO_KNOWN_ISSUE | ISSUE_REPORTED | INSUFFICIENT_DATA
   stability_result: STABLE | DETERIORATED | INSUFFICIENT_DATA
@@ -2710,27 +2806,57 @@ reported_problems_evaluation:  # ReportedProblemsEvaluation
   warnings: tuple[string]
 ```
 
-Soltanto `projection_status: ACTIVE` è consumabile. Per produrre
-`NO_KNOWN_ISSUE`, projection ID/version/schema version, event cursor e
-`checked_through_at` devono essere presenti e validi; sessione e soggetto
-devono coincidere con `GeneralStabilityInput`; `channel_check_status` deve
-essere `VERIFIED`; `checked_through_at` deve coprire il cutoff; non devono
-esistere missing fields essenziali; result ed evidence devono essere coerenti.
-`NO_KNOWN_ISSUE` richiede nessuna safety evidence e produce
-`stability_result: STABLE`. Non è una certificazione clinica.
+La funzione normativa pura
+`ReportedProblemsProjectionSnapshot -> ReportedProblemsProjectionRef` copia
+esattamente projection ID, projection version, projection schema version,
+actual session ref, subject ref, event cursor e `checked_through_at`. Quando una
+projection è consumata, `ReportedProblemsEvaluation.projection_ref` deve essere
+esattamente uguale al ref derivato; una discordanza rende l'input invalido. La
+funzione non usa hash, repository o resolver.
 
-`ISSUE_REPORTED` con safety signal canonico affidabile richiede almeno un
-evidence ref strutturale e produce `DETERIORATED` con precedenza. Testo libero
-e payload generici non sono promossi a safety evidence.
+`event_window.start_at` è uguale a `session_end` e ha boundary `EXCLUSIVE`. Se
+non è intervenuta prima una next decision, `end_at == evaluated_at` e il
+boundary è `INCLUSIVE`. Se `next_decision_at <= evaluated_at`,
+`end_at == next_decision_at` e il boundary è `EXCLUSIVE`, inclusa
+l'uguaglianza dei due timestamp. Result, safety flag ed evidence della
+projection derivano esclusivamente dagli eventi appartenenti a questa finestra.
+P0 accetta tale completezza come attestazione strutturale del producer e non
+ricostruisce il log.
 
-Projection assente, non consumabile, incompleta, senza cursor, non verificata
-o non coperta fino al cutoff produce deterministicamente reported problems
-`INSUFFICIENT_DATA`. Foreign-session, foreign-subject o ref/versioni presenti
-ma discordanti sono violazioni strutturali di ownership e rendono invalido
-l'input, senza evaluation pubblicabile. Una combinazione semanticamente
-incoerente fra status, result, safety flag ed evidence è anch'essa input
-invalido; missingness legittima e dichiarata resta invece
-`INSUFFICIENT_DATA`.
+Soltanto `projection_status: ACTIVE` è consumabile. Projection
+ID/version/schema version, event cursor e `checked_through_at` devono essere
+presenti e validi; sessione e soggetto devono coincidere con
+`GeneralStabilityInput`; `channel_check_status` deve essere `VERIFIED`;
+`event_window` deve essere esatta; `checked_through_at` deve coprire il cutoff;
+non devono esistere missing fields essenziali.
+
+Per una projection consumabile la matrice è completa e vincolante:
+
+| Result | Safety flag | Safety evidence | Stability result |
+|---|---|---|---|
+| `NO_KNOWN_ISSUE` | `false` | vuota | `STABLE` |
+| `NO_KNOWN_ISSUE` | `true` | qualsiasi | input invalido |
+| `NO_KNOWN_ISSUE` | `false` | non vuota | input invalido |
+| `NO_KNOWN_ISSUE` | `null` | qualsiasi | input invalido |
+| `ISSUE_REPORTED` | `true` | almeno un ref canonico | `DETERIORATED` |
+| `ISSUE_REPORTED` | `true` | vuota | `INSUFFICIENT_DATA` |
+| `ISSUE_REPORTED` | `false` oppure `null` | qualsiasi | `INSUFFICIENT_DATA` |
+| `INSUFFICIENT_DATA` | qualsiasi | qualsiasi | `INSUFFICIENT_DATA` |
+
+`NO_KNOWN_ISSUE` non è una certificazione clinica. Per
+`ISSUE_REPORTED + true`, evidence vuota usa il path canonico della safety
+evidence mancante. P0 non possiede una policy per classificare automaticamente
+un problema con safety flag `false` o `null`. Testo libero e payload generici
+non sono promossi a safety evidence e non introducono soglie.
+
+Projection assente, non `ACTIVE`, incompleta, senza cursor, non verificata,
+con finestra errata o non coperta fino al cutoff produce deterministicamente
+reported problems `INSUFFICIENT_DATA`. Foreign-session, foreign-subject o
+ref/versioni presenti ma discordanti sono violazioni strutturali di ownership
+e rendono invalido l'input, senza evaluation pubblicabile. Le sole combinazioni
+semanticamente incoerenti di result, safety flag ed evidence sono quelle dichiarate invalide
+dalla matrice; missingness legittima e dichiarata resta invece
+`INSUFFICIENT_DATA` con un unico path canonico.
 
 P0 si fida dell'attestazione di completezza della projection canonica: non
 ricostruisce la projection dal log, non risolve gli evidence payload e non ne
@@ -2756,7 +2882,7 @@ general_stability_evaluation:  # GeneralStabilityEvaluation
   prescription_binding: PrescriptionBaselineBinding
   actual_session_boundary: ActualSessionBoundary
   baseline_ref: RecoveryAssessmentRef | null
-  candidate_set_ref: FollowUpSelectionEvidence.candidate_set_ref
+  candidate_set_ref: RecoveryAssessmentCandidateSetRef
   selected_follow_up_ref: RecoveryAssessmentRef | null
   compatibility: RecoveryAssessmentCompatibility | null
   selection_evidence: FollowUpSelectionEvidence
