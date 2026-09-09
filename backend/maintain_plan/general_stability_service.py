@@ -7,7 +7,7 @@ from dataclasses import replace
 from datetime import timezone
 
 from .stability_models import *
-from .stability_validators import validate_general_stability_input
+from .stability_validators import validate_assessment_ref, validate_general_stability_input
 
 
 def _ref_key(ref: VersionedArtifactRef):
@@ -76,24 +76,34 @@ project_reported_problems_projection_ref = reported_problems_projection_ref
 
 def evaluate_compatibility(baseline: RecoveryAssessmentRef,
                            follow_up: RecoveryAssessmentRef) -> RecoveryAssessmentCompatibility:
+    errors = (*validate_assessment_ref(baseline, "baseline_ref"),
+              *validate_assessment_ref(follow_up, "follow_up_ref"))
+    if errors:
+        raise ValueError("invalid compatibility input: " + "; ".join(errors))
     pairs = (
-        (CompatibilityField.CONTRACT_VERSION, baseline.contract_version, follow_up.contract_version, None),
+        (CompatibilityField.CONTRACT_VERSION, baseline.contract_version, follow_up.contract_version,
+         None, None),
         (CompatibilityField.ANALYZER_ID, baseline.analyzer_ref.analyzer_id,
-         follow_up.analyzer_ref.analyzer_id, "candidate_set.candidates[].analyzer_ref.analyzer_id"),
+         follow_up.analyzer_ref.analyzer_id, "baseline_assessment.analyzer_ref.analyzer_id",
+         "candidate_set.candidates[].analyzer_ref.analyzer_id"),
         (CompatibilityField.ANALYZER_VERSION, baseline.analyzer_ref.analyzer_version,
-         follow_up.analyzer_ref.analyzer_version, "candidate_set.candidates[].analyzer_ref.analyzer_version"),
+         follow_up.analyzer_ref.analyzer_version, "baseline_assessment.analyzer_ref.analyzer_version",
+         "candidate_set.candidates[].analyzer_ref.analyzer_version"),
         (CompatibilityField.ASSESSMENT_SCHEMA_VERSION, baseline.analyzer_ref.assessment_schema_version,
          follow_up.analyzer_ref.assessment_schema_version,
+         "baseline_assessment.analyzer_ref.assessment_schema_version",
          "candidate_set.candidates[].analyzer_ref.assessment_schema_version"),
-        (CompatibilityField.SUBJECT_REF, baseline.subject_ref, follow_up.subject_ref, None),
+        (CompatibilityField.SUBJECT_REF, baseline.subject_ref, follow_up.subject_ref, None, None),
     )
     records, missing = [], []
-    for field, left, right, path in pairs:
+    for field, left, right, baseline_path, follow_up_path in pairs:
         comparison = (FieldComparison.MISSING if left is None or right is None else
                       FieldComparison.EQUAL if left == right else FieldComparison.DIFFERENT)
         records.append(CompatibilityFieldRecord(field, comparison, left, right))
-        if comparison is FieldComparison.MISSING and path:
-            missing.append(path)
+        if left is None and baseline_path:
+            missing.append(baseline_path)
+        if right is None and follow_up_path:
+            missing.append(follow_up_path)
     status = (CompatibilityStatus.INCOMPATIBLE
               if any(item.comparison is FieldComparison.DIFFERENT for item in records)
               else CompatibilityStatus.UNDETERMINED
@@ -171,9 +181,11 @@ def _select(value: GeneralStabilityInput, baseline_ref: RecoveryAssessmentRef):
     status = (FollowUpSelectionStatus.AMBIGUOUS if ambiguous else
               FollowUpSelectionStatus.SELECTED if selected else
               FollowUpSelectionStatus.NO_ELIGIBLE_CANDIDATE)
-    missing = () if selected else (("candidate_set.candidates",) if not logical else ())
+    missing = {path for record in records for path in record.missing_fields}
+    if not logical:
+        missing.add("candidate_set.candidates")
     return FollowUpSelectionEvidence(recovery_candidate_set_ref(value.candidate_set), tuple(records),
-                                     selected, status, missing, ())
+                                     selected, status, tuple(sorted(missing)), ())
 
 
 def _reported(value: GeneralStabilityInput) -> ReportedProblemsEvaluation:

@@ -275,3 +275,86 @@ def test_deteriorated_recovery_and_stable_pair_aggregation():
     worse = assessment("worse", T0 + timedelta(hours=3), RecoveryCategory.HIGH)
     assert evaluate_general_stability(make_input((worse,)), evaluation_id="e").overall is StabilityResult.DETERIORATED
     assert evaluate_general_stability(make_input(), evaluation_id="e").overall is StabilityResult.STABLE
+
+
+class Arbitrary:
+    pass
+
+
+BAD_OBJECTS = (None, "wrong", {"id": "wrong"}, Arbitrary(), ART, ProjectionStatus.ACTIVE)
+
+
+@pytest.mark.parametrize("field", [
+    "prescription_binding", "actual_session_boundary", "candidate_set", "provenance_ref",
+])
+@pytest.mark.parametrize("bad", BAD_OBJECTS)
+def test_required_top_level_objects_are_rejected_before_dereference(field, bad):
+    with pytest.raises(ValueError):
+        evaluate_general_stability(replace(make_input(), **{field: bad}), evaluation_id="e")
+
+
+@pytest.mark.parametrize(("container", "field", "bad"), [
+    ("prescription_binding", "prescription_snapshot_ref", None),
+    ("prescription_binding", "decision_ref", "wrong"),
+    ("prescription_binding", "baseline_use_attestation_ref", {}),
+    ("prescription_binding", "provenance_ref", Arbitrary()),
+    ("actual_session_boundary", "actual_session_ref", ReportedProblemsEventCursor("wrong", 1)),
+    ("actual_session_boundary", "provenance_ref", "wrong"),
+    ("candidate_set", "actual_session_ref", {}),
+    ("candidate_set", "provenance_ref", ProjectionStatus.ACTIVE),
+    ("baseline_assessment", "analyzer_ref", None),
+    ("baseline_assessment", "provenance_ref", {}),
+    ("reported_problems_projection", "actual_session_ref", "wrong"),
+    ("reported_problems_projection", "provenance_ref", ART),
+    ("reported_problems_projection", "event_cursor", {}),
+    ("reported_problems_projection", "event_window", Arbitrary()),
+])
+def test_nested_objects_are_type_checked_before_attribute_access(container, field, bad):
+    value = make_input()
+    nested = replace(getattr(value, container), **{field: bad})
+    if container == "baseline_assessment":
+        binding = replace(value.prescription_binding,
+                          baseline_assessment_ref=recovery_assessment_ref(nested))
+        value = replace(value, prescription_binding=binding)
+    with pytest.raises(ValueError):
+        evaluate_general_stability(replace(value, **{container: nested}), evaluation_id="e")
+
+
+@pytest.mark.parametrize("bad", [None, "wrong", {}, Arbitrary(), ART, ProjectionStatus.ACTIVE])
+def test_candidate_elements_are_rejected_before_dereference(bad):
+    value = make_input()
+    candidate_set = replace(value.candidate_set,
+                            candidates=(value.candidate_set.candidates[0], bad))
+    with pytest.raises(ValueError):
+        evaluate_general_stability(replace(value, candidate_set=candidate_set), evaluation_id="e")
+
+
+@pytest.mark.parametrize("field", ["analyzer_id", "analyzer_version", "assessment_schema_version"])
+@pytest.mark.parametrize(("baseline_value", "follow_value", "expected_status", "sides"), [
+    (None, "same", CompatibilityStatus.UNDETERMINED, ("baseline",)),
+    ("same", None, CompatibilityStatus.UNDETERMINED, ("candidate",)),
+    (None, None, CompatibilityStatus.UNDETERMINED, ("baseline", "candidate")),
+    ("left", "right", CompatibilityStatus.INCOMPATIBLE, ()),
+    ("same", "same", CompatibilityStatus.COMPATIBLE, ()),
+])
+def test_c1_missingness_is_attributed_to_the_correct_side(
+        field, baseline_value, follow_value, expected_status, sides):
+    baseline_analyzer = replace(ANALYZER, **{field: baseline_value})
+    follow_analyzer = replace(ANALYZER, **{field: follow_value})
+    baseline = assessment("baseline", T0, analyzer=baseline_analyzer)
+    follow = assessment("follow", T0 + timedelta(hours=3), analyzer=follow_analyzer)
+    compatibility = evaluate_compatibility(recovery_assessment_ref(baseline),
+                                           recovery_assessment_ref(follow))
+    expected = []
+    if "baseline" in sides:
+        expected.append(f"baseline_assessment.analyzer_ref.{field}")
+    if "candidate" in sides:
+        expected.append(f"candidate_set.candidates[].analyzer_ref.{field}")
+    assert compatibility.status is expected_status
+    assert compatibility.missing_fields == tuple(sorted(expected))
+
+    output = evaluate_general_stability(make_input((follow,), baseline=baseline), evaluation_id="e")
+    record = output.selection_evidence.records[0]
+    assert record.missing_fields == tuple(sorted(expected))
+    assert set(expected) <= set(output.selection_evidence.missing_fields)
+    assert set(expected) <= set(output.missing_fields)
