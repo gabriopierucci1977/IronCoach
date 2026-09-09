@@ -2609,11 +2609,13 @@ temporali avvengono dopo conversione allo stesso istante UTC. L'ordine canonico
 dei `CandidateSelectionRecord` usa la chiave totale:
 
 1. `observed_at` normalizzato UTC;
-2. `assessment_id`;
-3. `analyzer_id`;
-4. `analyzer_version`;
-5. `assessment_schema_version`;
-6. `subject_ref`.
+2. `assessed_at` normalizzato UTC;
+3. `assessment_id`;
+4. `contract_version`;
+5. `analyzer_id`;
+6. `analyzer_version`;
+7. `assessment_schema_version`;
+8. `subject_ref`.
 
 Le stringhe sono confrontate lessicograficamente per code point, senza case
 folding, trimming o normalizzazione fuzzy. Gli evidence ref sono ordinati per
@@ -2780,16 +2782,16 @@ reported_problems_projection_ref:  # ReportedProblemsProjectionRef
 
 reported_problems_projection_snapshot:  # ReportedProblemsProjectionSnapshot
   projection_id: string
-  projection_version: string
-  projection_schema_version: string
+  projection_version: string | null
+  projection_schema_version: string | null
   actual_session_ref: VersionedArtifactRef
   subject_ref: string
-  projection_status: ACTIVE | DELETED | INVALID | INSUFFICIENT_DATA
+  projection_status: ACTIVE | DELETED | INVALID | INSUFFICIENT_DATA | null
   event_cursor: ReportedProblemsEventCursor | null
-  event_window: ReportedProblemsEventWindow
+  event_window: ReportedProblemsEventWindow | null
   checked_through_at: datetime | null
-  channel_check_status: VERIFIED | NOT_VERIFIED
-  result: NO_KNOWN_ISSUE | ISSUE_REPORTED | INSUFFICIENT_DATA
+  channel_check_status: VERIFIED | NOT_VERIFIED | null
+  result: NO_KNOWN_ISSUE | ISSUE_REPORTED | INSUFFICIENT_DATA | null
   reliable_canonical_safety_signal: boolean | null
   safety_signal_evidence_refs: tuple[VersionedArtifactRef]
   provenance_ref: ProvenanceRef
@@ -2807,12 +2809,16 @@ reported_problems_evaluation:  # ReportedProblemsEvaluation
 ```
 
 La funzione normativa pura
-`ReportedProblemsProjectionSnapshot -> ReportedProblemsProjectionRef` copia
-esattamente projection ID, projection version, projection schema version,
-actual session ref, subject ref, event cursor e `checked_through_at`. Quando una
-projection è consumata, `ReportedProblemsEvaluation.projection_ref` deve essere
-esattamente uguale al ref derivato; una discordanza rende l'input invalido. La
-funzione non usa hash, repository o resolver.
+`ReportedProblemsProjectionSnapshot -> ReportedProblemsProjectionRef | null`
+produce un ref quando projection ID, projection version e projection schema
+version sono presenti e strutturalmente validi, copiando esattamente tali
+campi insieme ad actual session ref, subject ref, event cursor e
+`checked_through_at`. Se projection version o schema version sono missing, la
+funzione produce `null`, l'evaluation conserva `projection_ref: null` e usa il
+relativo path canonico con risultato `INSUFFICIENT_DATA`. Quando il ref è
+derivabile, `ReportedProblemsEvaluation.projection_ref` deve essergli
+esattamente uguale; una discordanza rende l'input invalido. La funzione non usa
+hash, repository o resolver.
 
 `event_window.start_at` è uguale a `session_end` e ha boundary `EXCLUSIVE`. Se
 non è intervenuta prima una next decision, `end_at == evaluated_at` e il
@@ -2842,6 +2848,7 @@ Per una projection consumabile la matrice è completa e vincolante:
 | `ISSUE_REPORTED` | `true` | vuota | `INSUFFICIENT_DATA` |
 | `ISSUE_REPORTED` | `false` oppure `null` | qualsiasi | `INSUFFICIENT_DATA` |
 | `INSUFFICIENT_DATA` | qualsiasi | qualsiasi | `INSUFFICIENT_DATA` |
+| `null` | qualsiasi | qualsiasi | `INSUFFICIENT_DATA` |
 
 `NO_KNOWN_ISSUE` non è una certificazione clinica. Per
 `ISSUE_REPORTED + true`, evidence vuota usa il path canonico della safety
