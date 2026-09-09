@@ -56,10 +56,12 @@ Le seguenti decisioni sono **APPROVATE**:
 6. **Stati e testi utente.** La corrispondenza della sezione 9 è vincolante.
    Missingness, ambiguità e interruzioni di sicurezza non sono presentate come
    fallimenti dell'atleta.
-7. **Stabilità.** Usa la baseline recovery impiegata per formulare la
-   prescrizione e il primo follow-up valido dopo la seduta e prima della
-   decisione successiva. Considera problemi soggettivi e safety signal; non
-   formula diagnosi. Performance non è obbligatoria nella prima versione.
+7. **Stabilità.** Usa esclusivamente l'assessment recovery canonico e
+   immutabile esplicitamente registrato come usato per formulare la
+   prescrizione e il primo assessment canonico temporalmente ammissibile del
+   candidate set congelato. Considera reported problems e safety signal
+   canonici; non formula diagnosi. Performance è `NOT_APPLICABLE` nella prima
+   versione.
 8. **Metriche primarie.** Ogni prescrizione dichiara la metrica primaria. Le
    metriche secondarie sono contestuali e non sostituiscono quella primaria.
 9. **Policy della quantità.** Le fasce approvate sono esplicite, indipendenti
@@ -79,9 +81,11 @@ Le seguenti decisioni sono **APPROVATE**:
     recovery successivo guida internamente la seduta seguente. Le finestre 72h
     e 7d restano trend interni. Nessun aggiornamento tardivo genera un nuovo
     report della vecchia seduta ormai superata.
-14. **Deterioramento.** Riusa analyzer e categorie già approvati; i segnali di
-    sicurezza hanno priorità e segnali insufficienti o contraddittori non
-    producono conclusioni inventate.
+14. **Deterioramento.** Usa soltanto le categorie crescenti `LOW < MODERATE <
+    HIGH < CRITICAL` del contratto stability. Nessun analyzer legacy, score,
+    soglia o mapping è canonico implicitamente; i safety signal affidabili e
+    canonici hanno priorità e i segnali insufficienti non producono
+    conclusioni inventate.
 15. **Matrice finale.** L'aggregazione execution × stability della sezione 11
     è vincolante.
 16. **Brick e multisport.** Sono sessioni composte con componenti distinti da
@@ -147,9 +151,10 @@ Le seguenti decisioni sono **APPROVATE**:
 39. **Conflitti di sorgente.** Nessuna media, fusione o sovrascrittura
     silenziosa. I valori discordanti restano con provenance; si chiede conferma
     se il conflitto può cambiare un risultato.
-40. **Feedback soggettivo.** È facoltativo, auditabile e privato. L'assenza
-    completa di segnalazioni significa `NO_KNOWN_ISSUE`, non certificazione
-    medica, e non costituisce di per sé ambiguità.
+40. **Reported problems.** È una dimensione stability obbligatoria, auditabile
+    e privata. Soltanto l'assenza verificata di feedback nel canale canonico
+    fino al cutoff significa `NO_KNOWN_ISSUE`, che non è una certificazione
+    clinica; un canale non verificato produce `INSUFFICIENT_DATA`.
 41. **Rollout.** Tipi/validator/fixture precedono il runtime; feature flag
     separano snapshot, normalization, matching, shadow, report e learning.
 42. **Shadow e learning.** Lo shadow non cambia outcome ufficiale, confidence
@@ -284,6 +289,47 @@ Le seguenti decisioni sono **APPROVATE**:
 76. **Nullabilità degli aggregati.** I quattro aggregati dimensionali di
     sessione esistono soltanto con coverage `FULLY_SUPPORTED`; negli altri tre
     stati sono tutti null, pur conservando i dettagli supportati.
+77. **Domini recovery separati.** Il recovery assessment di
+    `general_stability` è distinto dal recovery incorporato nei blocchi
+    `INTERVALS`: non condivide automaticamente schema, target, observation,
+    evidence, analyzer, policy o mapping. `RecoveryContract`, le observation
+    di `ObservedBlock` e payload generici non sono stability assessment.
+78. **Assessment recovery canonico.** Assessment, riferimenti, analyzer,
+    compatibility, eligibility/freshness, reported problems e stability
+    evaluation usano contratti tipizzati, immutabili e separati definiti nella
+    sezione 11. Il consumer non ripara, converte o reinterpreta assessment.
+79. **Compatibility C1.** Baseline e follow-up sono compatibili soltanto con
+    uguaglianza esatta di contract version, analyzer ID, analyzer version,
+    assessment schema version e subject ref. Una differenza è `INCOMPATIBLE`,
+    un metadato mancante è `UNDETERMINED`; entrambi impediscono un recovery
+    definitivo. Non esistono registry, conversioni o equivalenze implicite.
+80. **Baseline recovery esplicita.** La baseline è esclusivamente
+    l'assessment immutabile registrato come usato per formulare la
+    prescrizione. È fornita separatamente al servizio e non viene ricercata,
+    classificata o incorporata nelle dataclass persistite esistenti.
+81. **Follow-up deterministico.** Il servizio riceve un candidate set
+    esplicito e congelato e seleziona il candidato integro, compatibile e
+    temporalmente ammissibile con `observed_at` più antico. Esclusioni,
+    duplicati logici e ambiguità sono registrati deterministicamente secondo
+    la sezione 11, senza tie-break impliciti.
+82. **Freshness v1.** Freshness significa soltanto appartenenza alla finestra
+    strettamente successiva alla fine della sessione e precedente alla
+    decisione successiva, oppure non successiva a `evaluated_at` quando tale
+    decisione non esiste. Non esistono durata massima, TTL o limiti di età
+    impliciti.
+83. **Confirmation stability separata.** La `Confirmation` del matching non è
+    riutilizzata. La prima versione non introduce confirmation stability e
+    ogni selection ambiguity produce `INSUFFICIENT_DATA`.
+84. **Safety canonica.** Un safety signal affidabile e canonico produce
+    `DETERIORATED` con precedenza. Testo libero, payload generici o la sola
+    assenza di record non sono promossi automaticamente a safety evidence.
+85. **Persistenza P0.** Il primo incremento recovery stability comprenderà
+    soltanto nuovi tipi frozen separati, validator, selezione deterministica,
+    servizio puro, fixture sintetiche e test. Non comprenderà repository,
+    persistenza, codec, modifiche alle dataclass persistite, schema v7,
+    migrazioni, runtime wiring, report, learning, analyzer o adapter reali.
+    Verifica crittografica, hash, serialization policy, repository resolution e
+    tamper detection sono rinviati insieme alla futura persistenza P1/v7.
 
 ## 3. Prescrizione autorevole e audit
 
@@ -492,8 +538,11 @@ auditabile, senza riscrivere o cancellare i dati originali, gli ID o la
 provenance. «Non lo so» renderà non valutabile la parte interessata. Una
 correzione successiva dovrà restare auditabile.
 
-L'assenza completa di segnalazioni soggettive non è di per sé ambigua:
-significa «nessun problema noto», non certificazione medica.
+Per il matching, l'assenza completa di segnalazioni soggettive non crea da
+sola una confirmation. Per la stability significa `NO_KNOWN_ISSUE` soltanto
+quando è verificato il canale canonico fino al cutoff; non è una certificazione
+clinica. La `Confirmation` qui definita resta specifica del matching e non è
+riutilizzata dalla stability.
 
 ## 5. Attività eseguita e matching
 
@@ -2212,11 +2261,14 @@ Campi facoltativi:
 - motivo: `HEALTH`, `WORK_TIME`, `WEATHER`, `EQUIPMENT`, `OTHER`;
 - nota libera.
 
-Nessun questionario è obbligatorio. L'assenza completa significa «nessun
-problema noto» e non certificazione medica. Non si convertono automaticamente
-i segnali e non si formulano diagnosi o nuove soglie cliniche. Ambiguità o
-contraddizioni rilevanti richiedono conferma; correzioni successive saranno
-eventi auditabili nel registro append-only separato.
+Nessun questionario è obbligatorio. Ai fini della stability, l'assenza completa
+significa «nessun problema noto» soltanto quando è verificato il canale
+canonico fino al cutoff, e non è una certificazione clinica; un canale non
+verificato produce `INSUFFICIENT_DATA`. Non si convertono automaticamente i
+segnali e non si formulano diagnosi o nuove soglie cliniche. Ambiguità o
+contraddizioni del feedback restano auditabili, ma la prima stability non usa
+la `Confirmation` del matching e resta `INSUFFICIENT_DATA`; correzioni
+successive saranno eventi auditabili nel registro append-only separato.
 
 La cattura iniziale in `actual_session.athlete_feedback` sarà la baseline
 immutabile, collegata soltanto all'episodio e all'atleta proprietario, e
@@ -2278,60 +2330,589 @@ quinta dimensione. I codici tecnici restano interni.
 
 Policy draft: `maintain-plan-stability/1.0.0-draft`.
 
-Baseline e follow-up devono essere compatibili e versionati:
+### 11.0 Separazione normativa dei domini recovery
 
-- baseline: recovery assessment usato per formulare la prescrizione;
-- follow-up: prima valutazione valida dopo la seduta e prima della decisione
-  successiva.
+Il recovery assessment di `general_stability` è un dominio distinto dal
+recovery incorporato nella prescrizione e nell'osservazione dei blocchi
+`INTERVALS`. I due domini non condividono automaticamente schema, target,
+observation, evidence, analyzer, policy o mapping. In particolare, nessun
+`RecoveryContract`, `ObservedBlock.quantity_observation`,
+`ObservedBlock.intensity_observation` o payload generico può essere promosso,
+convertito o interpretato come assessment di stability.
+
+Il primo incremento consumerà esclusivamente `RecoveryAssessment` canonici già
+prodotti. Nessun analyzer legacy è automaticamente canonico. Analyzer reali,
+adapter e mapping Garmin/Airtable richiederanno una decisione separata e sono
+fuori dal primo incremento; non sono definite conversioni da score e non sono
+importate soglie dagli analyzer legacy.
+
+### 11.1 Trust boundary P0 e riferimenti strutturali
+
+P0 è un servizio puro, non persistito e senza codec. È deterministico rispetto
+a input frozen, tipizzati e strutturalmente validati, ma non offre garanzie
+crittografiche. L'immutabilità degli assessment e delle attestazioni è
+un'invariante del producer canonico ricevuta al trust boundary.
+
+P0 usa soltanto riferimenti strutturali versionati:
 
 ```yaml
-general_stability:
-  contract_version: maintain-plan/1.0.0-draft
-  recovery:
-    analyzer_version: string
-    baseline: object | null
-    follow_up: object | null
-    freshness: object
-    compatibility: object
-    result: STABLE | DETERIORATED | INSUFFICIENT_DATA
-  reported_problems:
-    result: NO_KNOWN_ISSUE | ISSUE_REPORTED | INSUFFICIENT_DATA
-    evidence: object
-    provenance: object
-  performance:
-    applicability: OPTIONAL | NOT_APPLICABLE
-    evidence: object | null
-  safety_signals: []
-  confirmation_ref: string | null
-  overall:
-    status: STABLE | DETERIORATED | INSUFFICIENT_DATA
-    policy_id: maintain-plan-stability
-    policy_version: 1.0.0-draft
-    evidence: object
+versioned_artifact_ref:  # VersionedArtifactRef
+  artifact_type: string
+  artifact_id: string
+  artifact_version: string
+
+provenance_ref:  # ProvenanceRef
+  producer: VersionedArtifactRef
+  provenance_type: string
+  provenance_id: string
+  provenance_version: string
+
+analyzer_ref:  # AnalyzerRef
+  analyzer_id: string | null
+  analyzer_version: string | null
+  assessment_schema_version: string | null
 ```
 
-Nella prima versione della stability, `performance.applicability` dovrà essere
-`NOT_APPLICABLE`. Una versione futura potrà renderla `OPTIONAL` soltanto
-attraverso policy e schema versionati. `OPTIONAL` e `NOT_APPLICABLE` non sono
-sinonimi.
+`VersionedArtifactRef` è il riferimento P0 usato per evidence, snapshot,
+decisione e sessione. P0 valida presenza, tipi e uguaglianza dei suoi campi,
+ma non risolve il payload in un repository, non ricalcola hash e non rileva
+tampering crittografico. Hash, preimage, serialization policy, codec e
+repository resolution saranno definiti soltanto con la futura persistenza
+P1/schema v7. Nessuna evaluation P0 può essere presentata come audit
+crittografico o repository-level.
 
-Gli unici stati tecnici sono `STABLE`, `DETERIORATED` e
-`INSUFFICIENT_DATA`:
+Tutti i tipi della sezione 11 sono separati e frozen; oggetti annidati e tuple
+sono profondamente immutabili. Nessun mapping generico determina selezione,
+compatibility, eligibility, reported problems o risultato.
 
-- recovery nella stessa categoria o migliore → `STABLE`;
-- recovery peggiore → `DETERIORATED`;
-- recovery missing, stale, incompatibile o ambiguo → `INSUFFICIENT_DATA`;
-- dolore, problema, affaticamento insolito o interruzione per salute
-  chiaramente segnalati → safety `DETERIORATED`;
-- assenza di segnalazioni → `NO_KNOWN_ISSUE`, non certificazione medica;
-- segnale ambiguo → confirmation e `INSUFFICIENT_DATA` fino alla risposta.
+### 11.2 Assessment canonico e proiezione del riferimento
 
-La futura implementazione dovrà aggregare in ordine:
+```yaml
+recovery_assessment:  # RecoveryAssessment
+  assessment_id: string
+  contract_version: maintain-plan-stability/1.0.0-draft
+  analyzer_ref: AnalyzerRef
+  subject_ref: string
+  observed_at: datetime
+  assessed_at: datetime
+  category: LOW | MODERATE | HIGH | CRITICAL | null
+  category_missingness: NOT_MISSING | MISSING | NOT_ASSESSABLE
+  evidence_refs: tuple[VersionedArtifactRef]
+  provenance_ref: ProvenanceRef
+  missing_fields: tuple[string]
+  warnings: tuple[string]
 
-1. almeno una dimensione con deterioramento affidabile → `DETERIORATED`;
-2. altrimenti una dimensione obbligatoria non valutabile →
+recovery_assessment_ref:  # RecoveryAssessmentRef
+  assessment_id: string
+  contract_version: maintain-plan-stability/1.0.0-draft
+  analyzer_ref: AnalyzerRef
+  subject_ref: string
+  observed_at: datetime
+  assessed_at: datetime
+```
+
+La funzione normativa pura
+`RecoveryAssessment -> RecoveryAssessmentRef` copia esattamente
+`assessment_id`, `contract_version`, l'intero `AnalyzerRef`, `subject_ref`,
+`observed_at` e `assessed_at`. Questa tupla costituisce l'identità qualificata
+dell'assessment; nessun campo viene inferito, normalizzato o recuperato da una
+sorgente esterna.
+
+Ref e assessment coerenti sono ammessi. Un ref obbligatorio assente produce
+`INSUFFICIENT_DATA` usando il path canonico applicabile. Se ref e assessment
+sono entrambi presenti ma discordanti, l'input è invalido e nessuna evaluation
+è pubblicabile. La stessa identità qualificata associata a contenuti
+strutturalmente differenti rende invalido l'intero input. Ciò è distinto da due
+assessment con identità differenti e metadati C1 legittimamente incompatibili:
+questi restano input validi, producono `INCOMPATIBLE` e quindi recovery
+`INSUFFICIENT_DATA`.
+
+Ogni assessment include identità, versioni, subject, timestamp, categoria o
+missingness esplicita, evidence strutturale versionata e provenance tipizzata.
+`NOT_MISSING` richiede una categoria; `MISSING` e `NOT_ASSESSABLE` richiedono
+`category: null`. `observed_at` e `assessed_at` sono timezone-aware e
+`observed_at <= assessed_at`; una violazione rende l'assessment strutturalmente
+invalido. P0 non ripara, converte o reinterpreta assessment.
+
+### 11.3 Categorie e compatibility C1
+
+Per `maintain-plan-stability/1.0.0-draft` l'ordine canonico, crescente per
+severità, è `LOW < MODERATE < HIGH < CRITICAL`:
+
+- stessa categoria nel follow-up → recovery `STABLE`;
+- categoria inferiore nel follow-up → recovery `STABLE`;
+- categoria superiore nel follow-up → recovery `DETERIORATED`;
+- categoria assente o non valutabile → recovery `INSUFFICIENT_DATA`.
+
+Non esistono conversioni da score, soglie recovery implicite o importazioni da
+analyzer legacy.
+
+```yaml
+compatibility_field_record:  # CompatibilityFieldRecord
+  field: CONTRACT_VERSION | ANALYZER_ID | ANALYZER_VERSION | ASSESSMENT_SCHEMA_VERSION | SUBJECT_REF
+  comparison: EQUAL | DIFFERENT | MISSING
+  baseline_value: string | null
+  follow_up_value: string | null
+
+recovery_assessment_compatibility:  # RecoveryAssessmentCompatibility
+  baseline_ref: RecoveryAssessmentRef
+  follow_up_ref: RecoveryAssessmentRef
+  status: COMPATIBLE | INCOMPATIBLE | UNDETERMINED
+  field_records: tuple[CompatibilityFieldRecord]
+  missing_fields: tuple[string]
+  warnings: tuple[string]
+```
+
+C1 produce `COMPATIBLE` soltanto con uguaglianza esatta di contract version,
+analyzer ID, analyzer version, assessment schema version e subject ref. Almeno
+una differenza produce `INCOMPATIBLE`; in assenza di differenze, almeno un
+metadato mancante produce `UNDETERMINED`. Entrambi impediscono un recovery
+definitivo. `field_records` contiene esattamente i cinque campi nell'ordine
+dell'enum mostrato. Non sono ammessi registry, conversioni o equivalenze
+implicite.
+
+### 11.4 Binding frozen di prescrizione, baseline e sessione
+
+I binding P0 sono separati e non modificano `PrescriptionSnapshot`,
+`ActualSession` o altre dataclass persistite:
+
+```yaml
+prescription_baseline_binding:  # PrescriptionBaselineBinding
+  prescription_snapshot_ref: VersionedArtifactRef
+  decision_ref: VersionedArtifactRef
+  subject_ref: string
+  prescription_communicated_at: datetime
+  baseline_assessment_ref: RecoveryAssessmentRef | null
+  baseline_use_attestation_ref: VersionedArtifactRef
+  provenance_ref: ProvenanceRef
+
+actual_session_boundary:  # ActualSessionBoundary
+  actual_session_ref: VersionedArtifactRef
+  subject_ref: string
+  session_end: datetime | null
+  provenance_ref: ProvenanceRef | null
+
+next_decision_boundary:  # NextDecisionBoundary
+  decision_ref: VersionedArtifactRef
+  subject_ref: string
+  decision_at: datetime
+```
+
+La baseline è esclusivamente l'assessment indicato dal binding come usato per
+formulare la prescrizione. Non viene cercata per prossimità, ranking, source
+priority, somiglianza o fallback. Il validator verifica strutturalmente che il
+ref del binding sia uguale al ref derivato dalla baseline. Non dimostra
+crittograficamente che il producer abbia registrato correttamente
+l'attestazione: questa garanzia appartiene alla futura persistenza P1/v7.
+
+### 11.5 Candidate set e selezione tipizzati
+
+```yaml
+recovery_assessment_candidate_set:  # RecoveryAssessmentCandidateSet
+  contract_version: maintain-plan-stability/1.0.0-draft
+  actual_session_ref: VersionedArtifactRef
+  subject_ref: string
+  captured_at: datetime
+  evaluated_cutoff_at: datetime
+  candidates: tuple[RecoveryAssessment]
+  provenance_ref: ProvenanceRef
+
+candidate_disposition:  # CandidateDisposition
+  value: SELECTED | ELIGIBLE_NOT_SELECTED | EXCLUDED
+
+candidate_disposition_reason:  # CandidateDispositionReason
+  value: SELECTED_EARLIEST | LATER_THAN_SELECTED | DUPLICATE_IDENTICAL | FOREIGN_SUBJECT | INCOMPATIBLE | COMPATIBILITY_UNDETERMINED | OBSERVED_AT_OR_BEFORE_SESSION_END | ASSESSED_AT_OR_BEFORE_SESSION_END | OBSERVED_AT_OR_AFTER_NEXT_DECISION | ASSESSED_AT_OR_AFTER_NEXT_DECISION | CATEGORY_UNAVAILABLE | FIRST_TIMESTAMP_AMBIGUITY
+
+candidate_selection_record:  # CandidateSelectionRecord
+  candidate_ref: RecoveryAssessmentRef
+  disposition: CandidateDisposition
+  reasons: tuple[CandidateDispositionReason]
+  compatibility: RecoveryAssessmentCompatibility
+  temporal_eligibility: ELIGIBLE | EXCLUDED | UNDETERMINED
+  freshness: IN_WINDOW | OUT_OF_WINDOW | UNDETERMINED
+  occurrence_count: integer  # >= 1
+  missing_fields: tuple[string]
+  warnings: tuple[string]
+
+recovery_assessment_candidate_occurrence:  # RecoveryAssessmentCandidateOccurrence
+  candidate_ref: RecoveryAssessmentRef
+  occurrence_count: integer  # >= 1
+
+recovery_assessment_candidate_set_ref:  # RecoveryAssessmentCandidateSetRef
+  contract_version: maintain-plan-stability/1.0.0-draft
+  actual_session_ref: VersionedArtifactRef
+  subject_ref: string
+  captured_at: datetime
+  evaluated_cutoff_at: datetime
+  logical_candidates: tuple[RecoveryAssessmentCandidateOccurrence]
+
+follow_up_selection_evidence:  # FollowUpSelectionEvidence
+  candidate_set_ref: RecoveryAssessmentCandidateSetRef
+  records: tuple[CandidateSelectionRecord]
+  selected_follow_up_ref: RecoveryAssessmentRef | null
+  status: SELECTED | NO_ELIGIBLE_CANDIDATE | AMBIGUOUS
+  missing_fields: tuple[string]
+  warnings: tuple[string]
+```
+
+Il candidate set appartiene esattamente al soggetto e alla sessione dichiarati,
+contiene gli assessment completi e non viene ampliato o interrogato durante la
+valutazione. Ogni candidate ref è prodotto soltanto dalla funzione normativa
+della sezione 11.2. Candidati di altro soggetto non sono consumabili come
+follow-up e ricevono `EXCLUDED + FOREIGN_SUBJECT`; una discordanza di ownership
+fra candidate set e input principale rende invece invalido l'input.
+
+La funzione normativa pura
+`RecoveryAssessmentCandidateSet -> RecoveryAssessmentCandidateSetRef` copia
+contract version, actual session ref, subject ref, `captured_at` ed
+`evaluated_cutoff_at`, deduplica gli assessment e produce la tuple canonica
+`logical_candidates`. Ogni elemento contiene il ref derivato e il numero esatto
+di occorrenze ed è ordinato con la stessa chiave totale della sezione 11.6.
+La funzione non usa hash, repository o resolver.
+
+La deduplicazione precede la selezione e produce un solo
+`CandidateSelectionRecord` per candidato logico:
+
+- stesso ref derivato e assessment strutturalmente identico dopo l'ordinamento
+  canonico delle tuple → un solo candidato logico con `occurrence_count >= 1`;
+  quando il conteggio è maggiore di uno, le reasons includono obbligatoriamente
+  `DUPLICATE_IDENTICAL`, ma la disposition resta `SELECTED`,
+  `ELIGIBLE_NOT_SELECTED` oppure `EXCLUDED` secondo le regole ordinarie;
+- stesso ref derivato e assessment strutturalmente differente → input invalido,
+  nessuna evaluation pubblicabile;
+- assessment distinti al medesimo primo timestamp UTC ammissibile → tutti
+  ricevono `FIRST_TIMESTAMP_AMBIGUITY`, selection `AMBIGUOUS` e recovery
+  `INSUFFICIENT_DATA`;
+- nessun tie-break implicito è consentito.
+
+Le disposition sono esaustive: l'unico candidato scelto è `SELECTED`; ogni
+candidato ammissibile successivo è `ELIGIBLE_NOT_SELECTED` con reason
+`LATER_THAN_SELECTED`; in caso di ambiguity, tutti i candidati al primo
+timestamp sono `ELIGIBLE_NOT_SELECTED` con reason
+`FIRST_TIMESTAMP_AMBIGUITY`; ogni candidato non ammissibile è `EXCLUDED` con
+tutte e sole le reasons applicabili.
+`CATEGORY_UNAVAILABLE` non rende strutturalmente invalido o temporalmente
+inammissibile l'assessment: il candidato conserva la disposition altrimenti
+applicabile, ma se selezionato produce recovery `INSUFFICIENT_DATA` e non viene
+saltato in favore di un assessment successivo.
+
+I candidati C1 `INCOMPATIBLE` o `UNDETERMINED` sono esclusi e registrati, ma
+non bloccano un candidato successivo compatibile e temporalmente ammissibile.
+Questo non equivale a saltare il primo follow-up valido: il follow-up è il più
+antico fra i soli candidati integri, C1 `COMPATIBLE` e temporalmente
+ammissibili.
+
+### 11.6 Ordine canonico totale e path diagnostici
+
+Tutti i datetime della sezione 11 devono essere timezone-aware. I confronti
+temporali avvengono dopo conversione allo stesso istante UTC. L'ordine canonico
+dei `CandidateSelectionRecord` usa la chiave totale:
+
+1. `observed_at` normalizzato UTC;
+2. `assessed_at` normalizzato UTC;
+3. `assessment_id`;
+4. `contract_version`;
+5. `analyzer_id`;
+6. `analyzer_version`;
+7. `assessment_schema_version`;
+8. `subject_ref`.
+
+Le stringhe sono confrontate lessicograficamente per code point, senza case
+folding, trimming o normalizzazione fuzzy. Gli evidence ref sono ordinati per
+`artifact_type`, `artifact_id`, `artifact_version`. Reasons, missing fields e
+warning sono tuple prive di duplicati e ordinate per rispettivo valore
+canonico. I path di missingness sono nomi completi definiti dallo schema, mai
+riconosciuti tramite substring.
+
+Per ciascun campo nullable presente in una chiave canonica, incluso ogni campo
+di `AnalyzerRef`, l'ordinamento usa la coppia tipizzata `(null_rank, value)`:
+`null` ha `null_rank: 0` e precede ogni stringa; una stringa non nulla ha
+`null_rank: 1` ed è confrontata per code point. `null` non viene mai convertito
+in stringa vuota. Stringhe vuote o composte soltanto da whitespace sono input
+strutturalmente invalidi, non missingness e non equivalenti a `null`. La stessa
+regola si applica a ogni futura chiave canonica contenente valori nullable.
+
+L'ordine della tuple `candidates` fornita dal chiamante non modifica ref,
+deduplicazione, records, selezione o evaluation. La chiave totale serve soltanto
+alla rappresentazione deterministica dell'evidenza e non è mai un tie-break
+fra assessment distinti al primo timestamp UTC.
+Il servizio confronta e rappresenta le tuple mediante i rispettivi ordini
+canonici; una semplice permutazione di candidates, evidence, reasons,
+missing fields o warning non costituisce contenuto differente.
+
+### 11.7 GeneralStabilityInput e invarianti di ownership
+
+```yaml
+general_stability_input:  # GeneralStabilityInput
+  contract_version: maintain-plan-stability/1.0.0-draft
+  policy_id: maintain-plan-stability
+  policy_version: 1.0.0-draft
+  prescription_binding: PrescriptionBaselineBinding
+  baseline_assessment: RecoveryAssessment | null
+  actual_session_boundary: ActualSessionBoundary
+  candidate_set: RecoveryAssessmentCandidateSet
+  next_decision_boundary: NextDecisionBoundary | null
+  evaluated_at: datetime
+  reported_problems_projection: ReportedProblemsProjectionSnapshot | null
+  provenance_ref: ProvenanceRef
+```
+
+Prima di pubblicare una evaluation il validator impone:
+
+1. stesso `subject_ref` in binding, baseline, session boundary, candidate set,
+   ogni follow-up consumabile, next decision e reported-problems projection;
+2. baseline ref del binding esattamente uguale al ref derivato dalla baseline;
+3. snapshot e decision ref non vuoti, versionati e qualificati;
+4. actual session ref del candidate set uguale a quello del session boundary;
+5. `session_end`, `prescription_communicated_at`, `evaluated_at`, tutti gli
+   `observed_at`/`assessed_at`, i timestamp del candidate set e, se presente,
+   `decision_at` timezone-aware;
+6. baseline `observed_at` e `assessed_at` non successivi a
+   `prescription_communicated_at`;
+7. quando `session_end` esiste,
+   `prescription_communicated_at <= session_end`;
+8. next decision dello stesso soggetto e strettamente successiva a
+   `session_end`;
+9. `evaluated_at` non precedente a `session_end`;
+10. `candidate_set.evaluated_cutoff_at == evaluated_at`;
+11. per ogni candidato, `observed_at <= assessed_at <=
+    candidate_set.captured_at`;
+12. `candidate_set.captured_at <= evaluated_at` e nessun `observed_at` o
+    `assessed_at` del candidate set successivo a `evaluated_at`.
+
+Ownership, ref o binding presenti ma discordanti rendono l'input invalido e
+impediscono qualsiasi evaluation pubblicabile. Dati legittimamente mancanti,
+come baseline/ref obbligatorio o `session_end` assente, producono
+`INSUFFICIENT_DATA` con il path canonico, purché non siano accompagnati da una
+discordanza. P0 verifica solo la coerenza strutturale dei binding frozen
+ricevuti; non risolve repository né dimostra crittograficamente attestazioni o
+provenance.
+
+La grammatica/allowlist `maintain-plan-stability-missing-paths/1.0.0-draft`
+ammette esclusivamente i seguenti path essenziali:
+
+- `prescription_binding.baseline_assessment_ref`;
+- `baseline_assessment`;
+- `baseline_assessment.analyzer_ref.analyzer_id`;
+- `baseline_assessment.analyzer_ref.analyzer_version`;
+- `baseline_assessment.analyzer_ref.assessment_schema_version`;
+- `baseline_assessment.category`;
+- `actual_session_boundary.session_end`;
+- `candidate_set.candidates` per candidate set vuoto;
+- `candidate_set.candidates[].analyzer_ref.analyzer_id`;
+- `candidate_set.candidates[].analyzer_ref.analyzer_version`;
+- `candidate_set.candidates[].analyzer_ref.assessment_schema_version`;
+- `candidate_set.candidates[].category`;
+- `reported_problems_projection`;
+- `reported_problems_projection.projection_version`;
+- `reported_problems_projection.projection_schema_version`;
+- `reported_problems_projection.projection_status`;
+- `reported_problems_projection.event_cursor`;
+- `reported_problems_projection.event_window`;
+- `reported_problems_projection.checked_through_at`;
+- `reported_problems_projection.channel_check_status`;
+- `reported_problems_projection.result`;
+- `reported_problems_projection.reliable_canonical_safety_signal`;
+- `reported_problems_projection.safety_signal_evidence_refs` quando
+  `ISSUE_REPORTED + true` non ha evidence.
+
+Per i membri del candidate set il token `[]` è letterale e non viene sostituito
+con indice o ID. Ogni condizione legittimamente non valutabile usa esattamente
+un path della allowlist; i path sono ordinati per code point e privi di
+duplicati. Nuovi path richiedono una nuova versione della grammatica. Token
+parziali, indici, substring o nomi simili non hanno significato. Discordanze
+strutturali non sono missingness: invalidano l'input.
+
+### 11.8 Eligibility, freshness e cutoff unico
+
+Un candidato è temporalmente ammissibile quando:
+
+1. appartiene allo stesso soggetto;
+2. è strutturalmente valido;
+3. è C1 `COMPATIBLE`;
+4. `observed_at` e `assessed_at` sono entrambi strettamente successivi ad
+   `actual_session_boundary.session_end`;
+5. `observed_at` e `assessed_at` sono entrambi non successivi a
+   `evaluated_at`;
+6. se esiste una next decision, `observed_at` e `assessed_at` sono entrambi
+   strettamente precedenti a `next_decision_at`.
+
+I confronti sono sugli istanti UTC. Il boundary della sessione è esclusivo, il
+boundary `evaluated_at` è inclusivo e quello della next decision è esclusivo.
+`session_end` mancante produce recovery `INSUFFICIENT_DATA`. La freshness P0
+significa soltanto appartenenza a questa finestra; non esiste durata massima o
+TTL.
+
+La selezione resta basata sul più antico `observed_at` fra i candidati
+ammissibili. Le reasons temporali distinguono quale dei due timestamp viola il
+boundary di sessione o next decision. Non esistono reasons per timestamp
+successivi a `evaluated_at` o ad `candidate_set.captured_at`, perché tali casi
+violano le invarianti strutturali del candidate set e invalidano l'input prima
+della selezione.
+
+Il cutoff normativo dei reported problems è `evaluated_at` se non esiste una
+next decision con `next_decision_at <= evaluated_at`; altrimenti è
+`next_decision_at`. Nel caso di uguaglianza prevale quindi il boundary
+esclusivo della next decision. `checked_through_at >= cutoff` attesta che non
+rimane un intervallo del canale non controllato prima del boundary applicabile;
+questa attestazione di controllo è distinta dall'intervallo degli eventi
+effettivamente incluso nella projection.
+
+### 11.9 Reported problems projection canonica
+
+```yaml
+reported_problems_event_cursor:  # ReportedProblemsEventCursor
+  event_id: string
+  event_sequence: integer
+
+reported_problems_event_window:  # ReportedProblemsEventWindow
+  start_at: datetime
+  start_boundary: EXCLUSIVE
+  end_at: datetime
+  end_boundary: INCLUSIVE | EXCLUSIVE
+
+reported_problems_projection_ref:  # ReportedProblemsProjectionRef
+  projection_id: string
+  projection_version: string
+  projection_schema_version: string
+  actual_session_ref: VersionedArtifactRef
+  subject_ref: string
+  event_cursor: ReportedProblemsEventCursor | null
+  checked_through_at: datetime | null
+
+reported_problems_projection_snapshot:  # ReportedProblemsProjectionSnapshot
+  projection_id: string
+  projection_version: string | null
+  projection_schema_version: string | null
+  actual_session_ref: VersionedArtifactRef
+  subject_ref: string
+  projection_status: ACTIVE | DELETED | INVALID | INSUFFICIENT_DATA | null
+  event_cursor: ReportedProblemsEventCursor | null
+  event_window: ReportedProblemsEventWindow | null
+  checked_through_at: datetime | null
+  channel_check_status: VERIFIED | NOT_VERIFIED | null
+  result: NO_KNOWN_ISSUE | ISSUE_REPORTED | INSUFFICIENT_DATA | null
+  reliable_canonical_safety_signal: boolean | null
+  safety_signal_evidence_refs: tuple[VersionedArtifactRef]
+  provenance_ref: ProvenanceRef
+  missing_fields: tuple[string]
+  warnings: tuple[string]
+
+reported_problems_evaluation:  # ReportedProblemsEvaluation
+  projection_ref: ReportedProblemsProjectionRef | null
+  cutoff_at: datetime
+  result: NO_KNOWN_ISSUE | ISSUE_REPORTED | INSUFFICIENT_DATA
+  stability_result: STABLE | DETERIORATED | INSUFFICIENT_DATA
+  evidence_refs: tuple[VersionedArtifactRef]
+  missing_fields: tuple[string]
+  warnings: tuple[string]
+```
+
+La funzione normativa pura
+`ReportedProblemsProjectionSnapshot -> ReportedProblemsProjectionRef | null`
+produce un ref quando projection ID, projection version e projection schema
+version sono presenti e strutturalmente validi, copiando esattamente tali
+campi insieme ad actual session ref, subject ref, event cursor e
+`checked_through_at`. Se projection version o schema version sono missing, la
+funzione produce `null`, l'evaluation conserva `projection_ref: null` e usa il
+relativo path canonico con risultato `INSUFFICIENT_DATA`. Quando il ref è
+derivabile, `ReportedProblemsEvaluation.projection_ref` deve essergli
+esattamente uguale; una discordanza rende l'input invalido. La funzione non usa
+hash, repository o resolver.
+
+`event_window.start_at` è uguale a `session_end` e ha boundary `EXCLUSIVE`. Se
+non è intervenuta prima una next decision, `end_at == evaluated_at` e il
+boundary è `INCLUSIVE`. Se `next_decision_at <= evaluated_at`,
+`end_at == next_decision_at` e il boundary è `EXCLUSIVE`, inclusa
+l'uguaglianza dei due timestamp. Result, safety flag ed evidence della
+projection derivano esclusivamente dagli eventi appartenenti a questa finestra.
+P0 accetta tale completezza come attestazione strutturale del producer e non
+ricostruisce il log.
+
+Soltanto `projection_status: ACTIVE` è consumabile. Projection
+ID/version/schema version, event cursor e `checked_through_at` devono essere
+presenti e validi; sessione e soggetto devono coincidere con
+`GeneralStabilityInput`; `channel_check_status` deve essere `VERIFIED`;
+`event_window` deve essere esatta; `checked_through_at` deve coprire il cutoff;
+non devono esistere missing fields essenziali.
+
+Per una projection consumabile la matrice è completa e vincolante:
+
+| Result | Safety flag | Safety evidence | Stability result |
+|---|---|---|---|
+| `NO_KNOWN_ISSUE` | `false` | vuota | `STABLE` |
+| `NO_KNOWN_ISSUE` | `true` | qualsiasi | input invalido |
+| `NO_KNOWN_ISSUE` | `false` | non vuota | input invalido |
+| `NO_KNOWN_ISSUE` | `null` | qualsiasi | input invalido |
+| `ISSUE_REPORTED` | `true` | almeno un ref canonico | `DETERIORATED` |
+| `ISSUE_REPORTED` | `true` | vuota | `INSUFFICIENT_DATA` |
+| `ISSUE_REPORTED` | `false` oppure `null` | qualsiasi | `INSUFFICIENT_DATA` |
+| `INSUFFICIENT_DATA` | qualsiasi | qualsiasi | `INSUFFICIENT_DATA` |
+| `null` | qualsiasi | qualsiasi | `INSUFFICIENT_DATA` |
+
+`NO_KNOWN_ISSUE` non è una certificazione clinica. Per
+`ISSUE_REPORTED + true`, evidence vuota usa il path canonico della safety
+evidence mancante. P0 non possiede una policy per classificare automaticamente
+un problema con safety flag `false` o `null`. Testo libero e payload generici
+non sono promossi a safety evidence e non introducono soglie.
+
+Projection assente, non `ACTIVE`, incompleta, senza cursor, non verificata,
+con finestra errata o non coperta fino al cutoff produce deterministicamente
+reported problems `INSUFFICIENT_DATA`. Foreign-session, foreign-subject o
+ref/versioni presenti ma discordanti sono violazioni strutturali di ownership
+e rendono invalido l'input, senza evaluation pubblicabile. Le sole combinazioni
+semanticamente incoerenti di result, safety flag ed evidence sono quelle dichiarate invalide
+dalla matrice; missingness legittima e dichiarata resta invece
+`INSUFFICIENT_DATA` con un unico path canonico.
+
+P0 si fida dell'attestazione di completezza della projection canonica: non
+ricostruisce la projection dal log, non risolve gli evidence payload e non ne
+verifica crittograficamente l'integrità. Repository resolution e tamper
+detection sono rinviati a persistenza, codec e schema futuri.
+
+### 11.10 Confirmation, evaluation e aggregazione
+
+La `Confirmation` esistente è specifica del matching e non viene riutilizzata.
+P0 non introduce una stability confirmation: ogni selection ambiguity resta
+`INSUFFICIENT_DATA`. Una futura confirmation stability separata e persistita
+potrà soltanto selezionare elementi del candidate set frozen; non potrà creare
+evidence, correggere input o rendere compatibili analyzer incompatibili.
+
+```yaml
+general_stability_evaluation:  # GeneralStabilityEvaluation
+  evaluation_id: string
+  contract_version: maintain-plan-stability/1.0.0-draft
+  policy_id: maintain-plan-stability
+  policy_version: 1.0.0-draft
+  evaluated_at: datetime
+  subject_ref: string
+  prescription_binding: PrescriptionBaselineBinding
+  actual_session_boundary: ActualSessionBoundary
+  baseline_ref: RecoveryAssessmentRef | null
+  candidate_set_ref: RecoveryAssessmentCandidateSetRef
+  selected_follow_up_ref: RecoveryAssessmentRef | null
+  compatibility: RecoveryAssessmentCompatibility | null
+  selection_evidence: FollowUpSelectionEvidence
+  recovery_result: STABLE | DETERIORATED | INSUFFICIENT_DATA
+  reported_problems: ReportedProblemsEvaluation
+  performance_applicability: NOT_APPLICABLE
+  overall: STABLE | DETERIORATED | INSUFFICIENT_DATA
+  provenance_ref: ProvenanceRef
+  missing_fields: tuple[string]
+  warnings: tuple[string]
+```
+
+Recovery e reported problems/safety sono `REQUIRED`; performance è
+esclusivamente `NOT_APPLICABLE`. L'aggregazione applica la prima condizione
+vera:
+
+1. almeno una dimensione affidabile deteriorata → `DETERIORATED`;
+2. altrimenti almeno una dimensione obbligatoria non valutabile →
    `INSUFFICIENT_DATA`;
 3. altrimenti → `STABLE`.
+
+Un safety signal canonico affidabile soddisfa sempre la prima condizione. Gli
+stati non formulano diagnosi e non introducono soglie cliniche.
 
 Testi utente obbligatori:
 
@@ -2341,14 +2922,20 @@ Testi utente obbligatori:
 - `INSUFFICIENT_DATA`: «Non ci sono abbastanza informazioni per valutare il
   recupero».
 
-Questi stati non formulano diagnosi e non introducono soglie cliniche.
+### 11.11 Persistenza P0 e lavoro rinviato
 
-Il report visibile dovrà restare immediato. Il controllo recovery successivo
-dovrà restare interno, guidare la prossima seduta e non produrre un nuovo
-report tardivo della vecchia seduta. Il learning sarà ammesso soltanto dopo una
-verifica interna valida.
+P0 comprenderà soltanto nuovi tipi separati e frozen, validator, selezione
+deterministica, servizio puro, fixture sintetiche e test. Il servizio riceverà
+un `GeneralStabilityInput` completo e non accederà a repository, log, rete o
+sorgenti esterne.
 
-### 11.1 Matrice finale approvata
+Sono esclusi da P0: persistenza, repository, codec v2 o modifiche alle
+dataclass persistite, hash e serialization policy, schema v7, runtime wiring,
+report, learning, analyzer e adapter reali e confirmation stability persistita.
+Le migrazioni v1-v6 e i relativi checksum restano immutabili. Il report visibile
+e il learning non vengono attivati da questo contratto.
+
+### 11.12 Matrice finale approvata
 
 | Esecuzione | Stabilità | Outcome `MAINTAIN_PLAN` |
 |---|---|---|
@@ -2489,8 +3076,12 @@ attività normalizzata, policy, analyzer, conferme, evidence e risultati
 dovranno essere versionati e auditabili. Il raw non dovrà sostituire i campi
 canonici.
 
-La prima unità implementativa comprenderà soltanto tipi, validator e fixture
-sintetiche, senza runtime wiring. Feature flag separati dovranno governare:
+Per recovery stability, il primo incremento P0 comprenderà soltanto nuovi tipi
+frozen separati, validator, selezione deterministica, servizio puro, fixture
+sintetiche e test, senza repository, persistenza, codec, modifiche alle
+dataclass persistite, schema v7, runtime wiring, report, learning, analyzer o
+adapter reali. Per il rollout complessivo, feature flag separati dovranno
+governare:
 
 - snapshot;
 - normalization;
@@ -2542,31 +3133,36 @@ validazione. L'accesso futuro a dati reali richiede autorizzazione separata.
 
 ## 16. Decisioni residue prima dell'implementazione
 
-Le policy di prodotto descritte in questo documento sono approvate. Restano
-aperte, senza autorizzare comportamenti impliciti:
+Le regole semantiche e gli input strutturali essenziali del recovery stability
+P0 sono definiti nella sezione 11 e non restano aperti: identificativi,
+qualified ref, binding, candidate set, evidence ref, provenance ref, cursor,
+cutoff, ownership, disposition, reasons e ordine canonico non possono essere
+sostituiti da placeholder o mapping generici.
 
-- progettazione tecnica dei tipi, validator, storage, migrazioni additive,
-  servizi di confirmation e interfacce fra moduli;
-- progettazione tecnica dei registri append-only, delle proiezioni versionate e
-  della minimizzazione dei metadati audit dopo cancellazione, nel rispetto
-  delle invarianti approvate;
-- mapping documentato dei payload delle singole sorgenti verso tassonomia,
-  target, unità, evaluation window, componenti e provenance;
-- formato tecnico definitivo degli identificativi, candidate set, evidence e
-  riferimenti audit, nel rispetto degli schemi semantici approvati;
-- comportamento operativo delle feature flag e osservabilità dello shadow;
-- fixture sintetiche e verifiche end-to-end non ancora realizzate;
-- verifiche future, separatamente autorizzate, sulla qualità dei direct ID,
-  timestamp, timezone, multisport, telemetria, recovery e conflitti nei dati
-  reali;
-- criteri finali di uscita dalla shadow evaluation;
-- versione definitiva ed effective date;
-- attivazione del report runtime;
-- attivazione del learning, che richiede nuova approvazione esplicita.
+Per recovery stability restano rinviati esclusivamente:
 
-Queste decisioni residue non riaprono candidate window, filtri, fasce,
-consecutività, aggregazioni, dose, tassonomia iniziale, meteo/privacy, conflitti
-o feedback approvati nel presente draft.
+- analyzer e adapter reali;
+- mapping Garmin/Airtable;
+- TTL o durata massima;
+- compatibility registry oltre C1;
+- persistenza e repository;
+- codec v2;
+- hash, preimage e serialization policy;
+- schema v7;
+- runtime wiring;
+- report;
+- learning;
+- confirmation stability persistita.
+
+Questi rinvii non autorizzano proxy, resolver repository-level, tamper detection
+o autocertificazione di `VERIFIED + NO_KNOWN_ISSUE` in P0. Le scelte tecniche
+future dovranno rispettare i tipi frozen e le invarianti già definite senza
+reinterpretare evaluation P0 pubblicate.
+
+Le decisioni implementative generali non appartenenti al pacchetto recovery
+stability restano governate dalle rispettive sezioni del documento e non
+riaprono candidate window, filtri, fasce, consecutività, aggregazioni, dose,
+tassonomia iniziale, meteo/privacy, conflitti o feedback già approvati.
 
 ## 17. Checklist pre-implementazione
 
@@ -2659,7 +3255,10 @@ o feedback approvati nel presente draft.
       precedenza deterministica ed esempi normativi;
 - [x] applicability delle dimensioni obbligatorie definita;
 - [x] direzioni `MIXED` e `UNDETERMINED` definite;
-- [x] stabilità iniziale definita semanticamente;
+- [x] recovery stability definita con domini separati, assessment e riferimenti
+      canonici immutabili, categorie ordinate, compatibility C1, baseline
+      esplicita, candidate set congelato, eligibility/freshness, parità
+      temporali, reported problems/safety, aggregazione e perimetro P0;
 - [x] meteo/privacy, conflitti e feedback definiti;
 - [x] baseline immutabile del feedback, evento `CAPTURED` senza duplicazione
       del payload sensibile, invarianti del registro append-only e algoritmo
@@ -2680,6 +3279,8 @@ o feedback approvati nel presente draft.
       valutativi verificata end-to-end;
 - [ ] invarianti di `recovery.applicability` e `recovery.target` validate con
       fixture sintetiche;
+- [ ] tipi frozen, validator, selezione deterministica, servizio puro, fixture
+      e test recovery stability P0 implementati senza persistenza o wiring;
 - [ ] matching e confirmation coperti per zero/una/più candidate e direct ID;
 - [ ] casi Brick/multisport coperti, inclusi componenti mancanti, fuori ordine,
       sovrapposti, interposti e oltre 15 minuti;
