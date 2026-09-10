@@ -37,7 +37,7 @@ _SELECTION_REASONS = frozenset({
 })
 
 
-def derive_follow_up_selection(
+def _derive_follow_up_selection(
     candidate_set_ref: RecoveryAssessmentCandidateSetRef,
     records: tuple[CandidateSelectionRecord, ...],
 ) -> FollowUpSelectionEvidence:
@@ -613,7 +613,7 @@ def validate_general_stability_evaluation(
               type(candidate_set) is RecoveryAssessmentCandidateSetRef and
               type(candidate_set.logical_candidates) is tuple and
               len(valid_occurrences) == len(candidate_set.logical_candidates)):
-            expected_selection = derive_follow_up_selection(candidate_set, tuple(valid_records))
+            expected_selection = _derive_follow_up_selection(candidate_set, tuple(valid_records))
             if selection != expected_selection:
                 errors.append("selection evidence contradicts deterministic selection")
 

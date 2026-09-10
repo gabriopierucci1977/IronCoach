@@ -8,7 +8,7 @@ from datetime import timezone
 
 from .stability_models import *
 from .stability_validators import (
-    derive_follow_up_selection, validate_assessment_ref, validate_general_stability_input,
+    _derive_follow_up_selection, validate_assessment_ref, validate_general_stability_input,
 )
 
 
@@ -161,7 +161,7 @@ def _select(value: GeneralStabilityInput, baseline_ref: RecoveryAssessmentRef):
             ref, CandidateDisposition.EXCLUDED,
             tuple(sorted(set(reasons), key=lambda x: x.value)), compatibility,
             temporal, freshness, count, tuple(sorted(set(missing))), ()))
-    return derive_follow_up_selection(recovery_candidate_set_ref(value.candidate_set),
+    return _derive_follow_up_selection(recovery_candidate_set_ref(value.candidate_set),
                                       tuple(records))
 
 
