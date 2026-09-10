@@ -9,13 +9,21 @@ from enum import Enum
 from types import MappingProxyType, UnionType
 from typing import Any, Mapping, Union, get_args, get_origin, get_type_hints
 
-from .models import CoverageStatus, EvaluationCoverage, ExecutionEvaluation, OverallStatus
+from .models import (
+    AdherenceStatus, CoverageStatus, DimensionAggregate, EvaluationCoverage,
+    ExecutionEvaluation, OverallStatus, PolicyRef,
+)
 from .stability_models import (
     ActualSessionBoundary, GeneralStabilityEvaluation, PrescriptionBaselineBinding,
-    ProvenanceRef, RecoveryAssessmentCandidateSetRef, StabilityResult,
-    VersionedArtifactRef, STABILITY_CONTRACT_VERSION, STABILITY_POLICY_ID,
-    STABILITY_POLICY_VERSION,
+    ProvenanceRef, StabilityResult, VersionedArtifactRef,
 )
+from .stability_validators import validate_general_stability_evaluation
+
+
+EXECUTION_POLICY = PolicyRef("maintain-plan-execution-aggregation", "1.0.0-draft")
+COVERAGE_POLICY = PolicyRef("maintain-plan-evaluator-capability", "1.0.0-draft")
+AGGREGATE_POLICY = PolicyRef("maintain-plan-component-aggregation", "1.0.0-draft")
+DOSE_POLICY = PolicyRef("maintain-plan-dose-matrix", "1.0.0-draft")
 
 
 def _aware(value: object) -> bool:
@@ -106,14 +114,77 @@ def _validate(value: object, expected: type, name: str) -> list[str]:
     return errors
 
 
+def _validate_execution_evaluation(value: ExecutionEvaluation) -> tuple[str, ...]:
+    """Validate output-only invariants; repository-owned inputs are unavailable here."""
+    errors = _validate(value, ExecutionEvaluation, "execution")
+    if errors:
+        return tuple(errors)
+    if value.policy != EXECUTION_POLICY:
+        errors.append("execution policy and version must be exact")
+    coverage = value.evaluation_coverage
+    if type(coverage) is not EvaluationCoverage:
+        return tuple(errors)
+    if coverage.policy != COVERAGE_POLICY:
+        errors.append("execution coverage policy and version must be exact")
+    aggregates = (value.identity_aggregate, value.quantity_aggregate,
+                  value.intensity_aggregate, value.structure_aggregate)
+    if coverage.status is CoverageStatus.FULLY_SUPPORTED:
+        if (any(type(item) is not DimensionAggregate for item in aggregates) or
+                value.dose_aggregate is None or type(value.overall) is not OverallStatus):
+            errors.append("full execution coverage requires all aggregates, dose, and overall")
+        else:
+            for aggregate in aggregates:
+                if aggregate.policy != AGGREGATE_POLICY:
+                    errors.append("execution aggregate policy and version must be exact")
+            precedence = (
+                (AdherenceStatus.INSUFFICIENT_DATA, OverallStatus.INSUFFICIENT_DATA),
+                (AdherenceStatus.NOT_MET, OverallStatus.DIFFERENT),
+                (AdherenceStatus.PARTIALLY_MET, OverallStatus.PARTIALLY_IN_LINE),
+                (AdherenceStatus.MET, OverallStatus.IN_LINE),
+            )
+            expected = next(overall for status, overall in precedence
+                            if any(item.status is status for item in aggregates))
+            if value.overall is not expected:
+                errors.append("execution overall contradicts its dimensional aggregates")
+            component_ids = {item.component_result_id for item in value.component_results}
+            for aggregate in aggregates:
+                if (len(aggregate.component_result_refs) != len(set(aggregate.component_result_refs)) or
+                        not set(aggregate.component_result_refs).issubset(component_ids)):
+                    errors.append("execution aggregate contains duplicate or foreign component refs")
+            if value.dose_aggregate.policy != DOSE_POLICY:
+                errors.append("execution dose policy and version must be exact")
+            if (value.dose_aggregate.quantity_result_ref != value.quantity_aggregate.result_id or
+                    value.dose_aggregate.intensity_result_ref != value.intensity_aggregate.result_id):
+                errors.append("execution dose refs must match quantity and intensity aggregates")
+    elif any(item is not None for item in aggregates) or value.dose_aggregate is not None or value.overall is not None:
+        errors.append("non-full execution coverage requires null aggregates, dose, and overall")
+    for ref in (*coverage.required_supported_component_refs,
+                *coverage.required_unsupported_component_refs,
+                *coverage.optional_unsupported_component_refs):
+        if ref.prescription_snapshot_id != value.prescription_snapshot_ref:
+            errors.append("execution coverage contains a foreign prescription ref")
+    for component in value.component_results:
+        if (component.planned_component_ref is not None and
+                component.planned_component_ref.prescription_snapshot_id != value.prescription_snapshot_ref):
+            errors.append("execution component contains a foreign prescription ref")
+        if (component.observed_component_ref is not None and
+                component.observed_component_ref.session_id != value.actual_session_ref):
+            errors.append("execution component contains a foreign session ref")
+    return tuple(errors)
+
+
 def validate_final_outcome_inputs(
     execution: ExecutionEvaluation,
     stability: GeneralStabilityEvaluation,
 ) -> tuple[str, ...]:
-    errors = _validate(execution, ExecutionEvaluation, "execution")
-    errors.extend(_validate(stability, GeneralStabilityEvaluation, "stability"))
+    errors = list(_validate_execution_evaluation(execution))
+    stability_shape_errors = _validate(stability, GeneralStabilityEvaluation, "stability")
+    errors.extend(stability_shape_errors)
     if type(execution) is not ExecutionEvaluation or type(stability) is not GeneralStabilityEvaluation:
         return tuple(errors)
+
+    if not stability_shape_errors:
+        errors.extend(validate_general_stability_evaluation(stability))
 
     coverage = execution.evaluation_coverage
     binding = stability.prescription_binding
@@ -135,17 +206,6 @@ def validate_final_outcome_inputs(
             errors.append("execution and stability actual session refs must agree")
         if boundary.subject_ref != stability.subject_ref:
             errors.append("stability actual session ownership must agree")
-    candidate_ref = stability.candidate_set_ref
-    if type(candidate_ref) is RecoveryAssessmentCandidateSetRef:
-        if type(boundary) is ActualSessionBoundary and candidate_ref.actual_session_ref != boundary.actual_session_ref:
-            errors.append("stability candidate set and actual session refs must agree")
-        if candidate_ref.subject_ref != stability.subject_ref:
-            errors.append("stability candidate set ownership must agree")
-    if (stability.contract_version, stability.policy_id, stability.policy_version) != (
-            STABILITY_CONTRACT_VERSION, STABILITY_POLICY_ID, STABILITY_POLICY_VERSION):
-        errors.append("stability contract and policy versions must be exact")
-    if type(stability.overall) is not StabilityResult:
-        errors.append("stability.overall must be StabilityResult")
     return tuple(errors)
 
 

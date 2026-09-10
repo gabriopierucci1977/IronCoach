@@ -309,3 +309,334 @@ def validate_projection_structure(value: ReportedProblemsProjectionSnapshot) -> 
     _canonical_strings(value.missing_fields, "projection.missing_fields", errors, paths=True)
     _canonical_strings(value.warnings, "projection.warnings", errors)
     return tuple(errors)
+
+
+def _expected_compatibility(
+    baseline: RecoveryAssessmentRef,
+    follow_up: RecoveryAssessmentRef,
+) -> tuple[CompatibilityStatus, tuple[CompatibilityFieldRecord, ...], tuple[str, ...]]:
+    pairs = (
+        (CompatibilityField.CONTRACT_VERSION, baseline.contract_version, follow_up.contract_version),
+        (CompatibilityField.ANALYZER_ID, baseline.analyzer_ref.analyzer_id,
+         follow_up.analyzer_ref.analyzer_id),
+        (CompatibilityField.ANALYZER_VERSION, baseline.analyzer_ref.analyzer_version,
+         follow_up.analyzer_ref.analyzer_version),
+        (CompatibilityField.ASSESSMENT_SCHEMA_VERSION,
+         baseline.analyzer_ref.assessment_schema_version,
+         follow_up.analyzer_ref.assessment_schema_version),
+        (CompatibilityField.SUBJECT_REF, baseline.subject_ref, follow_up.subject_ref),
+    )
+    records = tuple(CompatibilityFieldRecord(
+        field,
+        FieldComparison.MISSING if left is None or right is None else
+        FieldComparison.EQUAL if left == right else FieldComparison.DIFFERENT,
+        left, right,
+    ) for field, left, right in pairs)
+    status = (CompatibilityStatus.INCOMPATIBLE
+              if any(record.comparison is FieldComparison.DIFFERENT for record in records)
+              else CompatibilityStatus.UNDETERMINED
+              if any(record.comparison is FieldComparison.MISSING for record in records)
+              else CompatibilityStatus.COMPATIBLE)
+    missing = []
+    for record in records:
+        if record.comparison is not FieldComparison.MISSING:
+            continue
+        if record.field is CompatibilityField.ANALYZER_ID:
+            suffix = "analyzer_ref.analyzer_id"
+        elif record.field is CompatibilityField.ANALYZER_VERSION:
+            suffix = "analyzer_ref.analyzer_version"
+        elif record.field is CompatibilityField.ASSESSMENT_SCHEMA_VERSION:
+            suffix = "analyzer_ref.assessment_schema_version"
+        else:
+            continue
+        if record.baseline_value is None:
+            missing.append(f"baseline_assessment.{suffix}")
+        if record.follow_up_value is None:
+            missing.append(f"candidate_set.candidates[].{suffix}")
+    return status, records, tuple(sorted(set(missing)))
+
+
+def _validate_evaluation_compatibility(
+    value: RecoveryAssessmentCompatibility,
+    name: str,
+) -> tuple[str, ...]:
+    errors: list[str] = []
+    if type(value) is not RecoveryAssessmentCompatibility:
+        return (f"{name} must be a RecoveryAssessmentCompatibility",)
+    errors.extend(validate_assessment_ref(value.baseline_ref, f"{name}.baseline_ref"))
+    errors.extend(validate_assessment_ref(value.follow_up_ref, f"{name}.follow_up_ref"))
+    if (type(value.baseline_ref) is RecoveryAssessmentRef and
+            type(value.follow_up_ref) is RecoveryAssessmentRef):
+        status, records, missing = _expected_compatibility(value.baseline_ref, value.follow_up_ref)
+        if value.status is not status:
+            errors.append(f"{name}.status does not match its refs")
+        if value.field_records != records:
+            errors.append(f"{name}.field_records do not match its refs")
+        if value.missing_fields != missing:
+            errors.append(f"{name}.missing_fields do not match its refs")
+    _canonical_strings(value.missing_fields, f"{name}.missing_fields", errors, paths=True)
+    _canonical_strings(value.warnings, f"{name}.warnings", errors)
+    return tuple(errors)
+
+
+def validate_general_stability_evaluation(
+    value: GeneralStabilityEvaluation,
+) -> tuple[str, ...]:
+    """Validate every output invariant expressible without the discarded input payload."""
+    errors: list[str] = []
+    if type(value) is not GeneralStabilityEvaluation:
+        return ("evaluation must be a GeneralStabilityEvaluation",)
+    if (value.contract_version, value.policy_id, value.policy_version) != (
+            STABILITY_CONTRACT_VERSION, STABILITY_POLICY_ID, STABILITY_POLICY_VERSION):
+        errors.append("stability evaluation contract and policy versions must be exact")
+    _text(value.evaluation_id, "evaluation.evaluation_id", errors)
+    _text(value.subject_ref, "evaluation.subject_ref", errors)
+    _datetime(value.evaluated_at, "evaluation.evaluated_at", errors)
+    errors.extend(validate_provenance(value.provenance_ref, "evaluation.provenance_ref"))
+    _canonical_strings(value.missing_fields, "evaluation.missing_fields", errors, paths=True)
+    _canonical_strings(value.warnings, "evaluation.warnings", errors)
+    if tuple(sorted(set(value.missing_fields))) != value.missing_fields:
+        errors.append("evaluation.missing_fields must be unique and canonically ordered")
+    if tuple(sorted(set(value.warnings))) != value.warnings:
+        errors.append("evaluation.warnings must be unique and canonically ordered")
+
+    binding = value.prescription_binding
+    boundary = value.actual_session_boundary
+    candidate_set = value.candidate_set_ref
+    selection = value.selection_evidence
+    if type(binding) is not PrescriptionBaselineBinding:
+        errors.append("evaluation.prescription_binding must be a PrescriptionBaselineBinding")
+    else:
+        for ref, name in ((binding.prescription_snapshot_ref, "prescription_snapshot_ref"),
+                          (binding.decision_ref, "decision_ref"),
+                          (binding.baseline_use_attestation_ref, "baseline_use_attestation_ref")):
+            errors.extend(validate_artifact_ref(ref, name))
+        errors.extend(validate_provenance(binding.provenance_ref, "binding.provenance_ref"))
+        _datetime(binding.prescription_communicated_at, "prescription_communicated_at", errors)
+        if binding.subject_ref != value.subject_ref:
+            errors.append("prescription binding ownership must match evaluation")
+        if binding.baseline_assessment_ref != value.baseline_ref:
+            errors.append("top-level baseline ref must match prescription binding")
+    if value.baseline_ref is not None:
+        errors.extend(validate_assessment_ref(value.baseline_ref, "evaluation.baseline_ref"))
+        if type(value.baseline_ref) is RecoveryAssessmentRef and value.baseline_ref.subject_ref != value.subject_ref:
+            errors.append("baseline ownership must match evaluation")
+    if type(boundary) is not ActualSessionBoundary:
+        errors.append("evaluation.actual_session_boundary must be an ActualSessionBoundary")
+    else:
+        errors.extend(validate_artifact_ref(boundary.actual_session_ref, "actual_session_ref"))
+        _datetime(boundary.session_end, "session_end", errors, nullable=True)
+        if boundary.subject_ref != value.subject_ref:
+            errors.append("actual session ownership must match evaluation")
+        if boundary.provenance_ref is not None:
+            errors.extend(validate_provenance(boundary.provenance_ref, "boundary.provenance_ref"))
+    if type(candidate_set) is not RecoveryAssessmentCandidateSetRef:
+        errors.append("evaluation.candidate_set_ref must be a RecoveryAssessmentCandidateSetRef")
+    else:
+        if candidate_set.contract_version != value.contract_version:
+            errors.append("candidate set contract version must match evaluation")
+        if candidate_set.subject_ref != value.subject_ref:
+            errors.append("candidate set ownership must match evaluation")
+        if type(boundary) is ActualSessionBoundary and candidate_set.actual_session_ref != boundary.actual_session_ref:
+            errors.append("candidate set must reference the exact actual session")
+        _datetime(candidate_set.captured_at, "candidate_set_ref.captured_at", errors)
+        _datetime(candidate_set.evaluated_cutoff_at, "candidate_set_ref.evaluated_cutoff_at", errors)
+        if candidate_set.evaluated_cutoff_at != value.evaluated_at:
+            errors.append("candidate set cutoff must match evaluation timestamp")
+        if type(candidate_set.logical_candidates) is not tuple:
+            errors.append("candidate_set_ref.logical_candidates must be a tuple")
+        else:
+            for occurrence in candidate_set.logical_candidates:
+                if type(occurrence) is not RecoveryAssessmentCandidateOccurrence:
+                    errors.append("logical candidate must be a RecoveryAssessmentCandidateOccurrence")
+                else:
+                    errors.extend(validate_assessment_ref(occurrence.candidate_ref, "logical candidate ref"))
+                    if type(occurrence.occurrence_count) is not int or occurrence.occurrence_count < 1:
+                        errors.append("logical candidate occurrence_count must be positive")
+
+    selected_records: list[CandidateSelectionRecord] = []
+    if type(selection) is not FollowUpSelectionEvidence:
+        errors.append("selection_evidence must be FollowUpSelectionEvidence")
+    else:
+        if selection.candidate_set_ref != candidate_set:
+            errors.append("selection candidate-set ref must equal top-level candidate-set ref")
+        if selection.selected_follow_up_ref != value.selected_follow_up_ref:
+            errors.append("selection selected ref must equal top-level selected ref")
+        _canonical_strings(selection.missing_fields, "selection.missing_fields", errors, paths=True)
+        _canonical_strings(selection.warnings, "selection.warnings", errors)
+        occurrences = ({item.candidate_ref: item.occurrence_count
+                        for item in candidate_set.logical_candidates}
+                       if type(candidate_set) is RecoveryAssessmentCandidateSetRef and
+                       type(candidate_set.logical_candidates) is tuple else {})
+        records = selection.records if type(selection.records) is tuple else ()
+        if type(selection.records) is not tuple:
+            errors.append("selection.records must be a tuple")
+        elif len(records) != len(occurrences) or {record.candidate_ref for record in records
+                                                  if type(record) is CandidateSelectionRecord} != set(occurrences):
+            errors.append("selection records must exactly cover logical candidates")
+        for record in records:
+            if type(record) is not CandidateSelectionRecord:
+                errors.append("selection record must be CandidateSelectionRecord")
+                continue
+            errors.extend(validate_assessment_ref(record.candidate_ref, "selection candidate ref"))
+            errors.extend(_validate_evaluation_compatibility(record.compatibility,
+                                                              "selection compatibility"))
+            if type(record.compatibility) is RecoveryAssessmentCompatibility:
+                if record.compatibility.baseline_ref != value.baseline_ref:
+                    errors.append("selection compatibility baseline ref must match top-level baseline")
+                if record.compatibility.follow_up_ref != record.candidate_ref:
+                    errors.append("selection compatibility follow-up ref must match candidate")
+            if record.occurrence_count != occurrences.get(record.candidate_ref):
+                errors.append("selection occurrence count must match candidate set")
+            expected_record_missing = set(record.compatibility.missing_fields)
+            if CandidateDispositionReason.CATEGORY_UNAVAILABLE in record.reasons:
+                expected_record_missing.add("candidate_set.candidates[].category")
+            if set(record.missing_fields) != expected_record_missing:
+                errors.append("selection record missing fields contradict its evidence")
+            if record.temporal_eligibility is TemporalEligibility.ELIGIBLE and record.freshness is not Freshness.IN_WINDOW:
+                errors.append("eligible candidate must be in-window")
+            if record.temporal_eligibility is TemporalEligibility.EXCLUDED and record.freshness is not Freshness.OUT_OF_WINDOW:
+                errors.append("excluded candidate must be out-of-window")
+            if record.temporal_eligibility is TemporalEligibility.UNDETERMINED and record.freshness is not Freshness.UNDETERMINED:
+                errors.append("undetermined temporal eligibility requires undetermined freshness")
+            if record.disposition is CandidateDisposition.SELECTED:
+                selected_records.append(record)
+                if CandidateDispositionReason.SELECTED_EARLIEST not in record.reasons:
+                    errors.append("selected candidate requires SELECTED_EARLIEST reason")
+            elif (record.disposition is CandidateDisposition.EXCLUDED and
+                  record.temporal_eligibility is TemporalEligibility.ELIGIBLE and
+                  type(record.compatibility) is RecoveryAssessmentCompatibility and
+                  record.compatibility.status is CompatibilityStatus.COMPATIBLE and
+                  record.candidate_ref.subject_ref == value.subject_ref):
+                errors.append("eligible compatible owned candidate cannot be excluded")
+        selected = value.selected_follow_up_ref
+        if selection.status is FollowUpSelectionStatus.SELECTED:
+            if selected is None or len(selected_records) != 1 or selected_records[0].candidate_ref != selected:
+                errors.append("selected status requires exactly the repeated selected candidate")
+        elif selection.status in (FollowUpSelectionStatus.NO_ELIGIBLE_CANDIDATE,
+                                  FollowUpSelectionStatus.AMBIGUOUS):
+            if selected is not None or selected_records:
+                errors.append("non-selected status forbids a selected candidate")
+            if (selection.status is FollowUpSelectionStatus.AMBIGUOUS and
+                    sum(CandidateDispositionReason.FIRST_TIMESTAMP_AMBIGUITY in record.reasons
+                        for record in records if type(record) is CandidateSelectionRecord) < 2):
+                errors.append("ambiguous status requires at least two first-timestamp candidates")
+        else:
+            errors.append("selection status is invalid")
+        expected_selection_missing = {path for record in records
+                                      if type(record) is CandidateSelectionRecord
+                                      for path in record.missing_fields}
+        if not occurrences:
+            expected_selection_missing.add("candidate_set.candidates")
+        if set(selection.missing_fields) != expected_selection_missing:
+            errors.append("selection missing fields must equal record missingness")
+
+    selected_record = selected_records[0] if len(selected_records) == 1 else None
+    if value.compatibility is not None:
+        errors.extend(_validate_evaluation_compatibility(value.compatibility, "compatibility"))
+    if value.selected_follow_up_ref is None:
+        if value.compatibility is not None:
+            errors.append("compatibility requires a selected follow-up")
+    else:
+        errors.extend(validate_assessment_ref(value.selected_follow_up_ref,
+                                              "selected_follow_up_ref"))
+        if value.selected_follow_up_ref.subject_ref != value.subject_ref:
+            errors.append("selected follow-up ownership must match evaluation")
+        if value.compatibility is None:
+            errors.append("selected follow-up requires compatibility")
+        elif (value.compatibility.baseline_ref != value.baseline_ref or
+              value.compatibility.follow_up_ref != value.selected_follow_up_ref):
+            errors.append("top-level compatibility refs must match baseline and selected follow-up")
+        elif selected_record is not None and value.compatibility != selected_record.compatibility:
+            errors.append("top-level and selected-record compatibility must be identical")
+
+    definitive_recovery = value.recovery_result in (StabilityResult.STABLE,
+                                                     StabilityResult.DETERIORATED)
+    if definitive_recovery and (
+            value.baseline_ref is None or value.selected_follow_up_ref is None or
+            value.compatibility is None or
+            value.compatibility.status is not CompatibilityStatus.COMPATIBLE or
+            selected_record is None or
+            selected_record.temporal_eligibility is not TemporalEligibility.ELIGIBLE or
+            selected_record.freshness is not Freshness.IN_WINDOW or
+            CandidateDispositionReason.CATEGORY_UNAVAILABLE in selected_record.reasons or
+            "baseline_assessment.category" in value.missing_fields or
+            "candidate_set.candidates[].category" in value.missing_fields or
+            "actual_session_boundary.session_end" in value.missing_fields):
+        errors.append("definitive recovery requires compatible, selected, evaluable recovery evidence")
+    recovery_evidence_complete = (
+        value.baseline_ref is not None and value.selected_follow_up_ref is not None and
+        value.compatibility is not None and
+        value.compatibility.status is CompatibilityStatus.COMPATIBLE and
+        selected_record is not None and
+        selected_record.temporal_eligibility is TemporalEligibility.ELIGIBLE and
+        selected_record.freshness is Freshness.IN_WINDOW and
+        CandidateDispositionReason.CATEGORY_UNAVAILABLE not in selected_record.reasons and
+        "baseline_assessment.category" not in value.missing_fields and
+        "candidate_set.candidates[].category" not in value.missing_fields and
+        "actual_session_boundary.session_end" not in value.missing_fields)
+    if recovery_evidence_complete and value.recovery_result is StabilityResult.INSUFFICIENT_DATA:
+        errors.append("complete recovery evidence cannot be INSUFFICIENT_DATA")
+
+    reported = value.reported_problems
+    if type(reported) is not ReportedProblemsEvaluation:
+        errors.append("reported_problems must be ReportedProblemsEvaluation")
+    else:
+        _datetime(reported.cutoff_at, "reported_problems.cutoff_at", errors)
+        if aware(reported.cutoff_at) and aware(value.evaluated_at) and reported.cutoff_at > value.evaluated_at:
+            errors.append("reported-problems cutoff must not follow evaluation")
+        _canonical_strings(reported.missing_fields, "reported_problems.missing_fields", errors, paths=True)
+        _canonical_strings(reported.warnings, "reported_problems.warnings", errors)
+        for ref in reported.evidence_refs if type(reported.evidence_refs) is tuple else ():
+            errors.extend(validate_artifact_ref(ref, "reported_problems.evidence_refs[]"))
+        if type(reported.evidence_refs) is not tuple:
+            errors.append("reported_problems.evidence_refs must be a tuple")
+        if reported.projection_ref is not None:
+            projection = reported.projection_ref
+            if type(projection) is not ReportedProblemsProjectionRef:
+                errors.append("reported projection ref must be ReportedProblemsProjectionRef")
+            else:
+                if type(boundary) is ActualSessionBoundary and projection.actual_session_ref != boundary.actual_session_ref:
+                    errors.append("reported projection must reference the exact actual session")
+                if projection.subject_ref != value.subject_ref:
+                    errors.append("reported projection ownership must match evaluation")
+        expected_reported = (StabilityResult.STABLE
+                             if reported.result is ReportedProblemsResult.NO_KNOWN_ISSUE
+                             else StabilityResult.DETERIORATED
+                             if reported.result is ReportedProblemsResult.ISSUE_REPORTED and reported.evidence_refs
+                             else StabilityResult.INSUFFICIENT_DATA)
+        if reported.stability_result is not expected_reported:
+            errors.append("reported-problems stability result contradicts its evidence")
+        if reported.result is ReportedProblemsResult.NO_KNOWN_ISSUE and reported.evidence_refs:
+            errors.append("no-known-issue forbids safety evidence")
+        if reported.stability_result is StabilityResult.STABLE and reported.missing_fields:
+            errors.append("stable reported problems cannot contain missing fields")
+        if reported.projection_ref is None and (
+                reported.result is not ReportedProblemsResult.INSUFFICIENT_DATA or
+                "reported_problems_projection" not in reported.missing_fields):
+            errors.append("missing projection ref requires explicit insufficient data")
+
+    required_missing = set(selection.missing_fields if type(selection) is FollowUpSelectionEvidence else ())
+    if type(reported) is ReportedProblemsEvaluation:
+        required_missing.update(reported.missing_fields)
+    if value.baseline_ref is None:
+        required_missing.update(("prescription_binding.baseline_assessment_ref",
+                                 "baseline_assessment"))
+    if type(boundary) is ActualSessionBoundary and boundary.session_end is None:
+        required_missing.add("actual_session_boundary.session_end")
+    if not required_missing.issubset(value.missing_fields):
+        errors.append("top-level missing fields must include dimension and selection missingness")
+
+    if value.performance_applicability is not PerformanceApplicability.NOT_APPLICABLE:
+        errors.append("performance must be NOT_APPLICABLE")
+    if type(value.recovery_result) is StabilityResult and type(reported) is ReportedProblemsEvaluation:
+        expected_overall = (StabilityResult.DETERIORATED
+                            if StabilityResult.DETERIORATED in
+                            (value.recovery_result, reported.stability_result)
+                            else StabilityResult.INSUFFICIENT_DATA
+                            if StabilityResult.INSUFFICIENT_DATA in
+                            (value.recovery_result, reported.stability_result)
+                            else StabilityResult.STABLE)
+        if value.overall is not expected_overall:
+            errors.append("stability overall contradicts its required dimensions")
+    return tuple(errors)

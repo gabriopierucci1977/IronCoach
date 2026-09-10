@@ -11,6 +11,7 @@ from backend.maintain_plan.general_stability_service import (
     recovery_candidate_set_ref, reported_problems_projection_ref,
 )
 from backend.maintain_plan.stability_models import *
+from backend.maintain_plan.stability_validators import validate_general_stability_evaluation
 
 T0 = datetime(2026, 1, 1, tzinfo=timezone.utc)
 ART = VersionedArtifactRef("test", "one", "1")
@@ -57,6 +58,14 @@ def test_contracts_are_frozen_and_tuple_inputs_are_defensively_frozen():
     assert value.evidence_refs == (ART,)
     with pytest.raises(FrozenInstanceError):
         value.assessment_id = "changed"
+
+
+def test_canonical_output_validator_rejects_semantic_overall_contradiction():
+    valid = evaluate_general_stability(make_input(), evaluation_id="evaluation")
+    assert validate_general_stability_evaluation(valid) == ()
+    invalid = replace(valid, recovery_result=StabilityResult.DETERIORATED)
+    assert "stability overall contradicts" in "; ".join(
+        validate_general_stability_evaluation(invalid))
 
 
 def test_all_three_pure_ref_projections_copy_exact_fields():
