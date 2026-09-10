@@ -11,6 +11,7 @@ from backend.maintain_plan.general_stability_service import (
     recovery_candidate_set_ref, reported_problems_projection_ref,
 )
 from backend.maintain_plan.stability_models import *
+from backend.maintain_plan.stability_validators import validate_general_stability_evaluation
 
 T0 = datetime(2026, 1, 1, tzinfo=timezone.utc)
 ART = VersionedArtifactRef("test", "one", "1")
@@ -57,6 +58,74 @@ def test_contracts_are_frozen_and_tuple_inputs_are_defensively_frozen():
     assert value.evidence_refs == (ART,)
     with pytest.raises(FrozenInstanceError):
         value.assessment_id = "changed"
+
+
+def test_canonical_output_validator_rejects_semantic_overall_contradiction():
+    valid = evaluate_general_stability(make_input(), evaluation_id="evaluation")
+    assert validate_general_stability_evaluation(valid) == ()
+    invalid = replace(valid, recovery_result=StabilityResult.DETERIORATED)
+    assert "stability overall contradicts" in "; ".join(
+        validate_general_stability_evaluation(invalid))
+
+
+def test_canonical_output_validator_accepts_missing_baseline_branch():
+    output = evaluate_general_stability(make_input(baseline=None),
+                                        evaluation_id="missing-baseline")
+    assert output.selection_evidence.records == ()
+    assert output.selection_evidence.candidate_set_ref.logical_candidates
+    assert validate_general_stability_evaluation(output) == ()
+
+
+def test_canonical_output_corpus_remains_valid():
+    scenarios = (
+        make_input(),
+        make_input(candidates=()),
+        make_input(candidates=(assessment("high", T0 + timedelta(hours=3),
+                                          RecoveryCategory.HIGH),)),
+        make_input(candidates=(assessment("a", T0 + timedelta(hours=3)),
+                               assessment("b", T0 + timedelta(hours=3)))),
+        make_input(candidates=(assessment("dup", T0 + timedelta(hours=3)),) * 2),
+        make_input(candidates=(assessment("incompatible", T0 + timedelta(hours=3),
+                                          analyzer=replace(ANALYZER, analyzer_version="2")),)),
+        make_input(baseline=None),
+        make_input(projection=False),
+    )
+    for index, scenario in enumerate(scenarios):
+        output = evaluate_general_stability(scenario, evaluation_id=f"corpus-{index}")
+        assert validate_general_stability_evaluation(output) == ()
+
+
+@pytest.mark.parametrize(("field", "invalid"), [
+    ("prescription_binding", None),
+    ("actual_session_boundary", "raw"),
+    ("candidate_set_ref", {}),
+    ("selection_evidence", ProjectionStatus.ACTIVE),
+    ("reported_problems", object()),
+    ("provenance_ref", ANALYZER),
+    ("baseline_ref", "raw"),
+    ("selected_follow_up_ref", {}),
+])
+def test_output_validator_never_crashes_on_wrong_nested_objects(field, invalid):
+    output = evaluate_general_stability(make_input(), evaluation_id="valid")
+    errors = validate_general_stability_evaluation(replace(output, **{field: invalid}))
+    assert errors
+
+
+@pytest.mark.parametrize(("field", "invalid"), [
+    ("compatibility", "raw"),
+    ("candidate_ref", None),
+    ("temporal_eligibility", {}),
+    ("freshness", ProjectionStatus.ACTIVE),
+    ("reasons", object()),
+    ("missing_fields", None),
+])
+def test_output_validator_never_crashes_on_wrong_selection_record_objects(field, invalid):
+    output = evaluate_general_stability(make_input(), evaluation_id="valid")
+    record = replace(output.selection_evidence.records[0], **{field: invalid})
+    selection = replace(output.selection_evidence, records=(record,))
+    errors = validate_general_stability_evaluation(replace(output,
+                                                            selection_evidence=selection))
+    assert errors
 
 
 def test_all_three_pure_ref_projections_copy_exact_fields():

@@ -7,7 +7,9 @@ from dataclasses import replace
 from datetime import timezone
 
 from .stability_models import *
-from .stability_validators import validate_assessment_ref, validate_general_stability_input
+from .stability_validators import (
+    _derive_follow_up_selection, validate_assessment_ref, validate_general_stability_input,
+)
 
 
 def _ref_key(ref: VersionedArtifactRef):
@@ -117,7 +119,7 @@ def _select(value: GeneralStabilityInput, baseline_ref: RecoveryAssessmentRef):
     logical = _logical_candidates(value.candidate_set)
     session_end = value.actual_session_boundary.session_end
     next_at = value.next_decision_boundary.decision_at if value.next_decision_boundary else None
-    drafts, eligible = [], []
+    drafts = []
     for ref, assessment, count in logical:
         compatibility = evaluate_compatibility(baseline_ref, ref)
         reasons = []
@@ -152,40 +154,15 @@ def _select(value: GeneralStabilityInput, baseline_ref: RecoveryAssessmentRef):
                                 CandidateDispositionReason.ASSESSED_AT_OR_AFTER_NEXT_DECISION}
             if any(reason in temporal_reasons for reason in reasons):
                 temporal, freshness = TemporalEligibility.EXCLUDED, Freshness.OUT_OF_WINDOW
-        can_select = (ref.subject_ref == value.candidate_set.subject_ref and
-                      compatibility.status is CompatibilityStatus.COMPATIBLE and
-                      temporal is TemporalEligibility.ELIGIBLE)
-        if can_select:
-            eligible.append(ref)
-        drafts.append([ref, count, compatibility, temporal, freshness, reasons, missing, can_select])
-    first = min((ref.observed_at.astimezone(timezone.utc) for ref in eligible), default=None)
-    first_refs = [ref for ref in eligible if ref.observed_at.astimezone(timezone.utc) == first]
-    ambiguous = len(first_refs) > 1
-    selected = None if ambiguous or not first_refs else first_refs[0]
+        drafts.append([ref, count, compatibility, temporal, freshness, reasons, missing])
     records = []
-    for ref, count, compatibility, temporal, freshness, reasons, missing, can_select in drafts:
-        if can_select and ambiguous and ref in first_refs:
-            disposition = CandidateDisposition.ELIGIBLE_NOT_SELECTED
-            reasons.append(CandidateDispositionReason.FIRST_TIMESTAMP_AMBIGUITY)
-        elif ref == selected:
-            disposition = CandidateDisposition.SELECTED
-            reasons.append(CandidateDispositionReason.SELECTED_EARLIEST)
-        elif can_select:
-            disposition = CandidateDisposition.ELIGIBLE_NOT_SELECTED
-            reasons.append(CandidateDispositionReason.LATER_THAN_SELECTED)
-        else:
-            disposition = CandidateDisposition.EXCLUDED
+    for ref, count, compatibility, temporal, freshness, reasons, missing in drafts:
         records.append(CandidateSelectionRecord(
-            ref, disposition, tuple(sorted(set(reasons), key=lambda x: x.value)), compatibility,
+            ref, CandidateDisposition.EXCLUDED,
+            tuple(sorted(set(reasons), key=lambda x: x.value)), compatibility,
             temporal, freshness, count, tuple(sorted(set(missing))), ()))
-    status = (FollowUpSelectionStatus.AMBIGUOUS if ambiguous else
-              FollowUpSelectionStatus.SELECTED if selected else
-              FollowUpSelectionStatus.NO_ELIGIBLE_CANDIDATE)
-    missing = {path for record in records for path in record.missing_fields}
-    if not logical:
-        missing.add("candidate_set.candidates")
-    return FollowUpSelectionEvidence(recovery_candidate_set_ref(value.candidate_set), tuple(records),
-                                     selected, status, tuple(sorted(missing)), ())
+    return _derive_follow_up_selection(recovery_candidate_set_ref(value.candidate_set),
+                                      tuple(records))
 
 
 def _reported(value: GeneralStabilityInput) -> ReportedProblemsEvaluation:

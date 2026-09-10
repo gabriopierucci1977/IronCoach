@@ -65,7 +65,8 @@ def evaluate_source_conflict_impact(session: ActualSession, mapping: Prescriptio
         provenance or {}, evaluated_at, (), ())
 
 
-def _precedence(statuses):
+def aggregate_adherence_status(statuses):
+    """Apply the canonical required-dimension adherence precedence."""
     for status in (AdherenceStatus.INSUFFICIENT_DATA, AdherenceStatus.NOT_MET,
                    AdherenceStatus.PARTIALLY_MET, AdherenceStatus.MET):
         if status in statuses:
@@ -474,7 +475,7 @@ def evaluate(snapshot: PrescriptionSnapshot, session: ActualSession, mapping: Pr
             if name == "intensity" and AdherenceStatus.INSUFFICIENT_DATA not in statuses:
                 dirs={r.intensity.direction for r in applicable_results}
                 direction = Direction.UNDETERMINED if Direction.UNDETERMINED in dirs else Direction.MIXED if Direction.MIXED in dirs or {Direction.LOWER,Direction.HIGHER}<=dirs else Direction.HIGHER if Direction.HIGHER in dirs else Direction.LOWER if Direction.LOWER in dirs else Direction.IN_LINE
-            aggregates[pos] = DimensionAggregate(f"{evaluation_id}:aggregate:{name}", _precedence(statuses), tuple(r.component_result_id for r in applicable_results), AGGREGATION, direction)
+            aggregates[pos] = DimensionAggregate(f"{evaluation_id}:aggregate:{name}", aggregate_adherence_status(statuses), tuple(r.component_result_id for r in applicable_results), AGGREGATION, direction)
         component_doses = [r.dose for r in applicable_results]
         if any(d.status is DoseStatus.INSUFFICIENT_DATA for d in component_doses):
             aggregate_dose = DoseEvaluation(f"{evaluation_id}:dose:aggregate", DoseStatus.INSUFFICIENT_DATA,
