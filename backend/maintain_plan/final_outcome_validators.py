@@ -54,6 +54,10 @@ def _matches(value: object, annotation: object, path: str, errors: list[str]) ->
             for index, item in enumerate(value):
                 _matches(item, Any, f"{path}[{index}]", errors)
             return
+        if type(value) is frozenset:
+            for item in value:
+                _matches(item, Any, f"{path}{{item}}", errors)
+            return
         if type(value) is MappingProxyType:
             for key, item in value.items():
                 if type(key) is not str:

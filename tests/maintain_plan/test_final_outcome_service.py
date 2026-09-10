@@ -199,6 +199,12 @@ def test_diagnostics_are_propagated_deduplicated_and_sorted():
     assert result.warnings == ("a", "b", "c")
 
 
+def test_deeply_frozen_sets_are_valid_generic_payloads():
+    execution = replace(RUN_EXECUTION, provenance={"labels": {"steady"}})
+    assert execution.provenance["labels"] == frozenset({"steady"})
+    assert final(execution=execution).outcome is MaintainPlanOutcome.POSITIVE
+
+
 def test_artifact_is_deeply_immutable_and_deterministic():
     first = final()
     second = final()
