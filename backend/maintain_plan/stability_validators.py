@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from dataclasses import replace
+from datetime import datetime, timezone
 
 from .stability_models import *
 
@@ -28,6 +29,54 @@ MISSING_PATHS = frozenset({
     "reported_problems_projection.reliable_canonical_safety_signal",
     "reported_problems_projection.safety_signal_evidence_refs",
 })
+
+_SELECTION_REASONS = frozenset({
+    CandidateDispositionReason.SELECTED_EARLIEST,
+    CandidateDispositionReason.LATER_THAN_SELECTED,
+    CandidateDispositionReason.FIRST_TIMESTAMP_AMBIGUITY,
+})
+
+
+def derive_follow_up_selection(
+    candidate_set_ref: RecoveryAssessmentCandidateSetRef,
+    records: tuple[CandidateSelectionRecord, ...],
+) -> FollowUpSelectionEvidence:
+    """Derive disposition, reasons and status from immutable candidate facts."""
+    selectable = tuple(record for record in records
+                       if record.compatibility.status is CompatibilityStatus.COMPATIBLE
+                       and record.temporal_eligibility is TemporalEligibility.ELIGIBLE
+                       and record.freshness is Freshness.IN_WINDOW
+                       and record.candidate_ref.subject_ref == candidate_set_ref.subject_ref)
+    earliest = min((record.candidate_ref.observed_at.astimezone(timezone.utc)
+                    for record in selectable), default=None)
+    earliest_records = tuple(record for record in selectable
+                             if record.candidate_ref.observed_at.astimezone(timezone.utc) == earliest)
+    ambiguous = len(earliest_records) > 1
+    selected_ref = (earliest_records[0].candidate_ref
+                    if len(earliest_records) == 1 else None)
+    derived = []
+    for record in records:
+        reasons = [reason for reason in record.reasons if reason not in _SELECTION_REASONS]
+        if record in earliest_records and ambiguous:
+            disposition = CandidateDisposition.ELIGIBLE_NOT_SELECTED
+            reasons.append(CandidateDispositionReason.FIRST_TIMESTAMP_AMBIGUITY)
+        elif record.candidate_ref == selected_ref:
+            disposition = CandidateDisposition.SELECTED
+            reasons.append(CandidateDispositionReason.SELECTED_EARLIEST)
+        elif record in selectable:
+            disposition = CandidateDisposition.ELIGIBLE_NOT_SELECTED
+            reasons.append(CandidateDispositionReason.LATER_THAN_SELECTED)
+        else:
+            disposition = CandidateDisposition.EXCLUDED
+        derived.append(replace(record, disposition=disposition,
+                               reasons=tuple(sorted(set(reasons), key=lambda item: item.value))))
+    status = (FollowUpSelectionStatus.AMBIGUOUS if ambiguous else
+              FollowUpSelectionStatus.SELECTED if selected_ref is not None else
+              FollowUpSelectionStatus.NO_ELIGIBLE_CANDIDATE)
+    missing = tuple(sorted({path for record in derived for path in record.missing_fields} |
+                           ({"candidate_set.candidates"} if not derived else set())))
+    return FollowUpSelectionEvidence(candidate_set_ref, tuple(derived), selected_ref,
+                                     status, missing, ())
 
 
 def aware(value: object) -> bool:
@@ -395,9 +444,10 @@ def validate_general_stability_evaluation(
     errors.extend(validate_provenance(value.provenance_ref, "evaluation.provenance_ref"))
     _canonical_strings(value.missing_fields, "evaluation.missing_fields", errors, paths=True)
     _canonical_strings(value.warnings, "evaluation.warnings", errors)
-    if tuple(sorted(set(value.missing_fields))) != value.missing_fields:
+    if (type(value.missing_fields) is tuple and
+            tuple(sorted(set(value.missing_fields))) != value.missing_fields):
         errors.append("evaluation.missing_fields must be unique and canonically ordered")
-    if tuple(sorted(set(value.warnings))) != value.warnings:
+    if type(value.warnings) is tuple and tuple(sorted(set(value.warnings))) != value.warnings:
         errors.append("evaluation.warnings must be unique and canonically ordered")
 
     binding = value.prescription_binding
@@ -430,6 +480,7 @@ def validate_general_stability_evaluation(
             errors.append("actual session ownership must match evaluation")
         if boundary.provenance_ref is not None:
             errors.extend(validate_provenance(boundary.provenance_ref, "boundary.provenance_ref"))
+    valid_occurrences = []
     if type(candidate_set) is not RecoveryAssessmentCandidateSetRef:
         errors.append("evaluation.candidate_set_ref must be a RecoveryAssessmentCandidateSetRef")
     else:
@@ -453,8 +504,14 @@ def validate_general_stability_evaluation(
                     errors.extend(validate_assessment_ref(occurrence.candidate_ref, "logical candidate ref"))
                     if type(occurrence.occurrence_count) is not int or occurrence.occurrence_count < 1:
                         errors.append("logical candidate occurrence_count must be positive")
+                    elif type(occurrence.candidate_ref) is RecoveryAssessmentRef:
+                        valid_occurrences.append(occurrence)
 
     selected_records: list[CandidateSelectionRecord] = []
+    valid_records: list[CandidateSelectionRecord] = []
+    baseline_absent = (value.baseline_ref is None and
+                       type(binding) is PrescriptionBaselineBinding and
+                       binding.baseline_assessment_ref is None)
     if type(selection) is not FollowUpSelectionEvidence:
         errors.append("selection_evidence must be FollowUpSelectionEvidence")
     else:
@@ -464,21 +521,23 @@ def validate_general_stability_evaluation(
             errors.append("selection selected ref must equal top-level selected ref")
         _canonical_strings(selection.missing_fields, "selection.missing_fields", errors, paths=True)
         _canonical_strings(selection.warnings, "selection.warnings", errors)
-        occurrences = ({item.candidate_ref: item.occurrence_count
-                        for item in candidate_set.logical_candidates}
-                       if type(candidate_set) is RecoveryAssessmentCandidateSetRef and
-                       type(candidate_set.logical_candidates) is tuple else {})
+        occurrences = {item.candidate_ref: item.occurrence_count for item in valid_occurrences}
         records = selection.records if type(selection.records) is tuple else ()
         if type(selection.records) is not tuple:
             errors.append("selection.records must be a tuple")
-        elif len(records) != len(occurrences) or {record.candidate_ref for record in records
-                                                  if type(record) is CandidateSelectionRecord} != set(occurrences):
+        elif not baseline_absent and (len(records) != len(occurrences) or {
+                record.candidate_ref for record in records
+                if type(record) is CandidateSelectionRecord and
+                type(record.candidate_ref) is RecoveryAssessmentRef} != set(occurrences)):
             errors.append("selection records must exactly cover logical candidates")
         for record in records:
             if type(record) is not CandidateSelectionRecord:
                 errors.append("selection record must be CandidateSelectionRecord")
                 continue
             errors.extend(validate_assessment_ref(record.candidate_ref, "selection candidate ref"))
+            _canonical_strings(record.missing_fields, "selection record missing_fields",
+                               errors, paths=True)
+            _canonical_strings(record.warnings, "selection record warnings", errors)
             errors.extend(_validate_evaluation_compatibility(record.compatibility,
                                                               "selection compatibility"))
             if type(record.compatibility) is RecoveryAssessmentCompatibility:
@@ -486,22 +545,56 @@ def validate_general_stability_evaluation(
                     errors.append("selection compatibility baseline ref must match top-level baseline")
                 if record.compatibility.follow_up_ref != record.candidate_ref:
                     errors.append("selection compatibility follow-up ref must match candidate")
-            if record.occurrence_count != occurrences.get(record.candidate_ref):
+            if (type(record.candidate_ref) is RecoveryAssessmentRef and
+                    record.occurrence_count != occurrences.get(record.candidate_ref)):
                 errors.append("selection occurrence count must match candidate set")
-            expected_record_missing = set(record.compatibility.missing_fields)
-            if CandidateDispositionReason.CATEGORY_UNAVAILABLE in record.reasons:
+            expected_record_missing = (set(record.compatibility.missing_fields)
+                                       if type(record.compatibility) is RecoveryAssessmentCompatibility
+                                       else set())
+            reasons_valid = type(record.reasons) is tuple and all(
+                type(reason) is CandidateDispositionReason for reason in record.reasons)
+            if not reasons_valid:
+                errors.append("selection reasons must be typed")
+            if reasons_valid and CandidateDispositionReason.CATEGORY_UNAVAILABLE in record.reasons:
                 expected_record_missing.add("candidate_set.candidates[].category")
-            if set(record.missing_fields) != expected_record_missing:
+            if (type(record.missing_fields) is tuple and
+                    set(record.missing_fields) != expected_record_missing):
                 errors.append("selection record missing fields contradict its evidence")
-            if record.temporal_eligibility is TemporalEligibility.ELIGIBLE and record.freshness is not Freshness.IN_WINDOW:
+            eligibility_valid = type(record.temporal_eligibility) is TemporalEligibility
+            freshness_valid = type(record.freshness) is Freshness
+            if not eligibility_valid:
+                errors.append("selection temporal eligibility is invalid")
+            if not freshness_valid:
+                errors.append("selection freshness is invalid")
+            if (eligibility_valid and freshness_valid and
+                    record.temporal_eligibility is TemporalEligibility.ELIGIBLE and
+                    record.freshness is not Freshness.IN_WINDOW):
                 errors.append("eligible candidate must be in-window")
-            if record.temporal_eligibility is TemporalEligibility.EXCLUDED and record.freshness is not Freshness.OUT_OF_WINDOW:
+            if (eligibility_valid and freshness_valid and
+                    record.temporal_eligibility is TemporalEligibility.EXCLUDED and
+                    record.freshness is not Freshness.OUT_OF_WINDOW):
                 errors.append("excluded candidate must be out-of-window")
-            if record.temporal_eligibility is TemporalEligibility.UNDETERMINED and record.freshness is not Freshness.UNDETERMINED:
+            if (eligibility_valid and freshness_valid and
+                    record.temporal_eligibility is TemporalEligibility.UNDETERMINED and
+                    record.freshness is not Freshness.UNDETERMINED):
                 errors.append("undetermined temporal eligibility requires undetermined freshness")
+            record_structurally_valid = (
+                type(record.candidate_ref) is RecoveryAssessmentRef and
+                type(record.compatibility) is RecoveryAssessmentCompatibility and
+                type(record.temporal_eligibility) is TemporalEligibility and
+                type(record.freshness) is Freshness and
+                type(record.disposition) is CandidateDisposition and reasons_valid)
+            record_structurally_valid = (record_structurally_valid and
+                                         type(record.missing_fields) is tuple and
+                                         type(record.warnings) is tuple and
+                                         type(record.occurrence_count) is int and
+                                         record.occurrence_count >= 1)
+            if record_structurally_valid:
+                valid_records.append(record)
             if record.disposition is CandidateDisposition.SELECTED:
-                selected_records.append(record)
-                if CandidateDispositionReason.SELECTED_EARLIEST not in record.reasons:
+                if record_structurally_valid:
+                    selected_records.append(record)
+                if reasons_valid and CandidateDispositionReason.SELECTED_EARLIEST not in record.reasons:
                     errors.append("selected candidate requires SELECTED_EARLIEST reason")
             elif (record.disposition is CandidateDisposition.EXCLUDED and
                   record.temporal_eligibility is TemporalEligibility.ELIGIBLE and
@@ -509,27 +602,20 @@ def validate_general_stability_evaluation(
                   record.compatibility.status is CompatibilityStatus.COMPATIBLE and
                   record.candidate_ref.subject_ref == value.subject_ref):
                 errors.append("eligible compatible owned candidate cannot be excluded")
-        selected = value.selected_follow_up_ref
-        if selection.status is FollowUpSelectionStatus.SELECTED:
-            if selected is None or len(selected_records) != 1 or selected_records[0].candidate_ref != selected:
-                errors.append("selected status requires exactly the repeated selected candidate")
-        elif selection.status in (FollowUpSelectionStatus.NO_ELIGIBLE_CANDIDATE,
-                                  FollowUpSelectionStatus.AMBIGUOUS):
-            if selected is not None or selected_records:
-                errors.append("non-selected status forbids a selected candidate")
-            if (selection.status is FollowUpSelectionStatus.AMBIGUOUS and
-                    sum(CandidateDispositionReason.FIRST_TIMESTAMP_AMBIGUITY in record.reasons
-                        for record in records if type(record) is CandidateSelectionRecord) < 2):
-                errors.append("ambiguous status requires at least two first-timestamp candidates")
-        else:
-            errors.append("selection status is invalid")
-        expected_selection_missing = {path for record in records
-                                      if type(record) is CandidateSelectionRecord
-                                      for path in record.missing_fields}
-        if not occurrences:
-            expected_selection_missing.add("candidate_set.candidates")
-        if set(selection.missing_fields) != expected_selection_missing:
-            errors.append("selection missing fields must equal record missingness")
+        if baseline_absent:
+            expected_missing = ("baseline_assessment",
+                                "prescription_binding.baseline_assessment_ref")
+            if (records or selection.selected_follow_up_ref is not None or
+                    selection.status is not FollowUpSelectionStatus.NO_ELIGIBLE_CANDIDATE or
+                    selection.missing_fields != expected_missing):
+                errors.append("baseline-absent selection branch is internally inconsistent")
+        elif (len(valid_records) == len(records) and
+              type(candidate_set) is RecoveryAssessmentCandidateSetRef and
+              type(candidate_set.logical_candidates) is tuple and
+              len(valid_occurrences) == len(candidate_set.logical_candidates)):
+            expected_selection = derive_follow_up_selection(candidate_set, tuple(valid_records))
+            if selection != expected_selection:
+                errors.append("selection evidence contradicts deterministic selection")
 
     selected_record = selected_records[0] if len(selected_records) == 1 else None
     if value.compatibility is not None:
@@ -540,10 +626,13 @@ def validate_general_stability_evaluation(
     else:
         errors.extend(validate_assessment_ref(value.selected_follow_up_ref,
                                               "selected_follow_up_ref"))
-        if value.selected_follow_up_ref.subject_ref != value.subject_ref:
+        if (type(value.selected_follow_up_ref) is RecoveryAssessmentRef and
+                value.selected_follow_up_ref.subject_ref != value.subject_ref):
             errors.append("selected follow-up ownership must match evaluation")
         if value.compatibility is None:
             errors.append("selected follow-up requires compatibility")
+        elif type(value.compatibility) is not RecoveryAssessmentCompatibility:
+            errors.append("selected follow-up requires typed compatibility")
         elif (value.compatibility.baseline_ref != value.baseline_ref or
               value.compatibility.follow_up_ref != value.selected_follow_up_ref):
             errors.append("top-level compatibility refs must match baseline and selected follow-up")
@@ -624,7 +713,8 @@ def validate_general_stability_evaluation(
                                  "baseline_assessment"))
     if type(boundary) is ActualSessionBoundary and boundary.session_end is None:
         required_missing.add("actual_session_boundary.session_end")
-    if not required_missing.issubset(value.missing_fields):
+    if (type(value.missing_fields) is tuple and
+            not required_missing.issubset(value.missing_fields)):
         errors.append("top-level missing fields must include dimension and selection missingness")
 
     if value.performance_applicability is not PerformanceApplicability.NOT_APPLICABLE:

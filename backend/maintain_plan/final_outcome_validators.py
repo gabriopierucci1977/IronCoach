@@ -10,20 +10,35 @@ from types import MappingProxyType, UnionType
 from typing import Any, Mapping, Union, get_args, get_origin, get_type_hints
 
 from .models import (
-    AdherenceStatus, CoverageStatus, DimensionAggregate, EvaluationCoverage,
-    ExecutionEvaluation, OverallStatus, PolicyRef,
+    AdherenceStatus, CoverageStatus, DimensionAggregate, Direction, DoseStatus,
+    EvaluationApplicability, EvaluationCoverage, ExecutionEvaluation, OverallStatus,
+    PolicyRef, Requiredness, SeverityBand, SupportStatus,
 )
 from .stability_models import (
     ActualSessionBoundary, GeneralStabilityEvaluation, PrescriptionBaselineBinding,
     ProvenanceRef, StabilityResult, VersionedArtifactRef,
 )
 from .stability_validators import validate_general_stability_evaluation
+from .execution_evaluation_service import aggregate_adherence_status
 
 
 EXECUTION_POLICY = PolicyRef("maintain-plan-execution-aggregation", "1.0.0-draft")
 COVERAGE_POLICY = PolicyRef("maintain-plan-evaluator-capability", "1.0.0-draft")
 AGGREGATE_POLICY = PolicyRef("maintain-plan-component-aggregation", "1.0.0-draft")
 DOSE_POLICY = PolicyRef("maintain-plan-dose-matrix", "1.0.0-draft")
+NULL_POLICY = PolicyRef(None, None)
+
+
+def _aggregate_direction(directions: set[Direction | None]) -> Direction:
+    if Direction.UNDETERMINED in directions:
+        return Direction.UNDETERMINED
+    if Direction.MIXED in directions or {Direction.LOWER, Direction.HIGHER} <= directions:
+        return Direction.MIXED
+    if Direction.HIGHER in directions:
+        return Direction.HIGHER
+    if Direction.LOWER in directions:
+        return Direction.LOWER
+    return Direction.IN_LINE
 
 
 def _aware(value: object) -> bool:
@@ -133,26 +148,80 @@ def _validate_execution_evaluation(value: ExecutionEvaluation) -> tuple[str, ...
                 value.dose_aggregate is None or type(value.overall) is not OverallStatus):
             errors.append("full execution coverage requires all aggregates, dose, and overall")
         else:
-            for aggregate in aggregates:
+            required = tuple(component for component in value.component_results
+                             if component.requiredness is Requiredness.REQUIRED)
+            if not required:
+                errors.append("full execution coverage requires applicable required components")
+            expected_refs = tuple(component.component_result_id for component in required)
+            for name, aggregate in zip(("identity", "quantity", "intensity", "structure"),
+                                       aggregates):
                 if aggregate.policy != AGGREGATE_POLICY:
                     errors.append("execution aggregate policy and version must be exact")
-            precedence = (
-                (AdherenceStatus.INSUFFICIENT_DATA, OverallStatus.INSUFFICIENT_DATA),
-                (AdherenceStatus.NOT_MET, OverallStatus.DIFFERENT),
-                (AdherenceStatus.PARTIALLY_MET, OverallStatus.PARTIALLY_IN_LINE),
-                (AdherenceStatus.MET, OverallStatus.IN_LINE),
-            )
-            expected = next(overall for status, overall in precedence
-                            if any(item.status is status for item in aggregates))
-            if value.overall is not expected:
-                errors.append("execution overall contradicts its dimensional aggregates")
-            component_ids = {item.component_result_id for item in value.component_results}
-            for aggregate in aggregates:
-                if (len(aggregate.component_result_refs) != len(set(aggregate.component_result_refs)) or
-                        not set(aggregate.component_result_refs).issubset(component_ids)):
-                    errors.append("execution aggregate contains duplicate or foreign component refs")
-            if value.dose_aggregate.policy != DOSE_POLICY:
-                errors.append("execution dose policy and version must be exact")
+                if aggregate.component_result_refs != expected_refs:
+                    errors.append(f"execution {name} aggregate refs must exactly match required components")
+                dimension_results = tuple(getattr(component, name) for component in required)
+                if any(component.evaluation_applicability is not EvaluationApplicability.APPLICABLE or
+                       component.support_status is not SupportStatus.SUPPORTED or result is None
+                       for component, result in zip(required, dimension_results)):
+                    errors.append(f"execution {name} aggregate requires applicable component results")
+                else:
+                    statuses = [result.status for result in dimension_results]
+                    if name == "identity" and value.session_composition_result is not None:
+                        statuses.append(value.session_composition_result.status)
+                    expected_status = aggregate_adherence_status(statuses)
+                    if aggregate.status is not expected_status:
+                        errors.append(f"execution {name} aggregate status contradicts components")
+            expected_overall = {
+                AdherenceStatus.INSUFFICIENT_DATA: OverallStatus.INSUFFICIENT_DATA,
+                AdherenceStatus.NOT_MET: OverallStatus.DIFFERENT,
+                AdherenceStatus.PARTIALLY_MET: OverallStatus.PARTIALLY_IN_LINE,
+                AdherenceStatus.MET: OverallStatus.IN_LINE,
+            }[aggregate_adherence_status([item.status for item in aggregates])]
+            if value.overall is not expected_overall:
+                errors.append("execution overall contradicts its verified dimensional aggregates")
+            component_doses = tuple(component.dose for component in required)
+            if any(dose is None for dose in component_doses):
+                errors.append("execution aggregate dose requires every component dose")
+            else:
+                for component, dose in zip(required, component_doses):
+                    quantity, intensity = component.quantity, component.intensity
+                    if (dose.quantity_result_ref != quantity.result_id or
+                            dose.intensity_result_ref != intensity.result_id):
+                        errors.append("execution component dose refs must match its dimensions")
+                    insufficient = (quantity.status is AdherenceStatus.INSUFFICIENT_DATA or
+                                    intensity.status is AdherenceStatus.INSUFFICIENT_DATA or
+                                    quantity.band is None or intensity.band is None)
+                    if insufficient:
+                        if (dose.status is not DoseStatus.INSUFFICIENT_DATA or
+                                dose.direction is not None or dose.severity_band is not None or
+                                dose.policy != NULL_POLICY):
+                            errors.append("execution component dose contradicts its dimensions")
+                    else:
+                        expected_direction = _aggregate_direction(
+                            {quantity.direction, intensity.direction})
+                        expected_severity = max((quantity.band, intensity.band),
+                                                key=lambda item: list(SeverityBand).index(item))
+                        if (dose.status is not DoseStatus.EVALUATED or
+                                dose.direction is not expected_direction or
+                                dose.severity_band is not expected_severity or
+                                dose.policy != DOSE_POLICY):
+                            errors.append("execution component dose contradicts its dimensions")
+            if (all(dose is not None for dose in component_doses) and
+                    any(dose.status is DoseStatus.INSUFFICIENT_DATA for dose in component_doses)):
+                if (value.dose_aggregate.status is not DoseStatus.INSUFFICIENT_DATA or
+                        value.dose_aggregate.direction is not None or
+                        value.dose_aggregate.severity_band is not None or
+                        value.dose_aggregate.policy != NULL_POLICY):
+                    errors.append("execution insufficient aggregate dose contradicts component doses")
+            elif all(dose is not None for dose in component_doses):
+                expected_direction = _aggregate_direction({dose.direction for dose in component_doses})
+                expected_severity = max((dose.severity_band for dose in component_doses),
+                                        key=lambda item: list(SeverityBand).index(item))
+                if (value.dose_aggregate.status is not DoseStatus.EVALUATED or
+                        value.dose_aggregate.direction is not expected_direction or
+                        value.dose_aggregate.severity_band is not expected_severity or
+                        value.dose_aggregate.policy != DOSE_POLICY):
+                    errors.append("execution aggregate dose contradicts component doses")
             if (value.dose_aggregate.quantity_result_ref != value.quantity_aggregate.result_id or
                     value.dose_aggregate.intensity_result_ref != value.intensity_aggregate.result_id):
                 errors.append("execution dose refs must match quantity and intensity aggregates")

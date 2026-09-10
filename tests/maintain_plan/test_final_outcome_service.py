@@ -10,12 +10,22 @@ from backend.maintain_plan.final_outcome_models import (
     FINAL_OUTCOME_EVALUATION_VERSION, FINAL_OUTCOME_POLICY, MaintainPlanOutcome,
 )
 from backend.maintain_plan.final_outcome_service import evaluate_final_outcome
+from backend.maintain_plan.final_outcome_validators import validate_final_outcome_inputs
+from backend.maintain_plan.execution_evaluation_service import evaluate as evaluate_execution
 from backend.maintain_plan.general_stability_service import (
     evaluate_general_stability, recovery_assessment_ref,
 )
-from backend.maintain_plan.models import AdherenceStatus, CoverageStatus, OverallStatus, PolicyRef
+from backend.maintain_plan.models import (
+    AdherenceStatus, CoverageStatus, Direction, EvaluationApplicability, OverallStatus,
+    PolicyRef, SeverityBand,
+)
 from backend.maintain_plan.stability_models import *
-from tests.maintain_plan.fixtures import RUN_EXECUTION
+from tests.maintain_plan.fixtures import (
+    BRICK_EXECUTION as RAW_BRICK_EXECUTION,
+    RUN_EXECUTION as RAW_RUN_EXECUTION,
+    OPTIONAL_PLANNED_ONLY, STRENGTH_EXECUTION,
+    RUN_MAPPING, RUN_PRESCRIPTION, RUN_SESSION, STRENGTH_REQUIRED, execution,
+)
 
 T0 = datetime(2026, 1, 1, tzinfo=timezone.utc)
 SNAPSHOT = VersionedArtifactRef("prescription-snapshot", "snapshot-1", "1")
@@ -25,17 +35,37 @@ PROV = ProvenanceRef(ART, "synthetic", "final-fixture", "1")
 ANALYZER = AnalyzerRef("canonical", "1", "1")
 
 
+def dose_consistent_fixture(value):
+    components = []
+    for component in value.component_results:
+        if component.dose is None:
+            components.append(component)
+        else:
+            components.append(replace(
+                component,
+                quantity=replace(component.quantity, direction=Direction.IN_LINE,
+                                 band=SeverityBand.MAIN),
+                intensity=replace(component.intensity, direction=Direction.IN_LINE,
+                                  band=SeverityBand.MAIN),
+            ))
+    return replace(value, component_results=tuple(components))
+
+
+RUN_EXECUTION = dose_consistent_fixture(RAW_RUN_EXECUTION)
+BRICK_EXECUTION = dose_consistent_fixture(RAW_BRICK_EXECUTION)
+
+
 def assessment(name, observed, category=RecoveryCategory.LOW):
     return RecoveryAssessment(name, STABILITY_CONTRACT_VERSION, ANALYZER, "athlete",
         observed, observed + timedelta(minutes=1), category, CategoryMissingness.NOT_MISSING,
         (ART,), PROV)
 
 
-def stability(category=RecoveryCategory.LOW):
-    baseline = assessment("baseline", T0)
+def stability(category=RecoveryCategory.LOW, *, baseline_present=True):
+    baseline = assessment("baseline", T0) if baseline_present else None
     evaluated_at = T0 + timedelta(hours=8)
     binding = PrescriptionBaselineBinding(SNAPSHOT, ART, "athlete", T0 + timedelta(hours=1),
-        recovery_assessment_ref(baseline), ART, PROV)
+        recovery_assessment_ref(baseline) if baseline else None, ART, PROV)
     boundary = ActualSessionBoundary(SESSION, "athlete", T0 + timedelta(hours=2), PROV)
     candidates = RecoveryAssessmentCandidateSet(STABILITY_CONTRACT_VERSION, SESSION, "athlete",
         evaluated_at, evaluated_at, (assessment("follow", T0 + timedelta(hours=3), category),), PROV)
@@ -66,8 +96,11 @@ def execution_with_overall(overall):
         OverallStatus.DIFFERENT: AdherenceStatus.NOT_MET,
         OverallStatus.INSUFFICIENT_DATA: AdherenceStatus.INSUFFICIENT_DATA,
     }[overall]
-    return replace(RUN_EXECUTION, identity_aggregate=replace(
-        RUN_EXECUTION.identity_aggregate, status=status), overall=overall)
+    component = RUN_EXECUTION.component_results[0]
+    component = replace(component, identity=replace(component.identity, status=status))
+    return replace(RUN_EXECUTION, component_results=(component,),
+                   identity_aggregate=replace(RUN_EXECUTION.identity_aggregate,
+                                              status=status), overall=overall)
 
 
 def insufficient_stability():
@@ -115,6 +148,12 @@ def test_non_full_coverage_prevents_a_definitive_outcome(coverage):
     result = final(execution, stability(RecoveryCategory.HIGH))
     assert result.outcome is None
     assert result.execution_overall is None
+
+
+def test_canonical_missing_baseline_reaches_insufficient_final_outcome():
+    missing = stability(baseline_present=False)
+    assert missing.selection_evidence.records == ()
+    assert final(stability_value=missing).outcome is MaintainPlanOutcome.INSUFFICIENT_DATA
 
 
 def test_qualified_refs_and_cross_input_bindings_must_agree():
@@ -271,3 +310,44 @@ def test_rejects_foreign_execution_policies_and_internal_contradictions():
     for invalid in cases:
         with pytest.raises(ValueError):
             final(invalid)
+
+
+def test_execution_aggregates_are_derived_from_component_results():
+    altered = execution_with_overall(OverallStatus.DIFFERENT)
+    canonical_component = RUN_EXECUTION.component_results[0]
+    altered = replace(altered, component_results=(canonical_component,))
+    with pytest.raises(ValueError, match="aggregate status contradicts components"):
+        final(altered)
+
+
+@pytest.mark.parametrize("refs", [(), ("result-run", "result-run"),
+                                   ("foreign",)])
+def test_execution_aggregate_rejects_empty_duplicate_or_foreign_refs(refs):
+    invalid = replace(RUN_EXECUTION, identity_aggregate=replace(
+        RUN_EXECUTION.identity_aggregate, component_result_refs=refs))
+    with pytest.raises(ValueError, match="refs must exactly match"):
+        final(invalid)
+
+
+def test_execution_aggregate_rejects_incomplete_refs_and_non_applicable_components():
+    incomplete = replace(BRICK_EXECUTION, identity_aggregate=replace(
+        BRICK_EXECUTION.identity_aggregate,
+        component_result_refs=BRICK_EXECUTION.identity_aggregate.component_result_refs[:1]))
+    non_applicable = replace(RUN_EXECUTION, component_results=(replace(
+        RUN_EXECUTION.component_results[0],
+        evaluation_applicability=EvaluationApplicability.NOT_APPLICABLE),))
+    for invalid in (incomplete, non_applicable):
+        with pytest.raises(ValueError):
+            final(invalid)
+
+
+def test_execution_output_validator_accepts_canonical_examples_for_every_coverage():
+    partial = execution((RUN_EXECUTION.component_results[0], STRENGTH_REQUIRED),
+                        CoverageStatus.PARTIALLY_UNSUPPORTED)
+    no_required = execution((OPTIONAL_PLANNED_ONLY,), CoverageStatus.NO_REQUIRED_COMPONENTS)
+    for valid in (RUN_EXECUTION, STRENGTH_EXECUTION, partial, no_required):
+        assert validate_final_outcome_inputs(valid, stability()) == ()
+    generated = evaluate_execution(RUN_PRESCRIPTION, RUN_SESSION, RUN_MAPPING,
+                                   evaluation_id="canonical-execution",
+                                   evaluated_at=T0 + timedelta(hours=8))
+    assert validate_final_outcome_inputs(generated, stability()) == ()
