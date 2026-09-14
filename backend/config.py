@@ -9,6 +9,9 @@ Decision Memory possono essere personalizzati tramite:
 - IRONCOACH_FRESHNESS_HIGH_CONFIDENCE_CAP
 - IRONCOACH_FRESHNESS_MODERATE_CONFIDENCE_CAP
 - IRONCOACH_DECISION_MEMORY_DATABASE_PATH
+- IRONCOACH_MAINTAIN_PLAN_SNAPSHOT_ENABLED
+- IRONCOACH_MAINTAIN_PLAN_DATABASE_PATH
+- IRONCOACH_MAINTAIN_PLAN_TIMEZONE
 
 Valori numerici assenti, non interi o fuori intervallo ricadono sui
 default. Un path Decision Memory assente o vuoto ricade sul default.
@@ -31,6 +34,11 @@ DEFAULT_FRESHNESS_MODERATE_CONFIDENCE_CAP = 85
 DEFAULT_DECISION_MEMORY_DATABASE_PATH = (
     "data/ironcoach_memory.db"
 )
+DEFAULT_MAINTAIN_PLAN_SNAPSHOT_ENABLED = False
+DEFAULT_MAINTAIN_PLAN_DATABASE_PATH = (
+    "data/ironcoach_maintain_plan.db"
+)
+DEFAULT_MAINTAIN_PLAN_TIMEZONE = ""
 
 
 def _bounded_int_from_env(
@@ -68,6 +76,27 @@ def _non_negative_int_from_env(
         minimum=0,
         maximum=2_147_483_647,
     )
+
+
+def _bool_from_env(
+    name: str,
+    default: bool = False,
+) -> bool:
+    raw_value = os.getenv(name)
+
+    if raw_value is None:
+        return default
+
+    normalized = raw_value.strip().lower()
+
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+
+    if normalized in {"0", "false", "no", "off", ""}:
+        return False
+
+    # Runtime activation flags fail closed.
+    return False
 
 
 def _string_from_env(
@@ -113,6 +142,15 @@ class RuntimeConfig:
     )
     decision_memory_database_path: str = (
         DEFAULT_DECISION_MEMORY_DATABASE_PATH
+    )
+    maintain_plan_snapshot_enabled: bool = (
+        DEFAULT_MAINTAIN_PLAN_SNAPSHOT_ENABLED
+    )
+    maintain_plan_database_path: str = (
+        DEFAULT_MAINTAIN_PLAN_DATABASE_PATH
+    )
+    maintain_plan_timezone: str = (
+        DEFAULT_MAINTAIN_PLAN_TIMEZONE
     )
 
     def __post_init__(self) -> None:
@@ -176,6 +214,24 @@ class RuntimeConfig:
                 _string_from_env(
                     "IRONCOACH_DECISION_MEMORY_DATABASE_PATH",
                     DEFAULT_DECISION_MEMORY_DATABASE_PATH,
+                )
+            ),
+            maintain_plan_snapshot_enabled=(
+                _bool_from_env(
+                    "IRONCOACH_MAINTAIN_PLAN_SNAPSHOT_ENABLED",
+                    DEFAULT_MAINTAIN_PLAN_SNAPSHOT_ENABLED,
+                )
+            ),
+            maintain_plan_database_path=(
+                _string_from_env(
+                    "IRONCOACH_MAINTAIN_PLAN_DATABASE_PATH",
+                    DEFAULT_MAINTAIN_PLAN_DATABASE_PATH,
+                )
+            ),
+            maintain_plan_timezone=(
+                _string_from_env(
+                    "IRONCOACH_MAINTAIN_PLAN_TIMEZONE",
+                    DEFAULT_MAINTAIN_PLAN_TIMEZONE,
                 )
             ),
         )

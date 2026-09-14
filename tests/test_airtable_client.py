@@ -203,3 +203,39 @@ def test_empty_performance_records_are_ignored() -> None:
             "value": 255,
         }
     ]
+
+
+def test_latest_training_preserves_airtable_record_id():
+    latest_fields = {
+        "Data allenamento": "2026-09-15",
+        "Nome seduta": "Corsa aerobica",
+    }
+    client = _client_with_tables(
+        {
+            "Training Log": [
+                {
+                    "id": "recOlder",
+                    "createdTime": "2026-09-13T08:00:00.000Z",
+                    "fields": {
+                        "Data allenamento": "2026-09-13",
+                        "Nome seduta": "Seduta precedente",
+                    },
+                },
+                {
+                    "id": "recTraining123",
+                    "createdTime": "2026-09-14T08:00:00.000Z",
+                    "fields": latest_fields,
+                },
+            ],
+        }
+    )
+
+    training = client.get_latest_training()
+
+    assert training == {
+        "Data allenamento": "2026-09-15",
+        "Nome seduta": "Corsa aerobica",
+        "record_id": "recTraining123",
+    }
+    assert training is not latest_fields
+    assert "record_id" not in latest_fields
