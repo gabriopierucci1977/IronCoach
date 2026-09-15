@@ -29,6 +29,7 @@ class ActivityNormalizer:
                 activity,
                 [
                     "id",
+                    "record_id",
                     "activity_id",
                     "source_id",
                     "Record ID",
@@ -112,6 +113,43 @@ class ActivityNormalizer:
                     "zone",
                     "Zona prevista",
                     "zona_prevista",
+                ],
+                None,
+            ),
+            # MAINTAIN_PLAN consumes these fields only when the source
+            # declares them explicitly; no method or unit is inferred.
+            "intensity_method": self._get_value(
+                activity,
+                [
+                    "intensity_method",
+                    "Metodo intensità",
+                    "Metodo intensita",
+                ],
+                None,
+            ),
+            "intensity_unit": self._get_value(
+                activity,
+                [
+                    "intensity_unit",
+                    "Unità intensità",
+                    "Unita intensita",
+                ],
+                None,
+            ),
+            "environment": self._get_value(
+                activity,
+                [
+                    "environment",
+                    "Ambiente",
+                ],
+                None,
+            ),
+            "mode": self._get_value(
+                activity,
+                [
+                    "mode",
+                    "Modalità",
+                    "Modalita",
                 ],
                 None,
             ),

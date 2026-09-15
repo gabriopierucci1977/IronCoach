@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import sqlite3
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Iterator, Mapping
 
 from .models import (ActualSession, Confirmation, ConfirmationAnswerType, ExecutionEvaluation, FeedbackEvent, FeedbackEventLog,
                      FeedbackProjection, MatchingResult, PrescriptionMapping,
@@ -22,6 +23,38 @@ from .validators import (validate_actual_session, validate_execution_evaluation,
                          validate_confirmation, validate_mapping, validate_matching_result,
                          validate_mapping_ownership, validate_prescription,
                          validate_source_conflict_impact)
+
+
+class PrescriptionSnapshotTransaction:
+    """Snapshot operations sharing one caller-owned SQLite transaction."""
+
+    def __init__(self, repository: "MaintainPlanRepository", connection: sqlite3.Connection):
+        self._repository = repository
+        self._connection = connection
+
+    def get(self, identifier: str) -> PrescriptionSnapshot | None:
+        row = self._connection.execute(
+            "SELECT * FROM maintain_plan_prescription_snapshots "
+            "WHERE prescription_snapshot_id = ?",
+            (identifier,),
+        ).fetchone()
+        return None if row is None else self._repository._decode_prescription_snapshot_row(row)
+
+    def get_by_decision_id(self, decision_id: str) -> tuple[PrescriptionSnapshot, ...]:
+        rows = self._connection.execute(
+            "SELECT * FROM maintain_plan_prescription_snapshots WHERE decision_id = ? "
+            "ORDER BY prescription_snapshot_id",
+            (decision_id,),
+        ).fetchall()
+        return tuple(self._repository._decode_prescription_snapshot_row(row) for row in rows)
+
+    def create(self, value: PrescriptionSnapshot) -> None:
+        self._repository._require_valid(validate_prescription(value))
+        self._connection.execute(
+            "INSERT INTO maintain_plan_prescription_snapshots VALUES (?, ?, ?, ?, ?, ?)",
+            (value.prescription_snapshot_id, value.workout_id, value.decision_id,
+             value.contract_version, PAYLOAD_SCHEMA_VERSION, serialize_contract(value)),
+        )
 
 
 class MaintainPlanRepository:
@@ -64,6 +97,23 @@ class MaintainPlanRepository:
              value.contract_version, PAYLOAD_SCHEMA_VERSION, serialize_contract(value)),
         )
 
+    @contextmanager
+    def prescription_snapshot_transaction(
+        self,
+    ) -> Iterator["PrescriptionSnapshotTransaction"]:
+        """Hold SQLite's write lock for an entire snapshot acquisition."""
+        connection = self._connect()
+        connection.row_factory = sqlite3.Row
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            yield PrescriptionSnapshotTransaction(self, connection)
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+
     def get_prescription_snapshot(self, identifier: str) -> PrescriptionSnapshot | None:
         stored = self._get("maintain_plan_prescription_snapshots", "prescription_snapshot_id",
                            identifier, PrescriptionSnapshot)
@@ -76,6 +126,33 @@ class MaintainPlanRepository:
                                              value.decision_id, value.contract_version):
             raise ValueError("stored prescription snapshot metadata does not match payload")
         return value
+
+    def _decode_prescription_snapshot_row(self, row: sqlite3.Row) -> PrescriptionSnapshot:
+        if row["payload_schema_version"] != PAYLOAD_SCHEMA_VERSION:
+            raise ValueError("unsupported stored MAINTAIN_PLAN payload schema version")
+        value = deserialize_contract(row["payload_json"], PrescriptionSnapshot)
+        self._require_valid(validate_prescription(value))
+        if (row["prescription_snapshot_id"], row["workout_id"], row["decision_id"],
+                row["contract_version"]) != (value.prescription_snapshot_id, value.workout_id,
+                                             value.decision_id, value.contract_version):
+            raise ValueError("stored prescription snapshot metadata does not match payload")
+        return value
+
+    def get_prescription_snapshot_by_decision_id(
+        self, decision_id: str
+    ) -> PrescriptionSnapshot | None:
+        with self._connect() as connection:
+            rows = connection.execute(
+                "SELECT prescription_snapshot_id "
+                "FROM maintain_plan_prescription_snapshots WHERE decision_id = ? "
+                "ORDER BY prescription_snapshot_id",
+                (decision_id,),
+            ).fetchall()
+        if not rows:
+            return None
+        if len(rows) > 1:
+            raise ValueError("multiple prescription snapshots already exist for decision_id")
+        return self.get_prescription_snapshot(rows[0][0])
 
     def create_actual_session(self, value: ActualSession) -> None:
         self._require_valid(validate_actual_session(value))

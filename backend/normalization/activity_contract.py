@@ -24,6 +24,10 @@ class NormalizedActivity(TypedDict):
     distance_km: float
     training_load: Any
     intensity: Any
+    intensity_method: Any
+    intensity_unit: Any
+    environment: Any
+    mode: Any
     heart_rate: Dict[str, Any]
     power: Dict[str, Any]
     rpe: Any
