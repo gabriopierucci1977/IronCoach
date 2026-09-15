@@ -77,6 +77,19 @@ class MaintainPlanRepository:
             raise ValueError("stored prescription snapshot metadata does not match payload")
         return value
 
+    def get_prescription_snapshot_by_decision_id(
+        self, decision_id: str
+    ) -> PrescriptionSnapshot | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT prescription_snapshot_id "
+                "FROM maintain_plan_prescription_snapshots WHERE decision_id = ?",
+                (decision_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return self.get_prescription_snapshot(row[0])
+
     def create_actual_session(self, value: ActualSession) -> None:
         self._require_valid(validate_actual_session(value))
         self._insert(

@@ -12,7 +12,8 @@ from backend.maintain_plan.models import (
     PolicyRef, PrescribedTarget, PrescriptionAudit, Provenance,
 )
 from backend.maintain_plan.prescription_snapshot_service import (
-    CommunicatedPrescription, PrescriptionSnapshotService,
+    CommunicatedPrescription, PrescriptionSnapshotConflictError,
+    PrescriptionSnapshotService,
 )
 from backend.maintain_plan.repository import MaintainPlanRepository
 from tests.maintain_plan.fixtures import (
@@ -111,22 +112,44 @@ def test_invalid_snapshot_is_rejected_before_any_write(tmp_path, invalid):
         ).fetchone() == (0,)
 
 
-def test_duplicate_does_not_overwrite_and_successive_communications_are_distinct(tmp_path):
+def test_retry_is_idempotent_but_changed_content_conflicts(tmp_path):
     repository = MaintainPlanRepository(tmp_path / "append-only.db")
     snapshot_service = PrescriptionSnapshotService(repository)
     first = snapshot_service.acquire(CommunicatedPrescription(RUN_PRESCRIPTION))
+    retry = replace(
+        RUN_PRESCRIPTION,
+        communicated_at=NOW.replace(hour=9),
+        provenance=replace(
+            RUN_PRESCRIPTION.provenance,
+            captured_at=NOW.replace(hour=9),
+        ),
+    )
+    assert snapshot_service.acquire(CommunicatedPrescription(retry)) == first
+
     changed_duplicate = replace(RUN_PRESCRIPTION, workout_id="different")
-    with pytest.raises(sqlite3.IntegrityError):
+    with pytest.raises(PrescriptionSnapshotConflictError):
         snapshot_service.acquire(CommunicatedPrescription(changed_duplicate))
     assert repository.get_prescription_snapshot(first.prescription_snapshot_id) == first
 
     second = replace(
         RUN_PRESCRIPTION,
         prescription_snapshot_id="snapshot-2",
+        decision_id="decision-2",
         communicated_at=NOW.replace(hour=9),
     )
     assert snapshot_service.acquire(CommunicatedPrescription(second)) == second
     assert repository.get_prescription_snapshot("snapshot-1") == first
+
+
+def test_same_decision_id_with_a_different_snapshot_id_conflicts(tmp_path):
+    snapshot_service = service(tmp_path)
+    snapshot_service.acquire(CommunicatedPrescription(RUN_PRESCRIPTION))
+    changed = replace(
+        RUN_PRESCRIPTION,
+        prescription_snapshot_id="alternate-id",
+    )
+    with pytest.raises(PrescriptionSnapshotConflictError):
+        snapshot_service.acquire(CommunicatedPrescription(changed))
 
 
 def test_sqlite_persistence_failure_leaves_no_partial_snapshot(tmp_path):

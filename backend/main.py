@@ -46,6 +46,9 @@ from backend.decision_memory.activity_runtime import (
 from backend.decision_writer import DecisionWriter
 from backend.report_builder import ReportBuilder
 from backend.workout_adapter import WorkoutAdapter
+from backend.maintain_plan.runtime_prescription_capture import (
+    RuntimePrescriptionCapture,
+)
 
 
 APP_NAME = "IRONCOACH"
@@ -641,6 +644,16 @@ def run_pipeline(
             decision=decision,
         ),
     )
+
+    if not dry_run:
+        _execute_phase(
+            "cattura prescrizione MAINTAIN_PLAN",
+            lambda: RuntimePrescriptionCapture().capture(
+                runtime_config=runtime_config,
+                training=context.get("training", {}),
+                decision=decision,
+            ),
+        )
 
     report_builder = _execute_phase(
         "inizializzazione Report Builder",

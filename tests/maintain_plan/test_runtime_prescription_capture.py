@@ -392,3 +392,98 @@ def test_runtime_adapter_never_infers_intensity_metadata_from_zone_or_text():
             training=training,
             decision=decision,
         )
+
+
+class _CaptureConfig:
+    maintain_plan_snapshot_enabled = True
+    maintain_plan_database_path = "unused.db"
+    maintain_plan_timezone = "Europe/Rome"
+
+
+def test_runtime_service_persists_through_repository_and_snapshot_service(tmp_path):
+    from datetime import datetime, timezone
+
+    from backend.maintain_plan.repository import MaintainPlanRepository
+    from backend.maintain_plan.runtime_prescription_capture import (
+        RuntimePrescriptionCapture,
+    )
+
+    path = tmp_path / "runtime.db"
+    config = _CaptureConfig()
+    config.maintain_plan_database_path = str(path)
+    captured = RuntimePrescriptionCapture(
+        clock=lambda: datetime(2026, 9, 14, 10, tzinfo=timezone.utc)
+    ).capture(
+        runtime_config=config,
+        training=_runtime_training(),
+        decision=_runtime_decision(),
+    )
+
+    assert captured.decision_id == "decision-123"
+    assert MaintainPlanRepository(path).get_prescription_snapshot(
+        "maintain-plan:decision-123"
+    ) == captured
+
+
+@pytest.mark.parametrize("enabled", (False, None, 1, "true"))
+def test_runtime_service_requires_flag_to_be_exactly_true(enabled):
+    from backend.maintain_plan.runtime_prescription_capture import (
+        RuntimePrescriptionCapture,
+    )
+
+    config = _CaptureConfig()
+    config.maintain_plan_snapshot_enabled = enabled
+    factory_called = False
+
+    def repository_factory(_path):
+        nonlocal factory_called
+        factory_called = True
+        raise AssertionError("repository must not be initialized")
+
+    assert RuntimePrescriptionCapture(repository_factory).capture(
+        runtime_config=config,
+        training=_runtime_training(),
+        decision=_runtime_decision(),
+    ) is None
+    assert factory_called is False
+
+
+@pytest.mark.parametrize(
+    "decision",
+    (
+        _runtime_decision(primary_intent="RECOVERY"),
+        _runtime_decision(strategy="ADAPT"),
+    ),
+)
+def test_runtime_service_skips_non_p0_decisions_without_sqlite(decision):
+    from backend.maintain_plan.runtime_prescription_capture import (
+        RuntimePrescriptionCapture,
+    )
+
+    def repository_factory(_path):
+        raise AssertionError("repository must not be initialized")
+
+    assert RuntimePrescriptionCapture(repository_factory).capture(
+        runtime_config=_CaptureConfig(),
+        training=_runtime_training(),
+        decision=decision,
+    ) is None
+
+
+def test_runtime_service_validates_before_sqlite_initialization():
+    from backend.maintain_plan.runtime_prescription_adapter import (
+        RuntimePrescriptionError,
+    )
+    from backend.maintain_plan.runtime_prescription_capture import (
+        RuntimePrescriptionCapture,
+    )
+
+    def repository_factory(_path):
+        raise AssertionError("repository initialized before validation")
+
+    with pytest.raises(RuntimePrescriptionError):
+        RuntimePrescriptionCapture(repository_factory).capture(
+            runtime_config=_CaptureConfig(),
+            training=_runtime_training(intensity_method=None),
+            decision=_runtime_decision(),
+        )
