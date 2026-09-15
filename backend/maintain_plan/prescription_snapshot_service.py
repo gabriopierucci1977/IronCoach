@@ -7,23 +7,31 @@ communication event; this boundary never looks up or infers prescription data.
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from typing import Protocol
+from typing import ContextManager, Protocol
 
 from .models import PrescriptionSnapshot
 from .serialization import deserialize_contract, serialize_contract
 from .validators import validate_prescription
 
 
-class PrescriptionSnapshotRepository(Protocol):
-    """The insert-only repository operations used by the acquisition boundary."""
+class PrescriptionSnapshotTransaction(Protocol):
+    """Operations performed under one write-locked repository transaction."""
 
-    def create_prescription_snapshot(self, value: PrescriptionSnapshot) -> None: ...
+    def create(self, value: PrescriptionSnapshot) -> None: ...
 
-    def get_prescription_snapshot(self, identifier: str) -> PrescriptionSnapshot | None: ...
+    def get(self, identifier: str) -> PrescriptionSnapshot | None: ...
 
-    def get_prescription_snapshot_by_decision_id(
+    def get_by_decision_id(
         self, decision_id: str
-    ) -> PrescriptionSnapshot | None: ...
+    ) -> tuple[PrescriptionSnapshot, ...]: ...
+
+
+class PrescriptionSnapshotRepository(Protocol):
+    """Repository boundary needed for atomic snapshot acquisition."""
+
+    def prescription_snapshot_transaction(
+        self,
+    ) -> ContextManager[PrescriptionSnapshotTransaction]: ...
 
 
 @dataclass(frozen=True)
@@ -77,26 +85,28 @@ class PrescriptionSnapshotService:
         if errors:
             raise ValueError("; ".join(errors))
 
-        existing = self._repository.get_prescription_snapshot(
-            snapshot.prescription_snapshot_id
-        )
-        if existing is None:
-            existing = self._repository.get_prescription_snapshot_by_decision_id(
-                snapshot.decision_id
-            )
-        if existing is not None:
-            if _retry_equivalent(existing, snapshot):
-                return existing
-            raise PrescriptionSnapshotConflictError(
-                "prescription snapshot decision_id already has different content"
-            )
+        # BEGIN IMMEDIATE is acquired by this boundary before either lookup. It
+        # serializes the decision check and insert across independent SQLite
+        # connections without changing the append-only schema.
+        with self._repository.prescription_snapshot_transaction() as transaction:
+            matches = transaction.get_by_decision_id(snapshot.decision_id)
+            if len(matches) > 1:
+                raise PrescriptionSnapshotConflictError(
+                    "multiple prescription snapshots already exist for decision_id"
+                )
 
-        # The repository operation is one SQLite INSERT transaction.  Any write
-        # failure rolls it back rather than replacing prior state.
-        self._repository.create_prescription_snapshot(snapshot)
-        stored = self._repository.get_prescription_snapshot(
-            snapshot.prescription_snapshot_id
-        )
-        if stored is None or stored != snapshot:
-            raise RuntimeError("persisted prescription snapshot failed canonical round-trip")
-        return stored
+            existing = transaction.get(snapshot.prescription_snapshot_id)
+            if existing is None and matches:
+                existing = matches[0]
+            if existing is not None:
+                if _retry_equivalent(existing, snapshot):
+                    return existing
+                raise PrescriptionSnapshotConflictError(
+                    "prescription snapshot decision_id already has different content"
+                )
+
+            transaction.create(snapshot)
+            stored = transaction.get(snapshot.prescription_snapshot_id)
+            if stored is None or stored != snapshot:
+                raise RuntimeError("persisted prescription snapshot failed canonical round-trip")
+            return stored
