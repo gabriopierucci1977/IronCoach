@@ -63,34 +63,41 @@ coprono inoltre `running`, `road_biking`, `indoor_cycling` e `lap_swimming` in
 `tests/test_garmin_historical_importer.py` e
 `tests/test_garmin_summary_importer.py`.
 
-| Campo sorgente | Valore esatto | `Discipline` |
+| Campo runtime | Valore esatto | `Discipline` |
 |---|---|---|
-| `sport` | `RUN` | `RUN` |
-| `sport` | `BIKE` | `BIKE` |
-| `sport` | `SWIM` | `SWIM` |
-| `activity_type` | `running` | `RUN` |
-| `activity_type` | `track_running` | `RUN` |
-| `activity_type` | `street_running` | `RUN` |
-| `activity_type` | `trail_running` | `RUN` |
-| `activity_type` | `treadmill_running` | `RUN` |
-| `activity_type` | `cycling` | `BIKE` |
-| `activity_type` | `road_biking` | `BIKE` |
-| `activity_type` | `indoor_cycling` | `BIKE` |
-| `activity_type` | `virtual_ride` | `BIKE` |
-| `activity_type` | `mountain_biking` | `BIKE` |
-| `activity_type` | `gravel_cycling` | `BIKE` |
-| `activity_type` | `lap_swimming` | `SWIM` |
-| `activity_type` | `open_water_swimming` | `SWIM` |
-| `activity_type` | `swimming` | `SWIM` |
+| `raw.activity_type` | `running` | `RUN` |
+| `raw.activity_type` | `track_running` | `RUN` |
+| `raw.activity_type` | `street_running` | `RUN` |
+| `raw.activity_type` | `trail_running` | `RUN` |
+| `raw.activity_type` | `treadmill_running` | `RUN` |
+| `raw.activity_type` | `cycling` | `BIKE` |
+| `raw.activity_type` | `road_biking` | `BIKE` |
+| `raw.activity_type` | `indoor_cycling` | `BIKE` |
+| `raw.activity_type` | `virtual_ride` | `BIKE` |
+| `raw.activity_type` | `mountain_biking` | `BIKE` |
+| `raw.activity_type` | `gravel_cycling` | `BIKE` |
+| `raw.activity_type` | `lap_swimming` | `SWIM` |
+| `raw.activity_type` | `open_water_swimming` | `SWIM` |
+| `raw.activity_type` | `swimming` | `SWIM` |
 
-Almeno uno tra `sport` e `activity_type` DEVE essere una stringa della tabella.
-Se entrambi sono presenti e non vuoti, entrambi DEVONO essere nella tabella e
-risolvere alla stessa disciplina; altrimenti l'attività è unsupported. Un
-valore presente ma non elencato rende l'attività unsupported anche quando
-l'altro campo sarebbe riconosciuto. Non sono ammessi normalizzazione di case o
-whitespace, fuzzy/substring matching, traduzione libera, alias ulteriori,
-fallback dal nome dell'attività o uso della logica fuzzy già presente
-nell'importer. Il nome è soltanto evidence.
+Il percorso runtime autorevole completo è
+`context["garmin_training_history"][i]["raw"]["activity_type"]`. È la copia
+letterale di `IronCoachActivity.activity_type`: per il summary importer nasce
+da `record["activityType"]`, viene inserita da
+`ContextBuilder._garmin_activity_to_session()` nel dizionario passato ad
+`ActivityNormalizer.normalize()`, e il normalizer conserva quel dizionario in
+`raw`. Il `sport` top-level è invece prodotto da `_normalize_sport()` e può
+derivare dalla logica fuzzy dell'importer/normalizer: NON è una fonte
+autorevole e NON può sostituire `raw.activity_type`.
+
+`raw.activity_type` DEVE essere una stringa e corrispondere esattamente a una
+riga della tabella. Valore assente, tipo non stringa, whitespace aggiuntivo o
+valore non enumerato rende l'attività unsupported. Il confronto non applica
+trim, case folding, substring matching, whitespace cleanup, traduzione o alias
+ulteriori. Se il `sport` top-level è presente, può servire soltanto come
+verifica di coerenza: DEVE essere esattamente `RUN`, `BIKE` o `SWIM` e
+corrispondere alla disciplina risolta dal raw; una discordanza viene
+rifiutata. Il nome è soltanto evidence.
 
 Per ogni attività accettata, `ActualSession.composition` DEVE essere
 `Composition.SINGLE`, con esattamente un `ObservedComponent` della disciplina
@@ -104,10 +111,12 @@ risolta. P0 non produce mai `BRICK` o `MULTISPORT`.
 una stringa esplicita, non vuota (e non solo whitespace); non viene effettuato
 trim e non esiste fallback da nome, profilo o altro identificatore.
 
-`original_activity_id` è esclusivamente il `source_id` esplicito dell'elemento
-Garmin: l'importer lo conserva come identificatore Garmin originale, mentre
-`activity_id` è l'identificatore interno prefissato. Deve essere una stringa
-non vuota e non solo whitespace. Nessun altro ID può sostituirlo.
+`original_activity_id` deriva esclusivamente dal campo Garmin obbligatorio
+`activity_id` dell'elemento runtime. `activity_id` DEVE essere una stringa
+esplicita, non vuota e non solo whitespace; se è assente o invalido l'attività
+viene rifiutata. `source_id` e `file_hash` sono identificatori aggiuntivi
+opzionali, conservabili soltanto in `raw_ids`/provenance: `source_id` NON può
+sostituire `activity_id`.
 
 ### 4.2 Canonicalizzazione di `session_id`
 
@@ -120,12 +129,22 @@ L'input dell'hash è un oggetto JSON versionato che contiene **esattamente**:
 “Versionato” significa che questo shape e la costante `source="garmin"` sono
 la versione P0 dell'algoritmo d'identità; ogni futura modifica dello shape o
 del significato richiede una nuova versione normativa e non può riusare in
-silenzio gli ID P0. La serializzazione DEVE usare:
+silenzio gli ID P0. La serializzazione normativa è esattamente l'equivalente
+di:
 
-- JSON UTF-8, senza BOM;
-- chiavi ordinate lessicograficamente;
-- separatori esatti `,` e `:` senza spazi (`separators=(",", ":")`);
-- escaping JSON standard e nessuna normalizzazione Unicode aggiuntiva.
+```python
+json.dumps(
+    payload,
+    ensure_ascii=False,
+    sort_keys=True,
+    separators=(",", ":"),
+).encode("utf-8")
+```
+
+L'encoding è UTF-8 senza BOM. Non si applica alcuna normalizzazione Unicode
+aggiuntiva: i caratteri non ASCII sono emessi direttamente dal JSON e poi
+codificati in UTF-8. Implementazioni equivalenti in altri linguaggi DEVONO
+produrre esattamente gli stessi byte.
 
 Si calcola SHA-256 sui byte UTF-8 del JSON canonico, in esadecimale lowercase.
 Il risultato è:
@@ -133,6 +152,20 @@ Il risultato è:
 ```text
 maintain-plan:actual-session:sha256:<64 caratteri hex lowercase>
 ```
+
+Vettore normativo Unicode (la `é` è il code point U+00E9, senza ulteriore
+normalizzazione):
+
+```text
+payload:  {"original_activity_id":"garmin:123456789","source":"garmin","subject_ref":"atleta-é"}
+preimage: {"original_activity_id":"garmin:123456789","source":"garmin","subject_ref":"atleta-é"}
+SHA-256:  a7dc959a6b5773ada0993fbae272da4499a66a093d5f30632241cab4925e0559
+session_id: maintain-plan:actual-session:sha256:a7dc959a6b5773ada0993fbae272da4499a66a093d5f30632241cab4925e0559
+```
+
+Con `ensure_ascii=True` la stessa `subject_ref` diventerebbe letteralmente
+`"atleta-\u00e9"` nella preimage: quei byte sono differenti e quindi non sono
+conformi.
 
 ## 5. Tempo e timezone
 
@@ -166,7 +199,7 @@ moving time o segmenti.
 | quantità distanza | `distance_km`, solo se numero finito non negativo già normalizzato; unità `km` |
 | HR osservata | `heart_rate.average` e `.max`, soltanto valori espliciti validi |
 | power osservata | `power.average` e `.normalized`, soltanto valori espliciti validi |
-| `source_activities` | una voce `source="garmin"`, `original_activity_id=source_id`, raw IDs/provenance ammessi |
+| `source_activities` | una voce `source="garmin"`, `original_activity_id=activity_id`; `source_id`/`file_hash` opzionali nei raw IDs/provenance |
 | `source_activity_refs` | riferimento alla singola source activity |
 | `segments`, `metadata` | soltanto evidence/provenance, mai blocchi o altra struttura canonica |
 
@@ -196,10 +229,12 @@ richieste dal modello indicano assenza di osservazioni, non un'osservazione
 negativa; `missing_fields` DEVE rendere espliciti i campi applicabili non
 osservati.
 
-`segments`, `metadata`, `activity_id`, `source_id` e `file_hash` possono essere
-copiati senza reinterpretazione in `SourceActivity.raw_ids`, provenance o
-data-quality. Sono evidence tracciabile, non struttura canonica, ownership o
-collegamento a una prescription. I timestamp di processo `normalized_at` e
+`source_id` e `file_hash`, quando presenti, possono essere copiati senza
+reinterpretazione in `SourceActivity.raw_ids`, provenance o data-quality;
+`activity_id` può esservi ripetuto, ma resta anche l'unica origine normativa di
+`original_activity_id`. Gli identificatori sono evidence tracciabile, non
+ownership o collegamento a una prescription. I timestamp di processo
+`normalized_at` e
 `captured_at`, se aggiunti alla provenance, sono non semantici e non possono
 supplire ai timestamp dell'attività.
 
@@ -279,7 +314,16 @@ Il futuro servizio P0 è conforme soltanto se:
    conflitti divergenti senza overwrite;
 7. blocca gli effetti downstream in caso di errore tecnico;
 8. mantiene `SCHEMA_VERSION = 6` e non crea migrazioni o schema v7;
-9. dispone di test che provano tutti i casi avversariali del §12.
+9. deriva `original_activity_id` soltanto dall'`activity_id` Garmin
+   obbligatorio e calcola la preimage con la serializzazione esatta del §4.2;
+10. assegna lo stesso `session_id` a uguali `subject_ref`, `source="garmin"` e
+    `activity_id`, indipendentemente da `source_id`; se a quell'ID corrisponde
+    un payload incompatibile, segnala conflitto senza overwrite;
+11. legge la classificazione esclusivamente da
+    `context["garmin_training_history"][i]["raw"]["activity_type"]`, applica
+    il confronto esatto della tabella e usa il `sport` top-level soltanto per
+    verificarne la coerenza;
+12. dispone di test che provano tutti i casi avversariali del §12.
 
 ## 12. Casi avversariali obbligatori
 
@@ -289,14 +333,21 @@ I test del futuro incremento DEVONO includere almeno:
   history;
 - athlete mancante, `source_id` non stringa, vuoto o whitespace-only, e prova
   che il nome non è usato;
-- original `source_id` Garmin mancante/invalido e prova che `activity_id`,
-  `file_hash`, `record_id` o `decision_id` non lo sostituiscono;
-- vettore noto della canonicalizzazione JSON/hash, inclusi Unicode, ordine
-  chiavi e separatori;
-- case variants (`Running`, `RUNNING`), whitespace, traduzioni, substring,
-  nomi ingannevoli e valori sconosciuti: tutti unsupported;
-- `sport` e `activity_type` discordanti, oppure uno noto e uno presente ma
-  ignoto: unsupported;
+- `activity_id` Garmin mancante, non stringa, vuoto o whitespace-only e prova
+  che `source_id`, `file_hash`, `record_id` o `decision_id` non lo
+  sostituiscono;
+- stesso `subject_ref`, `source="garmin"` e `activity_id` con `source_id`
+  differenti: stesso `session_id`; payload incompatibili per quell'ID:
+  conflitto, rollback e nessun overwrite;
+- vettore normativo Unicode del §4.2, ordine chiavi e separatori; prova che
+  `ensure_ascii=True` produce la diversa preimage con `\u00e9` ed è non
+  conforme;
+- `raw.activity_type` valido della tabella: accettato; assente, non stringa,
+  con whitespace aggiuntivo, fuzzy come `foo_running`, case variant,
+  traduzione o sconosciuto: unsupported;
+- `sport` top-level valido con `raw.activity_type` invalido o assente:
+  unsupported; `raw.activity_type` valido ma `sport` top-level presente e
+  discordante: unsupported;
 - strength/other, multisport/triathlon/brick, transizione e segmenti
   multi-disciplina: unsupported e mai reinterpretati;
 - start naive, date-only, offset invalido, timestamp impossibile e start
