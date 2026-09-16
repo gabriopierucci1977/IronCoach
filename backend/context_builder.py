@@ -8,6 +8,7 @@ persistente senza interrompere il flusso Airtable se l'archivio manca.
 from __future__ import annotations
 
 import json
+from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -546,6 +547,7 @@ class ContextBuilder:
             "source_id": activity.source_id,
             "date": activity.start_time,
             "start_date": activity.start_time,
+            "end_time": activity.end_time,
             "sport": activity.sport,
             "activity_type": activity.activity_type,
             "duration_minutes": self._seconds_to_minutes(
@@ -569,7 +571,7 @@ class ContextBuilder:
         normalized["source_id"] = activity.source_id
         normalized["file_hash"] = activity.file_hash
         normalized["calories"] = activity.calories
-        normalized["segments"] = list(activity.segments or [])
+        normalized["segments"] = [asdict(segment) for segment in (activity.segments or [])]
         normalized["metadata"] = dict(activity.metadata or {})
         return normalized
 

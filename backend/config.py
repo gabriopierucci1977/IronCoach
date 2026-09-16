@@ -10,6 +10,7 @@ Decision Memory possono essere personalizzati tramite:
 - IRONCOACH_FRESHNESS_MODERATE_CONFIDENCE_CAP
 - IRONCOACH_DECISION_MEMORY_DATABASE_PATH
 - IRONCOACH_MAINTAIN_PLAN_SNAPSHOT_ENABLED
+- IRONCOACH_MAINTAIN_PLAN_ACTUAL_SESSION_ENABLED
 - IRONCOACH_MAINTAIN_PLAN_DATABASE_PATH
 - IRONCOACH_MAINTAIN_PLAN_TIMEZONE
 
@@ -35,6 +36,7 @@ DEFAULT_DECISION_MEMORY_DATABASE_PATH = (
     "data/ironcoach_memory.db"
 )
 DEFAULT_MAINTAIN_PLAN_SNAPSHOT_ENABLED = False
+DEFAULT_MAINTAIN_PLAN_ACTUAL_SESSION_ENABLED = False
 DEFAULT_MAINTAIN_PLAN_DATABASE_PATH = (
     "data/ironcoach_maintain_plan.db"
 )
@@ -146,6 +148,9 @@ class RuntimeConfig:
     maintain_plan_snapshot_enabled: bool = (
         DEFAULT_MAINTAIN_PLAN_SNAPSHOT_ENABLED
     )
+    maintain_plan_actual_session_enabled: bool = (
+        DEFAULT_MAINTAIN_PLAN_ACTUAL_SESSION_ENABLED
+    )
     maintain_plan_database_path: str = (
         DEFAULT_MAINTAIN_PLAN_DATABASE_PATH
     )
@@ -220,6 +225,12 @@ class RuntimeConfig:
                 _bool_from_env(
                     "IRONCOACH_MAINTAIN_PLAN_SNAPSHOT_ENABLED",
                     DEFAULT_MAINTAIN_PLAN_SNAPSHOT_ENABLED,
+                )
+            ),
+            maintain_plan_actual_session_enabled=(
+                _bool_from_env(
+                    "IRONCOACH_MAINTAIN_PLAN_ACTUAL_SESSION_ENABLED",
+                    DEFAULT_MAINTAIN_PLAN_ACTUAL_SESSION_ENABLED,
                 )
             ),
             maintain_plan_database_path=(
