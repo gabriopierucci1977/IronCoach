@@ -153,3 +153,47 @@ def test_structural_failures_raise_stable_validation_error(field, value):
     candidate[field] = value
     with pytest.raises(RuntimeActivityValidationError):
         build_actual_session(candidate, "athlete", normalized_at=NOW)
+
+
+def _set_raw_duration(candidate):
+    candidate["raw"]["duration_minutes"] = {}
+
+
+def _set_segment_classifier(candidate):
+    candidate["segments"] = [{"sport": 1}]
+
+
+@pytest.mark.parametrize("make_invalid", [
+    lambda value: value.__setitem__("duration_minutes", {}),
+    _set_raw_duration,
+    lambda value: value.__setitem__("duration_minutes", True),
+    lambda value: value.__setitem__("duration_minutes", float("nan")),
+    lambda value: value.__setitem__("distance_km", {}),
+    lambda value: value["raw"].__setitem__("distance_km", {}),
+    lambda value: value.__setitem__("heart_rate", []),
+    lambda value: value.__setitem__("power", "invalid"),
+    lambda value: value.__setitem__("metadata", []),
+    lambda value: value.__setitem__("segments", {}),
+    lambda value: value.__setitem__("segments", ["running"]),
+    _set_segment_classifier,
+    lambda value: value.__setitem__("activity_id", []),
+    lambda value: value.__setitem__("date", "2026-09-15T08:00:00"),
+], ids=[
+    "top-level-duration-object", "raw-duration-object", "duration-bool",
+    "duration-nan", "distance-object", "raw-distance-object",
+    "heart-rate-not-object", "power-not-object", "metadata-not-object",
+    "segments-not-list", "segment-not-object", "segment-classifier-not-string",
+    "activity-id-not-string", "naive-timestamp",
+])
+def test_structural_validation_precedes_unsupported_classification(make_invalid):
+    candidate = activity("strength_training")
+    make_invalid(candidate)
+
+    with pytest.raises(RuntimeActivityValidationError):
+        build_actual_session(candidate, "athlete", normalized_at=NOW)
+
+
+def test_well_formed_unsupported_activity_remains_unsupported():
+    with pytest.raises(UnsupportedRuntimeActivity):
+        build_actual_session(activity("strength_training"), "athlete",
+                             normalized_at=NOW)
