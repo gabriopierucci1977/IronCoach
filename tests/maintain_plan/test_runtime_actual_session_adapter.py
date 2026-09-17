@@ -9,6 +9,7 @@ from backend.maintain_plan.runtime_actual_session_adapter import (
     RuntimeActivityValidationError, UnsupportedRuntimeActivity,
     build_actual_session, runtime_actual_session_id,
 )
+from backend.maintain_plan.serialization import serialize_contract
 
 
 NOW = datetime(2026, 9, 16, tzinfo=timezone.utc)
@@ -251,3 +252,80 @@ def test_well_formed_unsupported_activity_remains_unsupported():
     with pytest.raises(UnsupportedRuntimeActivity):
         build_actual_session(activity("strength_training"), "athlete",
                              normalized_at=NOW)
+
+
+class Arbitrary:
+    pass
+
+
+@pytest.mark.parametrize("kind", ["running", "strength_training"])
+@pytest.mark.parametrize("mutate", [
+    lambda value: value.__setitem__("metadata", {"bad": Arbitrary()}),
+    lambda value: value.__setitem__("metadata", {"nested": [{"bad": Arbitrary()}]}),
+    lambda value: value.__setitem__("metadata", {"nested": [float("nan")]}),
+    lambda value: value.__setitem__("metadata", {"nested": [float("inf")]}),
+    lambda value: value.__setitem__("metadata", {1: "bad"}),
+    lambda value: value.__setitem__("segments", [{"sport": "RUN", "bad": Arbitrary()}]),
+    lambda value: value.__setitem__("segments", [{"sport": "RUN", "nested": [{"bad": Arbitrary()}]}]),
+    lambda value: value.__setitem__("source_id", 1),
+    lambda value: value.__setitem__("source_id", ""),
+    lambda value: value.__setitem__("file_hash", []),
+    lambda value: value.__setitem__("file_hash", ""),
+], ids=[
+    "metadata-object", "metadata-nested-object", "metadata-nan", "metadata-infinity",
+    "metadata-key", "segment-object", "segment-nested-object", "source-id-type",
+    "source-id-empty", "file-hash-type", "file-hash-empty",
+])
+def test_copied_subtrees_are_validated_before_classification(kind, mutate):
+    candidate = activity(kind)
+    mutate(candidate)
+    with pytest.raises(RuntimeActivityValidationError):
+        build_actual_session(candidate, "athlete", normalized_at=NOW)
+
+
+@pytest.mark.parametrize("invalid", [
+    b"bytes", bytearray(b"bytes"), {"set"}, frozenset({"set"}),
+    (item for item in (1,)), lambda: None, 10**10000,
+], ids=["bytes", "bytearray", "set", "frozenset", "generator", "callable",
+        "oversized-integer"])
+def test_non_json_evidence_values_are_rejected(invalid):
+    candidate = activity()
+    candidate["metadata"] = {"nested": [invalid]}
+    with pytest.raises(RuntimeActivityValidationError):
+        build_actual_session(candidate, "athlete", normalized_at=NOW)
+
+
+def test_recursive_and_pathologically_nested_evidence_is_rejected():
+    cyclic = {}
+    cyclic["self"] = cyclic
+    candidate = activity()
+    candidate["metadata"] = cyclic
+    with pytest.raises(RuntimeActivityValidationError, match="recursive"):
+        build_actual_session(candidate, "athlete", normalized_at=NOW)
+
+    nested = leaf = {}
+    for _ in range(101):
+        child = {}
+        leaf["child"] = child
+        leaf = child
+    candidate["metadata"] = nested
+    with pytest.raises(RuntimeActivityValidationError, match="deeply"):
+        build_actual_session(candidate, "athlete", normalized_at=NOW)
+
+
+def test_deep_valid_evidence_is_preserved_and_codec_serializable():
+    nested = leaf = {}
+    for index in range(50):
+        child = {"values": [None, True, index, 1.5, ("tuple",)]}
+        leaf["child"] = child
+        leaf = child
+    candidate = activity()
+    candidate["metadata"] = nested
+    candidate["segments"] = [{"sport": "RUN", "details": nested}]
+    candidate["source_id"] = "source-1"
+    candidate["file_hash"] = "sha256:value"
+
+    session = build_actual_session(candidate, "athlete", normalized_at=NOW,
+                                   captured_at=NOW)
+
+    assert '"payload_schema_version":"maintain-plan-json/1"' in serialize_contract(session)

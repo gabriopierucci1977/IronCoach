@@ -10,7 +10,8 @@ from typing import Any
 
 from .repository import ActualSessionConflictError, MaintainPlanRepository
 from .runtime_actual_session_adapter import (
-    UnsupportedRuntimeActivity, build_actual_session, validate_process_timestamp,
+    RuntimeActivityValidationError, UnsupportedRuntimeActivity,
+    build_actual_session, validate_process_timestamp,
 )
 from .serialization import serialize_contract
 
@@ -46,12 +47,16 @@ class RuntimeActualSessionCapture:
         if type(enabled) is not bool:
             return None
         if type(athlete) is not dict:
-            raise ValueError("athlete must be an exact dict")
+            raise RuntimeActivityValidationError("athlete must be an exact dict")
         subject_ref = athlete.get("source_id")
         if type(subject_ref) is not str or not subject_ref or not subject_ref.strip():
-            raise ValueError("athlete.source_id must be an explicit non-empty string")
+            raise RuntimeActivityValidationError(
+                "athlete.source_id must be an explicit non-empty string"
+            )
         if type(garmin_training_history) is not list:
-            raise ValueError("garmin_training_history must be an exact list")
+            raise RuntimeActivityValidationError(
+                "garmin_training_history must be an exact list"
+            )
         validate_process_timestamp(normalized_at, "normalized_at")
         validate_process_timestamp(captured_at, "captured_at", optional=True)
 

@@ -34,6 +34,61 @@ _DISCIPLINES = {
     "open_water_swimming": Discipline.SWIM, "swimming": Discipline.SWIM,
 }
 
+# Keep untrusted evidence comfortably below Python's recursion limit.  The
+# walk itself is iterative, so even hostile nesting fails deterministically.
+_MAX_EVIDENCE_DEPTH = 100
+_MAX_JSON_INTEGER = 10 ** 4300 - 1
+
+
+def _validate_evidence_tree(value: object, label: str) -> None:
+    """Validate the exact JSON-shaped domain accepted as runtime evidence.
+
+    Lists and tuples are both accepted because the immutable model turns both
+    into tuples.  Mappings must be exact dictionaries with string keys.  This
+    deliberately excludes codec-adjacent Python objects (sets, custom
+    mappings, bytes and iterators) from the external Garmin trust boundary.
+    """
+    pending = [(value, label, 0, frozenset())]
+    while pending:
+        item, path, depth, ancestors = pending.pop()
+        item_type = type(item)
+        if item is None or item_type in (str, bool):
+            continue
+        if item_type is int:
+            if abs(item) > _MAX_JSON_INTEGER:
+                raise RuntimeActivityValidationError(
+                    f"{path} contains an integer that cannot be serialized"
+                )
+            continue
+        if item_type is float:
+            if not isfinite(item):
+                raise RuntimeActivityValidationError(
+                    f"{path} contains a non-finite number"
+                )
+            continue
+        if item_type not in (dict, list, tuple):
+            raise RuntimeActivityValidationError(
+                f"{path} contains an unsupported runtime value"
+            )
+        if depth >= _MAX_EVIDENCE_DEPTH:
+            raise RuntimeActivityValidationError(f"{path} is nested too deeply")
+        identity = id(item)
+        if identity in ancestors:
+            raise RuntimeActivityValidationError(f"{path} contains a recursive container")
+        child_ancestors = ancestors | {identity}
+        if item_type is dict:
+            for key, child in item.items():
+                if type(key) is not str:
+                    raise RuntimeActivityValidationError(
+                        f"{path} contains a non-string mapping key"
+                    )
+                pending.append((child, f"{path}[{key!r}]", depth + 1,
+                                child_ancestors))
+        else:
+            for index, child in enumerate(item):
+                pending.append((child, f"{path}[{index}]", depth + 1,
+                                child_ancestors))
+
 
 def validate_process_timestamp(value: object, label: str, *, optional: bool = False) -> None:
     """Validate a caller-supplied process timestamp at the trust boundary."""
@@ -163,6 +218,7 @@ def build_actual_session(payload: dict, subject_ref: str, *, normalized_at: date
     if segments is not None:
         if type(segments) is not list:
             raise RuntimeActivityValidationError("segments must be a list")
+        _validate_evidence_tree(segments, "segments")
         for segment in segments:
             if type(segment) is not dict:
                 raise RuntimeActivityValidationError("segments must contain objects")
@@ -196,6 +252,11 @@ def build_actual_session(payload: dict, subject_ref: str, *, normalized_at: date
     metadata = payload.get("metadata")
     if metadata is not None and type(metadata) is not dict:
         raise RuntimeActivityValidationError("metadata must be an object")
+    if metadata is not None:
+        _validate_evidence_tree(metadata, "metadata")
+    for name in ("source_id", "file_hash"):
+        if name in payload and payload[name] is not None:
+            _required_identifier(payload[name], name)
 
     # Phase 2: now, and only now, resolve the meaning of every classifier.
     if activity_type is None:
