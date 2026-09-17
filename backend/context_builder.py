@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 from dataclasses import asdict
 from datetime import datetime, timezone
+from math import isfinite
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -35,6 +36,10 @@ from backend.normalization.recovery_normalizer import RecoveryNormalizer
 from backend.intelligence.athlete_profile_engine import (
     AthleteProfileEngine,
 )
+
+
+class GarminActivityProjectionError(TypeError):
+    """A Garmin model contains an invalid value that must fail closed."""
 
 
 class ContextBuilder:
@@ -571,7 +576,16 @@ class ContextBuilder:
         normalized["source_id"] = activity.source_id
         normalized["file_hash"] = activity.file_hash
         normalized["calories"] = activity.calories
-        normalized["segments"] = [asdict(segment) for segment in (activity.segments or [])]
+        normalized["segments"] = []
+        for segment in activity.segments or []:
+            projected_segment = asdict(segment)
+            # Optional dataclass attributes are not observations.  Omitting
+            # absent classifiers lets the runtime adapter distinguish a single
+            # declared classifier from two present-but-discordant classifiers.
+            for classifier in ("sport", "activity_type"):
+                if projected_segment.get(classifier) is None:
+                    projected_segment.pop(classifier, None)
+            normalized["segments"].append(projected_segment)
         normalized["metadata"] = dict(activity.metadata or {})
         return normalized
 
@@ -1086,18 +1100,24 @@ class ContextBuilder:
         return resolved
 
     @staticmethod
-    def _seconds_to_minutes(value: Any) -> float:
-        try:
-            return round(float(value or 0) / 60.0, 3)
-        except (TypeError, ValueError):
-            return 0.0
+    def _seconds_to_minutes(value: Any) -> Optional[float]:
+        if value is None:
+            return None
+        if (type(value) not in (int, float) or not isfinite(value)
+                or value < 0):
+            raise GarminActivityProjectionError(
+                "duration_seconds must be numeric when present")
+        return round(float(value) / 60.0, 3)
 
     @staticmethod
-    def _meters_to_kilometers(value: Any) -> float:
-        try:
-            return round(float(value or 0) / 1000.0, 3)
-        except (TypeError, ValueError):
-            return 0.0
+    def _meters_to_kilometers(value: Any) -> Optional[float]:
+        if value is None:
+            return None
+        if (type(value) not in (int, float) or not isfinite(value)
+                or value < 0):
+            raise GarminActivityProjectionError(
+                "distance_meters must be numeric when present")
+        return round(float(value) / 1000.0, 3)
 
     @staticmethod
     def _rounded_number(value: Any) -> float:

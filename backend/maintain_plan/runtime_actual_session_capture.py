@@ -77,8 +77,11 @@ class RuntimeActualSessionCapture:
         # All untrusted input has been classified/normalized before migrations.
         repository = self._repository_factory(runtime_config.maintain_plan_database_path)
         created, reused = [], []
-        for candidate in candidates:
-            with repository.actual_session_capture_transaction() as transaction:
+        # One lock and one transaction cover the complete batch.  Besides making
+        # concurrent idempotent retries deterministic, this ensures a conflict
+        # discovered late in the batch rolls back every earlier insertion.
+        with repository.actual_session_capture_transaction() as transaction:
+            for candidate in candidates:
                 existing = transaction.get_all(candidate.session_id)
                 if existing:
                     if any(_semantic(item) != _semantic(existing[0]) for item in existing[1:]):

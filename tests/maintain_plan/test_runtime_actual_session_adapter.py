@@ -5,7 +5,8 @@ import pytest
 
 from backend.maintain_plan.models import Composition, Discipline
 from backend.maintain_plan.runtime_actual_session_adapter import (
-    UnsupportedRuntimeActivity, build_actual_session, runtime_actual_session_id,
+    RuntimeActivityValidationError, UnsupportedRuntimeActivity,
+    build_actual_session, runtime_actual_session_id,
 )
 
 
@@ -49,3 +50,40 @@ def test_identity_vector_and_input_immutability():
         "a7dc959a6b5773ada0993fbae272da4499a66a093d5f30632241cab4925e0559"
     )
 
+
+@pytest.mark.parametrize("segments", [
+    [{"sport": "BIKE"}], [{"sport": "bike"}],
+    [{"activity_type": "strength_training"}], [{}],
+    [{"sport": "RUN", "activity_type": "road_biking"}],
+])
+def test_adversarial_segment_classifications_are_unsupported(segments):
+    value = activity()
+    value["segments"] = segments
+    with pytest.raises(UnsupportedRuntimeActivity):
+        build_actual_session(value, "athlete", normalized_at=NOW)
+
+
+def test_homogeneous_segments_are_preserved_as_evidence():
+    value = activity()
+    value["segments"] = [{"sport": "RUN"}, {"activity_type": "running"}]
+    result = build_actual_session(value, "athlete", normalized_at=NOW)
+    assert [dict(item) for item in result.source_activities[0].provenance["segments"]] == value["segments"]
+
+
+def test_malformed_segment_is_a_technical_error():
+    value = activity()
+    value["segments"] = ["RUN"]
+    with pytest.raises(RuntimeActivityValidationError):
+        build_actual_session(value, "athlete", normalized_at=NOW)
+
+
+@pytest.mark.parametrize(("field", "value"), [
+    ("activity_id", None), ("date", None), ("date", "bad"),
+    ("date", "2026-09-15T08:00:00"), ("duration_minutes", "30"),
+    ("heart_rate", []),
+])
+def test_structural_failures_raise_stable_validation_error(field, value):
+    candidate = activity()
+    candidate[field] = value
+    with pytest.raises(RuntimeActivityValidationError):
+        build_actual_session(candidate, "athlete", normalized_at=NOW)
