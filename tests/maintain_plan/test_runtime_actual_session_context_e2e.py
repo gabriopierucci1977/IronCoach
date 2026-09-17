@@ -13,12 +13,12 @@ from backend.maintain_plan.runtime_actual_session_adapter import (
 NOW = datetime(2026, 9, 16, tzinfo=timezone.utc)
 
 
-def convert(duration=None, distance=None):
+def convert(duration=None, distance=None, end_time=None):
     activity = IronCoachActivity(
         activity_id="garmin:1", source="garmin", source_id="source:1",
         start_time="2026-09-15T08:00:00Z", sport="RUN",
         activity_type="running", duration_seconds=duration,
-        distance_meters=distance,
+        distance_meters=distance, end_time=end_time,
     )
     builder = ContextBuilder.__new__(ContextBuilder)
     builder.activity_normalizer = ActivityNormalizer()
@@ -54,3 +54,27 @@ def test_adapter_preserves_explicit_duration_but_not_synthetic_distance():
     session = build_actual_session(projected, "athlete", normalized_at=NOW)
     assert [(item["metric"], item["value"])
             for item in session.components[0].secondary_metrics] == [("duration", 0.0)]
+
+
+def test_garmin_without_end_time_keeps_actual_session_end_absent():
+    projected, session = convert(1800, 5000)
+
+    assert projected["end"] is None
+    assert session.end is None
+    assert session.components[0].end is None
+
+
+def test_importer_derived_end_time_is_not_projected_as_observed():
+    projected, session = convert(
+        1800, 5000, end_time="2026-09-15T08:30:00Z",
+    )
+
+    assert projected["end"] is None
+    assert session.end is None
+    assert session.components[0].end is None
+    assert [(item["metric"], item["value"], item["unit"])
+            for item in session.components[0].secondary_metrics] == [
+                ("duration", 30.0, "min"),
+                ("distance", 5.0, "km"),
+            ]
+    assert session.components[0].discipline.value == "RUN"
