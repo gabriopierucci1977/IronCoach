@@ -10,7 +10,7 @@ from typing import Any
 
 from .repository import ActualSessionConflictError, MaintainPlanRepository
 from .runtime_actual_session_adapter import (
-    UnsupportedRuntimeActivity, build_actual_session,
+    UnsupportedRuntimeActivity, build_actual_session, validate_process_timestamp,
 )
 from .serialization import serialize_contract
 
@@ -52,13 +52,8 @@ class RuntimeActualSessionCapture:
             raise ValueError("athlete.source_id must be an explicit non-empty string")
         if type(garmin_training_history) is not list:
             raise ValueError("garmin_training_history must be an exact list")
-        if (type(normalized_at) is not datetime or normalized_at.tzinfo is None
-                or normalized_at.utcoffset() is None):
-            raise ValueError("normalized_at must be timezone-aware")
-        if (captured_at is not None and
-                (type(captured_at) is not datetime or captured_at.tzinfo is None
-                 or captured_at.utcoffset() is None)):
-            raise ValueError("captured_at must be timezone-aware")
+        validate_process_timestamp(normalized_at, "normalized_at")
+        validate_process_timestamp(captured_at, "captured_at", optional=True)
 
         candidates = []
         unsupported = []

@@ -34,6 +34,31 @@ _DISCIPLINES = {
 }
 
 
+def validate_process_timestamp(value: object, label: str, *, optional: bool = False) -> None:
+    """Validate a caller-supplied process timestamp at the trust boundary."""
+    if optional and value is None:
+        return
+    if type(value) is not datetime:
+        raise RuntimeActivityValidationError(f"{label} must be timezone-aware")
+    try:
+        aware = value.tzinfo is not None and value.utcoffset() is not None
+    except (TypeError, ValueError, AttributeError) as error:
+        raise RuntimeActivityValidationError(
+            f"{label} must be timezone-aware"
+        ) from error
+    if not aware:
+        raise RuntimeActivityValidationError(f"{label} must be timezone-aware")
+
+
+def _classifier(value: object, label: str) -> str:
+    """Return a structurally valid classifier without normalizing its meaning."""
+    if type(value) is not str or not value.strip():
+        raise RuntimeActivityValidationError(
+            f"{label} must be an explicit non-empty string"
+        )
+    return value
+
+
 def runtime_actual_session_id(subject_ref: str, activity_id: str) -> str:
     """Return the exact normative P0 identity (without Unicode rewriting)."""
     payload = {"original_activity_id": activity_id, "source": "garmin",
@@ -102,22 +127,21 @@ def build_actual_session(payload: dict, subject_ref: str, *, normalized_at: date
         raise RuntimeActivityValidationError("activity must be an exact dict")
     subject = _required_identifier(subject_ref, "subject_ref")
     activity_id = _required_identifier(payload.get("activity_id"), "activity_id")
-    if type(normalized_at) is not datetime or normalized_at.tzinfo is None or normalized_at.utcoffset() is None:
-        raise RuntimeActivityValidationError("normalized_at must be timezone-aware")
-    if captured_at is not None and (type(captured_at) is not datetime or captured_at.tzinfo is None or captured_at.utcoffset() is None):
-        raise RuntimeActivityValidationError("captured_at must be timezone-aware")
+    validate_process_timestamp(normalized_at, "normalized_at")
+    validate_process_timestamp(captured_at, "captured_at", optional=True)
 
     raw = payload.get("raw")
     if type(raw) is not dict:
         raise RuntimeActivityValidationError("raw must be an object")
-    if type(raw.get("activity_type")) is not str:
+    if "activity_type" not in raw:
         raise UnsupportedRuntimeActivity("raw.activity_type is required")
-    discipline = _DISCIPLINES.get(raw["activity_type"])
+    activity_type = _classifier(raw["activity_type"], "raw.activity_type")
+    discipline = _DISCIPLINES.get(activity_type)
     if discipline is None:
         raise UnsupportedRuntimeActivity("raw.activity_type is unsupported")
-    sport = payload.get("sport")
-    if sport is not None:
-        if type(sport) is not str or sport not in {item.value for item in Discipline}:
+    if "sport" in payload:
+        sport = _classifier(payload["sport"], "sport")
+        if sport not in {item.value for item in Discipline}:
             raise UnsupportedRuntimeActivity("sport is unsupported")
         if sport != discipline.value:
             raise UnsupportedRuntimeActivity("sport contradicts raw.activity_type")
@@ -129,13 +153,18 @@ def build_actual_session(payload: dict, subject_ref: str, *, normalized_at: date
         for segment in segments:
             if type(segment) is not dict:
                 raise RuntimeActivityValidationError("segments must contain objects")
+            # Validate every present classifier before performing any lookup or
+            # comparing their meanings.  In particular, unhashable values must
+            # never reach ``dict.get``.
+            present = [(name, _classifier(segment[name], f"segment.{name}"))
+                       for name in ("activity_type", "sport") if name in segment]
             classifiers = []
-            if "activity_type" in segment:
-                classifiers.append(_DISCIPLINES.get(segment["activity_type"]))
-            if "sport" in segment:
-                raw_sport = segment["sport"]
-                classifiers.append(next((item for item in Discipline
-                                         if item.value == raw_sport), None))
+            for name, classifier in present:
+                if name == "activity_type":
+                    classifiers.append(_DISCIPLINES.get(classifier))
+                else:
+                    classifiers.append(next((item for item in Discipline
+                                             if item.value == classifier), None))
             if not classifiers or any(item is None for item in classifiers):
                 raise UnsupportedRuntimeActivity("segment classification is unsupported")
             if len(set(classifiers)) != 1 or classifiers[0] is not discipline:
