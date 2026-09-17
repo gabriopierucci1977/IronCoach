@@ -10,7 +10,9 @@ from typing import Any
 
 from .repository import ActualSessionConflictError, MaintainPlanRepository
 from .runtime_actual_session_adapter import (
-    UnsupportedRuntimeActivity, build_actual_session,
+    RuntimeActivityValidationError, UnsupportedRuntimeActivity,
+    build_actual_session, validate_process_timestamp, validate_runtime_string,
+    validate_runtime_unicode_tree,
 )
 from .serialization import serialize_contract
 
@@ -46,19 +48,20 @@ class RuntimeActualSessionCapture:
         if type(enabled) is not bool:
             return None
         if type(athlete) is not dict:
-            raise ValueError("athlete must be an exact dict")
+            raise RuntimeActivityValidationError("athlete must be an exact dict")
+        validate_runtime_unicode_tree(athlete, "athlete")
         subject_ref = athlete.get("source_id")
         if type(subject_ref) is not str or not subject_ref or not subject_ref.strip():
-            raise ValueError("athlete.source_id must be an explicit non-empty string")
+            raise RuntimeActivityValidationError(
+                "athlete.source_id must be an explicit non-empty string"
+            )
+        validate_runtime_string(subject_ref, "athlete.source_id")
         if type(garmin_training_history) is not list:
-            raise ValueError("garmin_training_history must be an exact list")
-        if (type(normalized_at) is not datetime or normalized_at.tzinfo is None
-                or normalized_at.utcoffset() is None):
-            raise ValueError("normalized_at must be timezone-aware")
-        if (captured_at is not None and
-                (type(captured_at) is not datetime or captured_at.tzinfo is None
-                 or captured_at.utcoffset() is None)):
-            raise ValueError("captured_at must be timezone-aware")
+            raise RuntimeActivityValidationError(
+                "garmin_training_history must be an exact list"
+            )
+        validate_process_timestamp(normalized_at, "normalized_at")
+        validate_process_timestamp(captured_at, "captured_at", optional=True)
 
         candidates = []
         unsupported = []
@@ -77,8 +80,11 @@ class RuntimeActualSessionCapture:
         # All untrusted input has been classified/normalized before migrations.
         repository = self._repository_factory(runtime_config.maintain_plan_database_path)
         created, reused = [], []
-        for candidate in candidates:
-            with repository.actual_session_capture_transaction() as transaction:
+        # One lock and one transaction cover the complete batch.  Besides making
+        # concurrent idempotent retries deterministic, this ensures a conflict
+        # discovered late in the batch rolls back every earlier insertion.
+        with repository.actual_session_capture_transaction() as transaction:
+            for candidate in candidates:
                 existing = transaction.get_all(candidate.session_id)
                 if existing:
                     if any(_semantic(item) != _semantic(existing[0]) for item in existing[1:]):

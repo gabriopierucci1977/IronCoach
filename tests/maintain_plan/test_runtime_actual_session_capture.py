@@ -1,10 +1,13 @@
 from datetime import datetime, timezone
+from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
 from backend.config import RuntimeConfig
 from backend.maintain_plan.repository import ActualSessionConflictError
 from backend.maintain_plan.runtime_actual_session_capture import RuntimeActualSessionCapture
+from backend.maintain_plan.runtime_actual_session_adapter import RuntimeActivityValidationError
+from backend.maintain_plan.repository import MaintainPlanRepository
 
 
 NOW = datetime(2026, 9, 16, tzinfo=timezone.utc)
@@ -28,6 +31,61 @@ def test_disabled_does_not_initialize_repository(tmp_path):
     assert RuntimeActualSessionCapture().capture(
         runtime_config=config(path, False), athlete=None,
         garmin_training_history=None, normalized_at=NOW) is None
+    assert not path.exists()
+
+
+@pytest.mark.parametrize(("athlete", "history"), [
+    (None, []), ([], []), ({}, []), ({"source_id": None}, []),
+    ({"source_id": True}, []), ({"source_id": []}, []),
+    ({"source_id": ""}, []), ({"source_id": "athlete"}, None),
+    ({"source_id": "athlete"}, ()), ({"source_id": "athlete"}, {}),
+    ({"source_id": "athlete"}, [None]),
+])
+def test_public_capture_rejects_malformed_structure_before_sqlite(
+        tmp_path, athlete, history):
+    path = tmp_path / "absent.db"
+    with pytest.raises(RuntimeActivityValidationError):
+        RuntimeActualSessionCapture().capture(
+            runtime_config=config(path), athlete=athlete,
+            garmin_training_history=history, normalized_at=NOW)
+    assert not path.exists()
+
+
+def test_unsupported_item_with_invalid_nested_evidence_fails_before_sqlite(tmp_path):
+    path = tmp_path / "absent.db"
+    malformed = activity()
+    malformed["raw"]["activity_type"] = "strength_training"
+    malformed["metadata"] = {"nested": [{"bad": object()}]}
+    with pytest.raises(RuntimeActivityValidationError):
+        RuntimeActualSessionCapture().capture(
+            runtime_config=config(path), athlete={"source_id": "athlete"},
+            garmin_training_history=[malformed], normalized_at=NOW)
+    assert not path.exists()
+
+
+@pytest.mark.parametrize("kind", ["running", "strength_training"])
+def test_surrogate_in_runtime_evidence_fails_before_sqlite(tmp_path, kind):
+    path = tmp_path / "absent.db"
+    malformed = activity()
+    malformed["raw"]["activity_type"] = kind
+    malformed["metadata"] = {"nested": [{"bad": "\ud800"}]}
+
+    with pytest.raises(RuntimeActivityValidationError, match="invalid Unicode"):
+        RuntimeActualSessionCapture().capture(
+            runtime_config=config(path), athlete={"source_id": "athlete"},
+            garmin_training_history=[malformed], normalized_at=NOW)
+
+    assert not path.exists()
+
+
+def test_surrogate_in_athlete_identifier_fails_before_sqlite(tmp_path):
+    path = tmp_path / "absent.db"
+
+    with pytest.raises(RuntimeActivityValidationError, match="invalid Unicode"):
+        RuntimeActualSessionCapture().capture(
+            runtime_config=config(path), athlete={"source_id": "athlete:\ud800"},
+            garmin_training_history=[activity()], normalized_at=NOW)
+
     assert not path.exists()
 
 
@@ -61,3 +119,186 @@ def test_unsupported_is_explicit(tmp_path):
         athlete={"source_id": "athlete"}, garmin_training_history=[value],
         normalized_at=NOW)
     assert result.unsupported == (0,)
+
+
+def test_only_well_formed_unsupported_items_do_not_initialize_repository(tmp_path):
+    path = tmp_path / "sessions.db"
+    first = activity()
+    first["raw"]["activity_type"] = "strength_training"
+    second = activity()
+    second["activity_id"] = "garmin:2"
+    second["raw"]["activity_type"] = "elliptical"
+
+    result = RuntimeActualSessionCapture().capture(
+        runtime_config=config(path), athlete={"source_id": "athlete"},
+        garmin_training_history=[first, second], normalized_at=NOW)
+
+    assert result.unsupported == (0, 1)
+    assert not path.exists()
+
+
+def test_unsupported_semantics_cannot_hide_late_structural_batch_error(tmp_path):
+    path = tmp_path / "sessions.db"
+    malformed = activity()
+    malformed["activity_id"] = "garmin:2"
+    malformed["raw"]["activity_type"] = "strength_training"
+    malformed["duration_minutes"] = {}
+
+    with pytest.raises(RuntimeActivityValidationError, match="duration_minutes"):
+        RuntimeActualSessionCapture().capture(
+            runtime_config=config(path), athlete={"source_id": "athlete"},
+            garmin_training_history=[activity(), malformed], normalized_at=NOW)
+
+    assert not path.exists()
+
+
+def test_late_conflict_rolls_back_complete_batch(tmp_path):
+    service = RuntimeActualSessionCapture()
+    cfg = config(tmp_path / "sessions.db")
+    conflict = activity()
+    conflict["activity_id"] = "conflict"
+    conflict["duration_minutes"] = conflict["raw"]["duration_minutes"] = 1
+    service.capture(runtime_config=cfg, athlete={"source_id": "athlete"},
+                    garmin_training_history=[conflict], normalized_at=NOW)
+    new = activity()
+    new["activity_id"] = "new"
+    divergent = activity()
+    divergent["activity_id"] = "conflict"
+    divergent["duration_minutes"] = divergent["raw"]["duration_minutes"] = 2
+
+    with pytest.raises(ActualSessionConflictError):
+        service.capture(runtime_config=cfg, athlete={"source_id": "athlete"},
+                        garmin_training_history=[new, divergent], normalized_at=NOW)
+
+    from backend.maintain_plan.runtime_actual_session_adapter import runtime_actual_session_id
+    assert MaintainPlanRepository(cfg.maintain_plan_database_path).get_actual_session(
+        runtime_actual_session_id("athlete", "new")) is None
+    # A rollback must release the IMMEDIATE lock without waiting.
+    service.capture(runtime_config=cfg, athlete={"source_id": "athlete"},
+                    garmin_training_history=[new], normalized_at=NOW)
+
+
+def test_independent_connections_serialize_equivalent_batches(tmp_path):
+    cfg = config(tmp_path / "sessions.db")
+    # Migrations happen before the competing capture calls, exactly as they do
+    # during application startup; each capture still opens its own connection.
+    MaintainPlanRepository(cfg.maintain_plan_database_path)
+    batch = [activity()]
+    def capture():
+        return RuntimeActualSessionCapture().capture(
+            runtime_config=cfg, athlete={"source_id": "athlete"},
+            garmin_training_history=batch, normalized_at=NOW)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(lambda _: capture(), range(2)))
+    assert sum(len(item.created) for item in results) == 1
+    assert sum(len(item.reused) for item in results) == 1
+
+
+def test_structural_error_is_not_reported_as_unsupported_and_opens_no_db(tmp_path):
+    path = tmp_path / "sessions.db"
+    malformed = activity()
+    malformed.pop("activity_id")
+    with pytest.raises(ValueError, match="activity_id"):
+        RuntimeActualSessionCapture().capture(
+            runtime_config=config(path), athlete={"source_id": "athlete"},
+            garmin_training_history=[activity(), malformed], normalized_at=NOW)
+    assert not path.exists()
+
+
+@pytest.mark.parametrize(("field", "value"), [
+    ("normalized_at", datetime(2026, 9, 16)),
+    ("captured_at", datetime(2026, 9, 16)),
+    ("normalized_at", "2026-09-16T00:00:00Z"),
+    ("captured_at", 1),
+])
+def test_invalid_process_timestamp_raises_validation_error_before_database(
+        tmp_path, field, value):
+    path = tmp_path / "sessions.db"
+    arguments = {"runtime_config": config(path), "athlete": {"source_id": "athlete"},
+                 "garmin_training_history": [activity()], "normalized_at": NOW,
+                 "captured_at": NOW}
+    arguments[field] = value
+    with pytest.raises(RuntimeActivityValidationError, match=field):
+        RuntimeActualSessionCapture().capture(**arguments)
+    assert not path.exists()
+
+
+def test_aware_process_timestamps_are_accepted(tmp_path):
+    result = RuntimeActualSessionCapture().capture(
+        runtime_config=config(tmp_path / "sessions.db"),
+        athlete={"source_id": "athlete"}, garmin_training_history=[activity()],
+        normalized_at=NOW, captured_at=NOW)
+    assert len(result.created) == 1
+
+
+def test_late_malformed_classifier_prevents_any_database_creation(tmp_path):
+    path = tmp_path / "sessions.db"
+    malformed = activity()
+    malformed["activity_id"] = "garmin:2"
+    malformed["segments"] = [{"sport": []}]
+    with pytest.raises(RuntimeActivityValidationError):
+        RuntimeActualSessionCapture().capture(
+            runtime_config=config(path), athlete={"source_id": "athlete"},
+            garmin_training_history=[activity(), malformed], normalized_at=NOW)
+    assert not path.exists()
+
+
+@pytest.mark.parametrize("invalid", [True, "30", float("nan"), float("inf"), -1])
+@pytest.mark.parametrize("location", ["top-level", "raw"])
+def test_invalid_duration_prevents_database_initialization(tmp_path, location, invalid):
+    path = tmp_path / "sessions.db"
+    malformed = activity()
+    malformed["raw"]["duration_minutes"] = 30
+    if location == "top-level":
+        malformed["duration_minutes"] = invalid
+    else:
+        malformed["raw"]["duration_minutes"] = invalid
+
+    with pytest.raises(RuntimeActivityValidationError, match="duration_minutes"):
+        RuntimeActualSessionCapture().capture(
+            runtime_config=config(path), athlete={"source_id": "athlete"},
+            garmin_training_history=[malformed], normalized_at=NOW)
+    assert not path.exists()
+
+
+def test_late_oversized_duration_prevents_database_initialization(tmp_path):
+    path = tmp_path / "sessions.db"
+    malformed = activity()
+    malformed["activity_id"] = "garmin:2"
+    malformed["raw"]["duration_minutes"] = 10**10000
+
+    with pytest.raises(RuntimeActivityValidationError, match="duration_minutes"):
+        RuntimeActualSessionCapture().capture(
+            runtime_config=config(path), athlete={"source_id": "athlete"},
+            garmin_training_history=[activity(), malformed], normalized_at=NOW)
+
+    assert not path.exists()
+
+
+def test_concurrent_conflicting_batches_never_persist_prefixes(tmp_path):
+    cfg = config(tmp_path / "sessions.db")
+    service = RuntimeActualSessionCapture()
+    stored = activity()
+    stored["activity_id"] = "conflict"
+    stored["duration_minutes"] = stored["raw"]["duration_minutes"] = 1
+    service.capture(runtime_config=cfg, athlete={"source_id": "athlete"},
+                    garmin_training_history=[stored], normalized_at=NOW)
+
+    def conflicting(prefix):
+        new = activity()
+        new["activity_id"] = prefix
+        conflict = activity()
+        conflict["activity_id"] = "conflict"
+        conflict["duration_minutes"] = conflict["raw"]["duration_minutes"] = 2
+        with pytest.raises(ActualSessionConflictError):
+            RuntimeActualSessionCapture().capture(
+                runtime_config=cfg, athlete={"source_id": "athlete"},
+                garmin_training_history=[new, conflict], normalized_at=NOW)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        list(pool.map(conflicting, ("new-a", "new-b")))
+
+    from backend.maintain_plan.runtime_actual_session_adapter import runtime_actual_session_id
+    repository = MaintainPlanRepository(cfg.maintain_plan_database_path)
+    assert repository.get_actual_session(runtime_actual_session_id("athlete", "new-a")) is None
+    assert repository.get_actual_session(runtime_actual_session_id("athlete", "new-b")) is None
