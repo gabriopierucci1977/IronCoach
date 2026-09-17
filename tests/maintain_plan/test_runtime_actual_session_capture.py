@@ -89,6 +89,42 @@ def test_surrogate_in_athlete_identifier_fails_before_sqlite(tmp_path):
     assert not path.exists()
 
 
+def test_pathologically_deep_activity_stops_before_sqlite_and_later_unicode(tmp_path):
+    path = tmp_path / "absent.db"
+    nested = leaf = {}
+    for _ in range(10_000):
+        child = {}
+        leaf["unvisited_surrogate"] = "\ud800"
+        leaf["child"] = child
+        leaf = child
+    malformed = activity()
+    malformed["metadata"] = nested
+
+    with pytest.raises(RuntimeActivityValidationError, match="nested too deeply"):
+        RuntimeActualSessionCapture().capture(
+            runtime_config=config(path), athlete={"source_id": "athlete"},
+            garmin_training_history=[malformed], normalized_at=NOW)
+
+    assert not path.exists()
+
+
+def test_pathologically_deep_athlete_stops_before_sqlite(tmp_path):
+    path = tmp_path / "absent.db"
+    nested = leaf = {}
+    for _ in range(10_000):
+        child = {}
+        leaf["child"] = child
+        leaf = child
+
+    with pytest.raises(RuntimeActivityValidationError, match="nested too deeply"):
+        RuntimeActualSessionCapture().capture(
+            runtime_config=config(path),
+            athlete={"source_id": "athlete:🧑", "profile": nested},
+            garmin_training_history=[activity()], normalized_at=NOW)
+
+    assert not path.exists()
+
+
 @pytest.mark.parametrize(("raw", "expected"), [
     ("true", True), ("TRUE", True), ("TrUe", True), ("false", False),
     ("FALSE", False), ("", False), ("invalid", False),

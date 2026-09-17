@@ -51,14 +51,16 @@ def validate_runtime_string(value: str, label: str) -> None:
 
 
 def validate_runtime_unicode_tree(value: object, label: str) -> None:
-    """Validate every string key and value reachable through runtime containers."""
-    pending = [(value, label)]
+    """Validate strings in a runtime tree without walking past the depth limit."""
+    pending = [(value, label, 0)]
     visited = set()
     while pending:
-        item, path = pending.pop()
+        item, path, depth = pending.pop()
         if type(item) is str:
             validate_runtime_string(item, path)
         elif type(item) in (dict, list, tuple):
+            if depth >= _MAX_EVIDENCE_DEPTH:
+                raise RuntimeActivityValidationError(f"{path} is nested too deeply")
             identity = id(item)
             if identity in visited:
                 continue
@@ -67,9 +69,9 @@ def validate_runtime_unicode_tree(value: object, label: str) -> None:
                 for key, child in item.items():
                     if type(key) is str:
                         validate_runtime_string(key, path)
-                    pending.append((child, f"{path}[{key!r}]"))
+                    pending.append((child, f"{path}[{key!r}]", depth + 1))
             else:
-                pending.extend((child, f"{path}[{index}]")
+                pending.extend((child, f"{path}[{index}]", depth + 1)
                                for index, child in enumerate(item))
 
 
@@ -240,7 +242,7 @@ def build_actual_session(payload: dict, subject_ref: str, *, normalized_at: date
     if type(payload) is not dict:
         raise RuntimeActivityValidationError("activity must be an exact dict")
     subject = _required_identifier(subject_ref, "subject_ref")
-    validate_runtime_unicode_tree(payload, "activity")
+    _validate_evidence_tree(payload, "activity")
     activity_id = _required_identifier(payload.get("activity_id"), "activity_id")
     validate_process_timestamp(normalized_at, "normalized_at")
     validate_process_timestamp(captured_at, "captured_at", optional=True)
