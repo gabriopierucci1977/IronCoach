@@ -34,6 +34,98 @@ _DISCIPLINES = {
     "open_water_swimming": Discipline.SWIM, "swimming": Discipline.SWIM,
 }
 
+# Keep untrusted evidence comfortably below Python's recursion limit.  The
+# walk itself is iterative, so even hostile nesting fails deterministically.
+_MAX_EVIDENCE_DEPTH = 100
+_MAX_JSON_INTEGER = 10 ** 4300 - 1
+
+
+def validate_runtime_string(value: str, label: str) -> None:
+    """Reject strings that cannot be represented as strict UTF-8."""
+    try:
+        value.encode("utf-8", errors="strict")
+    except UnicodeEncodeError as error:
+        raise RuntimeActivityValidationError(
+            f"{label} contains invalid Unicode"
+        ) from error
+
+
+def validate_runtime_unicode_tree(value: object, label: str) -> None:
+    """Validate every string key and value reachable through runtime containers."""
+    pending = [(value, label)]
+    visited = set()
+    while pending:
+        item, path = pending.pop()
+        if type(item) is str:
+            validate_runtime_string(item, path)
+        elif type(item) in (dict, list, tuple):
+            identity = id(item)
+            if identity in visited:
+                continue
+            visited.add(identity)
+            if type(item) is dict:
+                for key, child in item.items():
+                    if type(key) is str:
+                        validate_runtime_string(key, path)
+                    pending.append((child, f"{path}[{key!r}]"))
+            else:
+                pending.extend((child, f"{path}[{index}]")
+                               for index, child in enumerate(item))
+
+
+def _validate_evidence_tree(value: object, label: str) -> None:
+    """Validate the exact JSON-shaped domain accepted as runtime evidence.
+
+    Lists and tuples are both accepted because the immutable model turns both
+    into tuples.  Mappings must be exact dictionaries with string keys.  This
+    deliberately excludes codec-adjacent Python objects (sets, custom
+    mappings, bytes and iterators) from the external Garmin trust boundary.
+    """
+    pending = [(value, label, 0, frozenset())]
+    while pending:
+        item, path, depth, ancestors = pending.pop()
+        item_type = type(item)
+        if item_type is str:
+            validate_runtime_string(item, path)
+            continue
+        if item is None or item_type is bool:
+            continue
+        if item_type is int:
+            if abs(item) > _MAX_JSON_INTEGER:
+                raise RuntimeActivityValidationError(
+                    f"{path} contains an integer that cannot be serialized"
+                )
+            continue
+        if item_type is float:
+            if not isfinite(item):
+                raise RuntimeActivityValidationError(
+                    f"{path} contains a non-finite number"
+                )
+            continue
+        if item_type not in (dict, list, tuple):
+            raise RuntimeActivityValidationError(
+                f"{path} contains an unsupported runtime value"
+            )
+        if depth >= _MAX_EVIDENCE_DEPTH:
+            raise RuntimeActivityValidationError(f"{path} is nested too deeply")
+        identity = id(item)
+        if identity in ancestors:
+            raise RuntimeActivityValidationError(f"{path} contains a recursive container")
+        child_ancestors = ancestors | {identity}
+        if item_type is dict:
+            for key, child in item.items():
+                if type(key) is not str:
+                    raise RuntimeActivityValidationError(
+                        f"{path} contains a non-string mapping key"
+                    )
+                validate_runtime_string(key, path)
+                pending.append((child, f"{path}[{key!r}]", depth + 1,
+                                child_ancestors))
+        else:
+            for index, child in enumerate(item):
+                pending.append((child, f"{path}[{index}]", depth + 1,
+                                child_ancestors))
+
 
 def validate_process_timestamp(value: object, label: str, *, optional: bool = False) -> None:
     """Validate a caller-supplied process timestamp at the trust boundary."""
@@ -57,6 +149,7 @@ def _classifier(value: object, label: str) -> str:
         raise RuntimeActivityValidationError(
             f"{label} must be an explicit non-empty string"
         )
+    validate_runtime_string(value, label)
     return value
 
 
@@ -77,12 +170,14 @@ derive_session_id = runtime_actual_session_id
 def _required_identifier(value: object, label: str) -> str:
     if type(value) is not str or not value or not value.strip():
         raise RuntimeActivityValidationError(f"{label} must be an explicit non-empty string")
+    validate_runtime_string(value, label)
     return value
 
 
 def _aware_timestamp(value: object, label: str) -> tuple[datetime, str]:
     if type(value) is not str:
         raise RuntimeActivityValidationError(f"{label} must be an explicit timestamp string")
+    validate_runtime_string(value, label)
     try:
         parsed = datetime.fromisoformat(value[:-1] + "+00:00" if value.endswith("Z") else value)
     except ValueError as error:
@@ -145,6 +240,7 @@ def build_actual_session(payload: dict, subject_ref: str, *, normalized_at: date
     if type(payload) is not dict:
         raise RuntimeActivityValidationError("activity must be an exact dict")
     subject = _required_identifier(subject_ref, "subject_ref")
+    validate_runtime_unicode_tree(payload, "activity")
     activity_id = _required_identifier(payload.get("activity_id"), "activity_id")
     validate_process_timestamp(normalized_at, "normalized_at")
     validate_process_timestamp(captured_at, "captured_at", optional=True)
@@ -163,6 +259,7 @@ def build_actual_session(payload: dict, subject_ref: str, *, normalized_at: date
     if segments is not None:
         if type(segments) is not list:
             raise RuntimeActivityValidationError("segments must be a list")
+        _validate_evidence_tree(segments, "segments")
         for segment in segments:
             if type(segment) is not dict:
                 raise RuntimeActivityValidationError("segments must contain objects")
@@ -196,6 +293,11 @@ def build_actual_session(payload: dict, subject_ref: str, *, normalized_at: date
     metadata = payload.get("metadata")
     if metadata is not None and type(metadata) is not dict:
         raise RuntimeActivityValidationError("metadata must be an object")
+    if metadata is not None:
+        _validate_evidence_tree(metadata, "metadata")
+    for name in ("source_id", "file_hash"):
+        if name in payload and payload[name] is not None:
+            _required_identifier(payload[name], name)
 
     # Phase 2: now, and only now, resolve the meaning of every classifier.
     if activity_type is None:
