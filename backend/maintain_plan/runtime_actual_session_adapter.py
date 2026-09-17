@@ -7,6 +7,7 @@ from copy import deepcopy
 from datetime import datetime
 from hashlib import sha256
 from math import isfinite
+from sys import float_info
 
 from .actual_session_normalizer import (
     ActualSessionInput, ActualSessionNormalizer, ComponentObservationInput,
@@ -94,13 +95,30 @@ def _aware_timestamp(value: object, label: str) -> tuple[datetime, str]:
     return parsed, zone
 
 
+def _validated_number(value: object, label: str) -> int | float:
+    if type(value) not in (int, float):
+        raise RuntimeActivityValidationError(
+            f"{label} must be a finite non-negative number"
+        )
+    try:
+        supported = float(value)
+        valid = (isfinite(supported) and supported >= 0
+                 and not (type(value) is int and value > float_info.max))
+    except (OverflowError, TypeError, ValueError) as error:
+        raise RuntimeActivityValidationError(
+            f"{label} must be a finite non-negative number"
+        ) from error
+    if not valid:
+        raise RuntimeActivityValidationError(
+            f"{label} must be a finite non-negative number"
+        )
+    return value
+
+
 def _number(payload: dict, name: str) -> int | float | None:
     if name not in payload or payload[name] is None:
         return None
-    value = payload[name]
-    if type(value) not in (int, float) or not isfinite(value) or value < 0:
-        raise RuntimeActivityValidationError(f"{name} must be a finite non-negative number")
-    return value
+    return _validated_number(payload[name], name)
 
 
 def _telemetry(payload: dict, group: str, fields: tuple[str, ...]) -> dict | None:
@@ -113,10 +131,7 @@ def _telemetry(payload: dict, group: str, fields: tuple[str, ...]) -> dict | Non
     for field in fields:
         if field not in raw or raw[field] is None:
             continue
-        value = raw[field]
-        if type(value) not in (int, float) or not isfinite(value) or value < 0:
-            raise RuntimeActivityValidationError(f"{group}.{field} must be valid")
-        result[field] = value
+        result[field] = _validated_number(raw[field], f"{group}.{field}")
     return result or None
 
 

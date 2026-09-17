@@ -206,6 +206,20 @@ def test_invalid_duration_prevents_database_initialization(tmp_path, location, i
     assert not path.exists()
 
 
+def test_late_oversized_duration_prevents_database_initialization(tmp_path):
+    path = tmp_path / "sessions.db"
+    malformed = activity()
+    malformed["activity_id"] = "garmin:2"
+    malformed["raw"]["duration_minutes"] = 10**10000
+
+    with pytest.raises(RuntimeActivityValidationError, match="duration_minutes"):
+        RuntimeActualSessionCapture().capture(
+            runtime_config=config(path), athlete={"source_id": "athlete"},
+            garmin_training_history=[activity(), malformed], normalized_at=NOW)
+
+    assert not path.exists()
+
+
 def test_concurrent_conflicting_batches_never_persist_prefixes(tmp_path):
     cfg = config(tmp_path / "sessions.db")
     service = RuntimeActualSessionCapture()
