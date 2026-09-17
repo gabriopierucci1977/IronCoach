@@ -25,6 +25,31 @@ from .validators import (validate_actual_session, validate_execution_evaluation,
                          validate_source_conflict_impact)
 
 
+class ActualSessionConflictError(ValueError):
+    """A deterministic session identity already has different semantics."""
+
+
+class ActualSessionCaptureTransaction:
+    def __init__(self, repository: "MaintainPlanRepository", connection: sqlite3.Connection):
+        self._repository = repository
+        self._connection = connection
+
+    def get_all(self, identifier: str) -> tuple[ActualSession, ...]:
+        rows = self._connection.execute(
+            "SELECT * FROM maintain_plan_actual_sessions WHERE session_id = ? ORDER BY rowid",
+            (identifier,),
+        ).fetchall()
+        return tuple(self._repository._decode_actual_session_row(row) for row in rows)
+
+    def create(self, value: ActualSession) -> None:
+        self._repository._require_valid(validate_actual_session(value))
+        self._connection.execute(
+            "INSERT INTO maintain_plan_actual_sessions VALUES (?, ?, ?, ?, ?, ?)",
+            (value.session_id, value.start.isoformat(), value.composition.value,
+             value.contract_version, PAYLOAD_SCHEMA_VERSION, serialize_contract(value)),
+        )
+
+
 class PrescriptionSnapshotTransaction:
     """Snapshot operations sharing one caller-owned SQLite transaction."""
 
@@ -162,6 +187,34 @@ class MaintainPlanRepository:
              None if value.composition is None else value.composition.value,
              value.contract_version, PAYLOAD_SCHEMA_VERSION, serialize_contract(value)),
         )
+
+    @contextmanager
+    def actual_session_capture_transaction(self) -> Iterator[ActualSessionCaptureTransaction]:
+        """Serialize append-only lookup and insertion under one write lock."""
+        connection = self._connect()
+        connection.row_factory = sqlite3.Row
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            yield ActualSessionCaptureTransaction(self, connection)
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+
+    def _decode_actual_session_row(self, row: sqlite3.Row) -> ActualSession:
+        if row["payload_schema_version"] != PAYLOAD_SCHEMA_VERSION:
+            raise ValueError("unsupported stored MAINTAIN_PLAN payload schema version")
+        value = deserialize_contract(row["payload_json"], ActualSession)
+        self._require_valid(validate_actual_session(value))
+        metadata = (value.session_id, value.start.isoformat(),
+                    None if value.composition is None else value.composition.value,
+                    value.contract_version)
+        if (row["session_id"], row["start"], row["composition"],
+                row["contract_version"]) != metadata:
+            raise ValueError("stored actual session metadata does not match payload")
+        return value
 
     def get_actual_session(self, identifier: str) -> ActualSession | None:
         stored = self._get("maintain_plan_actual_sessions", "session_id", identifier, ActualSession)

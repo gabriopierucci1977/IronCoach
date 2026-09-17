@@ -45,6 +45,10 @@ class ActivityNormalizer:
                     "Data allenamento",
                 ],
             ),
+            "end": self._get_value(
+                activity,
+                ["end", "end_time"],
+            ),
             "sport": self._normalize_sport(
                 self._get_value(
                     activity,

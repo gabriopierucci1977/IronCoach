@@ -49,6 +49,9 @@ from backend.workout_adapter import WorkoutAdapter
 from backend.maintain_plan.runtime_prescription_capture import (
     RuntimePrescriptionCapture,
 )
+from backend.maintain_plan.runtime_actual_session_capture import (
+    RuntimeActualSessionCapture,
+)
 
 
 APP_NAME = "IRONCOACH"
@@ -607,6 +610,19 @@ def run_pipeline(
 
         context_warnings.extend(
             garmin_sync_warnings
+        )
+
+    if not dry_run:
+        capture_time = datetime.now(timezone.utc)
+        _execute_phase(
+            "cattura attività MAINTAIN_PLAN",
+            lambda: RuntimeActualSessionCapture().capture(
+                runtime_config=runtime_config,
+                athlete=context.get("athlete"),
+                garmin_training_history=context.get("garmin_training_history"),
+                normalized_at=capture_time,
+                captured_at=capture_time,
+            ),
         )
 
     context = _execute_phase(

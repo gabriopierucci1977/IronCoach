@@ -17,6 +17,7 @@ class NormalizedActivity(TypedDict):
     source: str
     source_id: Any
     date: Any
+    end: Any
     sport: str
     workout_name: Any
     session_type: Any
