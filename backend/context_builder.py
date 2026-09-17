@@ -552,7 +552,9 @@ class ContextBuilder:
             "source_id": activity.source_id,
             "date": activity.start_time,
             "start_date": activity.start_time,
-            "end_time": activity.end_time,
+            # IronCoachActivity does not retain end-time provenance.  Garmin
+            # importers currently derive this field from start + duration, so
+            # it cannot be projected as an observed runtime boundary.
             "sport": activity.sport,
             "activity_type": activity.activity_type,
             "duration_minutes": self._seconds_to_minutes(
