@@ -177,8 +177,12 @@ def build_actual_session(payload: dict, subject_ref: str, *, normalized_at: date
         if end < start:
             raise RuntimeActivityValidationError("end must not precede start")
     duration = _number(payload, "duration_minutes")
-    if raw.get("duration_minutes") is None:
-        duration = None
+    # Duration missingness is already preserved by ActivityNormalizer, so the
+    # canonical top-level value is the observation.  The raw field is optional
+    # provenance rather than a required duplicate, but validate it whenever it
+    # is supplied so malformed source data cannot be hidden by a valid
+    # projection.
+    _number(raw, "duration_minutes")
     # Distance is preserved only where explicit provenance distinguishes it
     # from ActivityNormalizer's synthetic zero.
     distance = (_number(payload, "distance_km")

@@ -59,6 +59,45 @@ def test_identity_vector_and_input_immutability():
     )
 
 
+@pytest.mark.parametrize(("duration", "expected"), [
+    (30, 30),
+    (0, 0),
+    (None, None),
+])
+def test_top_level_duration_does_not_require_raw_duplication(duration, expected):
+    value = activity()
+    value["duration_minutes"] = duration
+    assert "duration_minutes" not in value["raw"]
+
+    result = build_actual_session(value, "athlete", normalized_at=NOW)
+
+    metrics = {item["metric"]: item["value"]
+               for item in result.components[0].secondary_metrics}
+    assert metrics.get("duration") == expected
+    assert ("duration" in metrics) is (expected is not None)
+
+
+def test_absent_top_level_duration_remains_missing():
+    value = activity()
+    value.pop("duration_minutes")
+    result = build_actual_session(value, "athlete", normalized_at=NOW)
+    assert all(item["metric"] != "duration"
+               for item in result.components[0].secondary_metrics)
+
+
+@pytest.mark.parametrize("invalid", [True, "30", float("nan"), float("inf"), -1])
+@pytest.mark.parametrize("location", ["top-level", "raw"])
+def test_invalid_duration_is_rejected_at_either_projection_level(location, invalid):
+    value = activity()
+    value["raw"]["duration_minutes"] = 30
+    if location == "top-level":
+        value["duration_minutes"] = invalid
+    else:
+        value["raw"]["duration_minutes"] = invalid
+    with pytest.raises(RuntimeActivityValidationError, match="duration_minutes"):
+        build_actual_session(value, "athlete", normalized_at=NOW)
+
+
 @pytest.mark.parametrize("segments", [
     [{"sport": "BIKE"}], [{"sport": "bike"}],
     [{"activity_type": "strength_training"}], [{}],

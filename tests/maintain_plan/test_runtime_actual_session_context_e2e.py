@@ -48,8 +48,9 @@ def test_invalid_source_numbers_fail_deterministically(duration, distance):
         convert(duration, distance)
 
 
-def test_adapter_does_not_treat_normalizer_synthetic_zero_as_observed():
+def test_adapter_preserves_explicit_duration_but_not_synthetic_distance():
     projected, _ = convert(None, None)
     projected["duration_minutes"] = projected["distance_km"] = 0.0
     session = build_actual_session(projected, "athlete", normalized_at=NOW)
-    assert session.components[0].secondary_metrics == ()
+    assert [(item["metric"], item["value"])
+            for item in session.components[0].secondary_metrics] == [("duration", 0.0)]
