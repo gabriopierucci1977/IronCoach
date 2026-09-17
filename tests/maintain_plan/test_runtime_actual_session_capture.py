@@ -66,6 +66,37 @@ def test_unsupported_is_explicit(tmp_path):
     assert result.unsupported == (0,)
 
 
+def test_only_well_formed_unsupported_items_do_not_initialize_repository(tmp_path):
+    path = tmp_path / "sessions.db"
+    first = activity()
+    first["raw"]["activity_type"] = "strength_training"
+    second = activity()
+    second["activity_id"] = "garmin:2"
+    second["raw"]["activity_type"] = "elliptical"
+
+    result = RuntimeActualSessionCapture().capture(
+        runtime_config=config(path), athlete={"source_id": "athlete"},
+        garmin_training_history=[first, second], normalized_at=NOW)
+
+    assert result.unsupported == (0, 1)
+    assert not path.exists()
+
+
+def test_unsupported_semantics_cannot_hide_late_structural_batch_error(tmp_path):
+    path = tmp_path / "sessions.db"
+    malformed = activity()
+    malformed["activity_id"] = "garmin:2"
+    malformed["raw"]["activity_type"] = "strength_training"
+    malformed["duration_minutes"] = {}
+
+    with pytest.raises(RuntimeActivityValidationError, match="duration_minutes"):
+        RuntimeActualSessionCapture().capture(
+            runtime_config=config(path), athlete={"source_id": "athlete"},
+            garmin_training_history=[activity(), malformed], normalized_at=NOW)
+
+    assert not path.exists()
+
+
 def test_late_conflict_rolls_back_complete_batch(tmp_path):
     service = RuntimeActualSessionCapture()
     cfg = config(tmp_path / "sessions.db")
