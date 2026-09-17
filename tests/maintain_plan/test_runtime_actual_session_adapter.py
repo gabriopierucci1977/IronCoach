@@ -1,5 +1,6 @@
 from copy import deepcopy
 from datetime import datetime, timezone
+import sys
 
 import pytest
 
@@ -59,6 +60,98 @@ def test_identity_vector_and_input_immutability():
     )
 
 
+@pytest.mark.parametrize(("duration", "expected"), [
+    (30, 30),
+    (0, 0),
+    (None, None),
+])
+def test_top_level_duration_does_not_require_raw_duplication(duration, expected):
+    value = activity()
+    value["duration_minutes"] = duration
+    assert "duration_minutes" not in value["raw"]
+
+    result = build_actual_session(value, "athlete", normalized_at=NOW)
+
+    metrics = {item["metric"]: item["value"]
+               for item in result.components[0].secondary_metrics}
+    assert metrics.get("duration") == expected
+    assert ("duration" in metrics) is (expected is not None)
+
+
+def test_absent_top_level_duration_remains_missing():
+    value = activity()
+    value.pop("duration_minutes")
+    result = build_actual_session(value, "athlete", normalized_at=NOW)
+    assert all(item["metric"] != "duration"
+               for item in result.components[0].secondary_metrics)
+
+
+@pytest.mark.parametrize("invalid", [True, "30", float("nan"), float("inf"), -1])
+@pytest.mark.parametrize("location", ["top-level", "raw"])
+def test_invalid_duration_is_rejected_at_either_projection_level(location, invalid):
+    value = activity()
+    value["raw"]["duration_minutes"] = 30
+    if location == "top-level":
+        value["duration_minutes"] = invalid
+    else:
+        value["raw"]["duration_minutes"] = invalid
+    with pytest.raises(RuntimeActivityValidationError, match="duration_minutes"):
+        build_actual_session(value, "athlete", normalized_at=NOW)
+
+
+class NonNumeric:
+    pass
+
+
+@pytest.mark.parametrize("kind", ["running", "strength_training"])
+@pytest.mark.parametrize("invalid", [
+    10**10000, -(10**10000), int(sys.float_info.max) + 1,
+    float("nan"), float("inf"), float("-inf"), True, False, "30", {}, [],
+    NonNumeric(),
+], ids=[
+    "huge-positive", "huge-negative", "above-float-max", "nan", "positive-inf",
+    "negative-inf", "true", "false", "numeric-string", "dict", "list", "object",
+])
+def test_all_invalid_numeric_shapes_are_validation_errors_before_classification(
+        kind, invalid):
+    value = activity(kind)
+    value["raw"]["duration_minutes"] = invalid
+
+    with pytest.raises(RuntimeActivityValidationError, match="duration_minutes"):
+        build_actual_session(value, "athlete", normalized_at=NOW)
+
+
+@pytest.mark.parametrize("kind", ["running", "strength_training"])
+@pytest.mark.parametrize("location", [
+    "duration_minutes", "raw.duration_minutes", "distance_km",
+    "raw.distance_km", "heart_rate.average", "power.average",
+])
+@pytest.mark.parametrize("invalid", [10**10000, -(10**10000)],
+                         ids=["huge-positive", "huge-negative"])
+def test_oversized_numbers_are_rejected_at_every_numeric_boundary(
+        kind, location, invalid):
+    value = activity(kind)
+    target = value
+    parts = location.split(".")
+    for part in parts[:-1]:
+        target = target[part]
+    target[parts[-1]] = invalid
+
+    with pytest.raises(RuntimeActivityValidationError):
+        build_actual_session(value, "athlete", normalized_at=NOW)
+
+
+def test_maximum_finite_float_is_preserved():
+    value = activity()
+    value["duration_minutes"] = sys.float_info.max
+
+    result = build_actual_session(value, "athlete", normalized_at=NOW)
+
+    duration = next(metric for metric in result.components[0].secondary_metrics
+                    if metric["metric"] == "duration")
+    assert duration["value"] == sys.float_info.max
+
+
 @pytest.mark.parametrize("segments", [
     [{"sport": "BIKE"}], [{"sport": "bike"}],
     [{"activity_type": "strength_training"}], [{}],
@@ -114,3 +207,47 @@ def test_structural_failures_raise_stable_validation_error(field, value):
     candidate[field] = value
     with pytest.raises(RuntimeActivityValidationError):
         build_actual_session(candidate, "athlete", normalized_at=NOW)
+
+
+def _set_raw_duration(candidate):
+    candidate["raw"]["duration_minutes"] = {}
+
+
+def _set_segment_classifier(candidate):
+    candidate["segments"] = [{"sport": 1}]
+
+
+@pytest.mark.parametrize("make_invalid", [
+    lambda value: value.__setitem__("duration_minutes", {}),
+    _set_raw_duration,
+    lambda value: value.__setitem__("duration_minutes", True),
+    lambda value: value.__setitem__("duration_minutes", float("nan")),
+    lambda value: value.__setitem__("distance_km", {}),
+    lambda value: value["raw"].__setitem__("distance_km", {}),
+    lambda value: value.__setitem__("heart_rate", []),
+    lambda value: value.__setitem__("power", "invalid"),
+    lambda value: value.__setitem__("metadata", []),
+    lambda value: value.__setitem__("segments", {}),
+    lambda value: value.__setitem__("segments", ["running"]),
+    _set_segment_classifier,
+    lambda value: value.__setitem__("activity_id", []),
+    lambda value: value.__setitem__("date", "2026-09-15T08:00:00"),
+], ids=[
+    "top-level-duration-object", "raw-duration-object", "duration-bool",
+    "duration-nan", "distance-object", "raw-distance-object",
+    "heart-rate-not-object", "power-not-object", "metadata-not-object",
+    "segments-not-list", "segment-not-object", "segment-classifier-not-string",
+    "activity-id-not-string", "naive-timestamp",
+])
+def test_structural_validation_precedes_unsupported_classification(make_invalid):
+    candidate = activity("strength_training")
+    make_invalid(candidate)
+
+    with pytest.raises(RuntimeActivityValidationError):
+        build_actual_session(candidate, "athlete", normalized_at=NOW)
+
+
+def test_well_formed_unsupported_activity_remains_unsupported():
+    with pytest.raises(UnsupportedRuntimeActivity):
+        build_actual_session(activity("strength_training"), "athlete",
+                             normalized_at=NOW)

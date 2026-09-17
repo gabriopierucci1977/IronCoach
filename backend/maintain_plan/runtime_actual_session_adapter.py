@@ -7,6 +7,7 @@ from copy import deepcopy
 from datetime import datetime
 from hashlib import sha256
 from math import isfinite
+from sys import float_info
 
 from .actual_session_normalizer import (
     ActualSessionInput, ActualSessionNormalizer, ComponentObservationInput,
@@ -94,13 +95,30 @@ def _aware_timestamp(value: object, label: str) -> tuple[datetime, str]:
     return parsed, zone
 
 
+def _validated_number(value: object, label: str) -> int | float:
+    if type(value) not in (int, float):
+        raise RuntimeActivityValidationError(
+            f"{label} must be a finite non-negative number"
+        )
+    try:
+        supported = float(value)
+        valid = (isfinite(supported) and supported >= 0
+                 and not (type(value) is int and value > float_info.max))
+    except (OverflowError, TypeError, ValueError) as error:
+        raise RuntimeActivityValidationError(
+            f"{label} must be a finite non-negative number"
+        ) from error
+    if not valid:
+        raise RuntimeActivityValidationError(
+            f"{label} must be a finite non-negative number"
+        )
+    return value
+
+
 def _number(payload: dict, name: str) -> int | float | None:
     if name not in payload or payload[name] is None:
         return None
-    value = payload[name]
-    if type(value) not in (int, float) or not isfinite(value) or value < 0:
-        raise RuntimeActivityValidationError(f"{name} must be a finite non-negative number")
-    return value
+    return _validated_number(payload[name], name)
 
 
 def _telemetry(payload: dict, group: str, fields: tuple[str, ...]) -> dict | None:
@@ -113,16 +131,17 @@ def _telemetry(payload: dict, group: str, fields: tuple[str, ...]) -> dict | Non
     for field in fields:
         if field not in raw or raw[field] is None:
             continue
-        value = raw[field]
-        if type(value) not in (int, float) or not isfinite(value) or value < 0:
-            raise RuntimeActivityValidationError(f"{group}.{field} must be valid")
-        result[field] = value
+        result[field] = _validated_number(raw[field], f"{group}.{field}")
     return result or None
 
 
 def build_actual_session(payload: dict, subject_ref: str, *, normalized_at: datetime,
                          captured_at: datetime | None = None):
     """Validate and normalize one untrusted projected Garmin activity."""
+    # Phase 1: exhaustively validate the structural contract.  Do not perform
+    # any classification in this phase: callers deliberately treat
+    # UnsupportedRuntimeActivity as a non-error, so raising it before all
+    # structural checks would hide corrupt input.
     if type(payload) is not dict:
         raise RuntimeActivityValidationError("activity must be an exact dict")
     subject = _required_identifier(subject_ref, "subject_ref")
@@ -133,20 +152,14 @@ def build_actual_session(payload: dict, subject_ref: str, *, normalized_at: date
     raw = payload.get("raw")
     if type(raw) is not dict:
         raise RuntimeActivityValidationError("raw must be an object")
-    if "activity_type" not in raw:
-        raise UnsupportedRuntimeActivity("raw.activity_type is required")
-    activity_type = _classifier(raw["activity_type"], "raw.activity_type")
-    discipline = _DISCIPLINES.get(activity_type)
-    if discipline is None:
-        raise UnsupportedRuntimeActivity("raw.activity_type is unsupported")
+    activity_type = (_classifier(raw["activity_type"], "raw.activity_type")
+                     if "activity_type" in raw else None)
+    sport = None
     if "sport" in payload:
         sport = _classifier(payload["sport"], "sport")
-        if sport not in {item.value for item in Discipline}:
-            raise UnsupportedRuntimeActivity("sport is unsupported")
-        if sport != discipline.value:
-            raise UnsupportedRuntimeActivity("sport contradicts raw.activity_type")
 
     segments = payload.get("segments")
+    segment_classifiers = []
     if segments is not None:
         if type(segments) is not list:
             raise RuntimeActivityValidationError("segments must be a list")
@@ -158,17 +171,7 @@ def build_actual_session(payload: dict, subject_ref: str, *, normalized_at: date
             # never reach ``dict.get``.
             present = [(name, _classifier(segment[name], f"segment.{name}"))
                        for name in ("activity_type", "sport") if name in segment]
-            classifiers = []
-            for name, classifier in present:
-                if name == "activity_type":
-                    classifiers.append(_DISCIPLINES.get(classifier))
-                else:
-                    classifiers.append(next((item for item in Discipline
-                                             if item.value == classifier), None))
-            if not classifiers or any(item is None for item in classifiers):
-                raise UnsupportedRuntimeActivity("segment classification is unsupported")
-            if len(set(classifiers)) != 1 or classifiers[0] is not discipline:
-                raise UnsupportedRuntimeActivity("multi-discipline segments are unsupported")
+            segment_classifiers.append(present)
 
     start, timezone_name = _aware_timestamp(payload.get("date"), "date")
     end = None
@@ -177,17 +180,46 @@ def build_actual_session(payload: dict, subject_ref: str, *, normalized_at: date
         if end < start:
             raise RuntimeActivityValidationError("end must not precede start")
     duration = _number(payload, "duration_minutes")
-    if raw.get("duration_minutes") is None:
-        duration = None
+    # Duration missingness is already preserved by ActivityNormalizer, so the
+    # canonical top-level value is the observation.  The raw field is optional
+    # provenance rather than a required duplicate, but validate it whenever it
+    # is supplied so malformed source data cannot be hidden by a valid
+    # projection.
+    _number(raw, "duration_minutes")
+    projected_distance = _number(payload, "distance_km")
+    raw_distance = _number(raw, "distance_km")
     # Distance is preserved only where explicit provenance distinguishes it
     # from ActivityNormalizer's synthetic zero.
-    distance = (_number(payload, "distance_km")
-                if raw.get("distance_km") is not None else None)
+    distance = projected_distance if raw_distance is not None else None
     heart_rate = _telemetry(payload, "heart_rate", ("average", "max"))
     power = _telemetry(payload, "power", ("average", "normalized"))
     metadata = payload.get("metadata")
     if metadata is not None and type(metadata) is not dict:
         raise RuntimeActivityValidationError("metadata must be an object")
+
+    # Phase 2: now, and only now, resolve the meaning of every classifier.
+    if activity_type is None:
+        raise UnsupportedRuntimeActivity("raw.activity_type is required")
+    discipline = _DISCIPLINES.get(activity_type)
+    if discipline is None:
+        raise UnsupportedRuntimeActivity("raw.activity_type is unsupported")
+    if sport is not None:
+        if sport not in {item.value for item in Discipline}:
+            raise UnsupportedRuntimeActivity("sport is unsupported")
+        if sport != discipline.value:
+            raise UnsupportedRuntimeActivity("sport contradicts raw.activity_type")
+    for present in segment_classifiers:
+        classifiers = []
+        for name, classifier in present:
+            if name == "activity_type":
+                classifiers.append(_DISCIPLINES.get(classifier))
+            else:
+                classifiers.append(next((item for item in Discipline
+                                         if item.value == classifier), None))
+        if not classifiers or any(item is None for item in classifiers):
+            raise UnsupportedRuntimeActivity("segment classification is unsupported")
+        if len(set(classifiers)) != 1 or classifiers[0] is not discipline:
+            raise UnsupportedRuntimeActivity("multi-discipline segments are unsupported")
 
     raw_ids = {"activity_id": activity_id}
     for name in ("source_id", "file_hash"):
