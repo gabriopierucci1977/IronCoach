@@ -350,6 +350,22 @@ def test_recursive_and_pathologically_nested_evidence_is_rejected():
         build_actual_session(candidate, "athlete", normalized_at=NOW)
 
 
+def test_depth_limit_stops_before_scanning_the_rest_of_a_pathological_tree():
+    nested = leaf = {}
+    for _ in range(10_000):
+        child = {}
+        # The sibling would raise UnicodeEncodeError if the preliminary scan
+        # continued after discovering that the child exceeds the depth bound.
+        leaf["unvisited_surrogate"] = "\ud800"
+        leaf["child"] = child
+        leaf = child
+    candidate = activity()
+    candidate["metadata"] = nested
+
+    with pytest.raises(RuntimeActivityValidationError, match="nested too deeply"):
+        build_actual_session(candidate, "athlete", normalized_at=NOW)
+
+
 def test_deep_valid_evidence_is_preserved_and_codec_serializable():
     nested = leaf = {}
     for index in range(50):
