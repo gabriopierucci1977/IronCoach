@@ -254,6 +254,43 @@ def test_well_formed_unsupported_activity_remains_unsupported():
                              normalized_at=NOW)
 
 
+@pytest.mark.parametrize("kind", ["running", "strength_training"])
+@pytest.mark.parametrize("mutate", [
+    lambda value: value["metadata"].__setitem__("note", "\ud800"),
+    lambda value: value["metadata"].__setitem__("\ud800", "note"),
+    lambda value: value.__setitem__("segments", [{"sport": "RUN", "note": "\ud800"}]),
+    lambda value: value.__setitem__("segments", [{"sport": "RUN", "\ud800": "note"}]),
+    lambda value: value.__setitem__("activity_id", "garmin:\ud800"),
+    lambda value: value.__setitem__("source_id", "source:\ud800"),
+    lambda value: value.__setitem__("file_hash", "hash:\ud800"),
+], ids=[
+    "metadata-value", "metadata-key", "segment-value", "segment-key",
+    "activity-id", "source-id", "file-hash",
+])
+def test_isolated_surrogates_fail_before_classification(kind, mutate):
+    candidate = activity(kind)
+    mutate(candidate)
+
+    with pytest.raises(RuntimeActivityValidationError, match="invalid Unicode"):
+        build_actual_session(candidate, "athlete", normalized_at=NOW)
+
+
+def test_valid_unicode_including_emoji_is_preserved():
+    candidate = activity()
+    candidate["activity_id"] = "garmin:🏃"
+    candidate["source_id"] = "orologio:⌚"
+    candidate["file_hash"] = "hash:🔒"
+    candidate["metadata"] = {"emoji-😀": {"nota": "allenamento 🏃‍♀️"}}
+    candidate["segments"] = [{"sport": "RUN", "nota": "veloce 🚀"}]
+
+    result = build_actual_session(candidate, "atleta:🧑", normalized_at=NOW)
+
+    assert result.source_activities[0].original_activity_id == "garmin:🏃"
+    assert result.source_activities[0].provenance["metadata"]["emoji-😀"]["nota"] == (
+        "allenamento 🏃‍♀️"
+    )
+
+
 class Arbitrary:
     pass
 

@@ -11,7 +11,8 @@ from typing import Any
 from .repository import ActualSessionConflictError, MaintainPlanRepository
 from .runtime_actual_session_adapter import (
     RuntimeActivityValidationError, UnsupportedRuntimeActivity,
-    build_actual_session, validate_process_timestamp,
+    build_actual_session, validate_process_timestamp, validate_runtime_string,
+    validate_runtime_unicode_tree,
 )
 from .serialization import serialize_contract
 
@@ -48,11 +49,13 @@ class RuntimeActualSessionCapture:
             return None
         if type(athlete) is not dict:
             raise RuntimeActivityValidationError("athlete must be an exact dict")
+        validate_runtime_unicode_tree(athlete, "athlete")
         subject_ref = athlete.get("source_id")
         if type(subject_ref) is not str or not subject_ref or not subject_ref.strip():
             raise RuntimeActivityValidationError(
                 "athlete.source_id must be an explicit non-empty string"
             )
+        validate_runtime_string(subject_ref, "athlete.source_id")
         if type(garmin_training_history) is not list:
             raise RuntimeActivityValidationError(
                 "garmin_training_history must be an exact list"
