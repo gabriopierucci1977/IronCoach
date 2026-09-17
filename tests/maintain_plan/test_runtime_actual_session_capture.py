@@ -63,6 +63,32 @@ def test_unsupported_item_with_invalid_nested_evidence_fails_before_sqlite(tmp_p
     assert not path.exists()
 
 
+@pytest.mark.parametrize("kind", ["running", "strength_training"])
+def test_surrogate_in_runtime_evidence_fails_before_sqlite(tmp_path, kind):
+    path = tmp_path / "absent.db"
+    malformed = activity()
+    malformed["raw"]["activity_type"] = kind
+    malformed["metadata"] = {"nested": [{"bad": "\ud800"}]}
+
+    with pytest.raises(RuntimeActivityValidationError, match="invalid Unicode"):
+        RuntimeActualSessionCapture().capture(
+            runtime_config=config(path), athlete={"source_id": "athlete"},
+            garmin_training_history=[malformed], normalized_at=NOW)
+
+    assert not path.exists()
+
+
+def test_surrogate_in_athlete_identifier_fails_before_sqlite(tmp_path):
+    path = tmp_path / "absent.db"
+
+    with pytest.raises(RuntimeActivityValidationError, match="invalid Unicode"):
+        RuntimeActualSessionCapture().capture(
+            runtime_config=config(path), athlete={"source_id": "athlete:\ud800"},
+            garmin_training_history=[activity()], normalized_at=NOW)
+
+    assert not path.exists()
+
+
 @pytest.mark.parametrize(("raw", "expected"), [
     ("true", True), ("TRUE", True), ("TrUe", True), ("false", False),
     ("FALSE", False), ("", False), ("invalid", False),
