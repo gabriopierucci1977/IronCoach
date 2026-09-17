@@ -31,11 +31,19 @@ def test_closed_mapping(kind, sport, discipline):
     assert result.components[0].discipline is discipline
 
 
-@pytest.mark.parametrize("kind", [None, 1, "Running", " running", "foo_running", "triathlon"])
+@pytest.mark.parametrize("kind", ["Running", " running", "foo_running", "triathlon"])
 def test_unsupported_classification(kind):
     value = activity()
     value["raw"]["activity_type"] = kind
     with pytest.raises(UnsupportedRuntimeActivity):
+        build_actual_session(value, "athlete", normalized_at=NOW)
+
+
+@pytest.mark.parametrize("kind", [None, 1, [], {}, True, ""])
+def test_structurally_invalid_activity_type_is_a_validation_error(kind):
+    value = activity()
+    value["raw"]["activity_type"] = kind
+    with pytest.raises(RuntimeActivityValidationError):
         build_actual_session(value, "athlete", normalized_at=NOW)
 
 
@@ -73,6 +81,25 @@ def test_homogeneous_segments_are_preserved_as_evidence():
 def test_malformed_segment_is_a_technical_error():
     value = activity()
     value["segments"] = ["RUN"]
+    with pytest.raises(RuntimeActivityValidationError):
+        build_actual_session(value, "athlete", normalized_at=NOW)
+
+
+@pytest.mark.parametrize(("field", "invalid"), [
+    ("sport", 1), ("sport", []), ("sport", None), ("sport", True),
+    ("sport", ""), ("activity_type", 1), ("activity_type", []),
+    ("activity_type", {}), ("activity_type", None),
+])
+def test_structurally_invalid_segment_classifier_is_a_validation_error(field, invalid):
+    value = activity()
+    value["segments"] = [{field: invalid}]
+    with pytest.raises(RuntimeActivityValidationError):
+        build_actual_session(value, "athlete", normalized_at=NOW)
+
+
+def test_all_segment_classifiers_are_validated_before_comparison():
+    value = activity()
+    value["segments"] = [{"sport": "BIKE", "activity_type": []}]
     with pytest.raises(RuntimeActivityValidationError):
         build_actual_session(value, "athlete", normalized_at=NOW)
 

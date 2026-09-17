@@ -6,6 +6,7 @@ import pytest
 from backend.config import RuntimeConfig
 from backend.maintain_plan.repository import ActualSessionConflictError
 from backend.maintain_plan.runtime_actual_session_capture import RuntimeActualSessionCapture
+from backend.maintain_plan.runtime_actual_session_adapter import RuntimeActivityValidationError
 from backend.maintain_plan.repository import MaintainPlanRepository
 
 
@@ -112,6 +113,44 @@ def test_structural_error_is_not_reported_as_unsupported_and_opens_no_db(tmp_pat
     malformed = activity()
     malformed.pop("activity_id")
     with pytest.raises(ValueError, match="activity_id"):
+        RuntimeActualSessionCapture().capture(
+            runtime_config=config(path), athlete={"source_id": "athlete"},
+            garmin_training_history=[activity(), malformed], normalized_at=NOW)
+    assert not path.exists()
+
+
+@pytest.mark.parametrize(("field", "value"), [
+    ("normalized_at", datetime(2026, 9, 16)),
+    ("captured_at", datetime(2026, 9, 16)),
+    ("normalized_at", "2026-09-16T00:00:00Z"),
+    ("captured_at", 1),
+])
+def test_invalid_process_timestamp_raises_validation_error_before_database(
+        tmp_path, field, value):
+    path = tmp_path / "sessions.db"
+    arguments = {"runtime_config": config(path), "athlete": {"source_id": "athlete"},
+                 "garmin_training_history": [activity()], "normalized_at": NOW,
+                 "captured_at": NOW}
+    arguments[field] = value
+    with pytest.raises(RuntimeActivityValidationError, match=field):
+        RuntimeActualSessionCapture().capture(**arguments)
+    assert not path.exists()
+
+
+def test_aware_process_timestamps_are_accepted(tmp_path):
+    result = RuntimeActualSessionCapture().capture(
+        runtime_config=config(tmp_path / "sessions.db"),
+        athlete={"source_id": "athlete"}, garmin_training_history=[activity()],
+        normalized_at=NOW, captured_at=NOW)
+    assert len(result.created) == 1
+
+
+def test_late_malformed_classifier_prevents_any_database_creation(tmp_path):
+    path = tmp_path / "sessions.db"
+    malformed = activity()
+    malformed["activity_id"] = "garmin:2"
+    malformed["segments"] = [{"sport": []}]
+    with pytest.raises(RuntimeActivityValidationError):
         RuntimeActualSessionCapture().capture(
             runtime_config=config(path), athlete={"source_id": "athlete"},
             garmin_training_history=[activity(), malformed], normalized_at=NOW)
