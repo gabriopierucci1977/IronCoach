@@ -552,6 +552,12 @@ riutilizzata dalla stability.
 
 ## 5. Attività eseguita e matching
 
+Il futuro boundary applicativo di discovery e matching, inclusi ownership v7,
+ordine runtime, dry-run, transazioni e compatibilità legacy, è specificato nel
+[contratto runtime matching](MAINTAIN_PLAN_RUNTIME_MATCHING_CONTRACT.md). Le
+regole di dominio di questa sezione restano normative e non sono sostituite da
+quel documento.
+
 ### 5.1 Schema canonico
 
 ```yaml

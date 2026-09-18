@@ -40,6 +40,11 @@ Questo controllo non modifica il matcher puro, le sue finestre, i tie-break o
 gli stati. Non autorizza candidate discovery runtime né sintetizza
 `returned_prescription_id`.
 
+Il boundary che potrà usare questo binding per discovery e associazione è
+definito separatamente nel
+[contratto runtime matching](MAINTAIN_PLAN_RUNTIME_MATCHING_CONTRACT.md); il
+presente documento non ne abilita il wiring.
+
 ## 4. Persistenza, retry e idempotenza
 
 La migrazione v7 è append-only: aggiunge una colonna `subject_ref` nullable a
@@ -67,4 +72,3 @@ Questo slice introduce esclusivamente ownership comune, persistenza v7,
 validazione fail-closed e wiring dell'identità autorevole nella cattura della
 prescrizione. Restano fuori scope: modifiche al matcher, candidate discovery,
 evaluation, reporting, learning, modifica del piano e Coach Engine.
-

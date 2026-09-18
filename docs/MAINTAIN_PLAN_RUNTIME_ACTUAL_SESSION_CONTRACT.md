@@ -299,6 +299,11 @@ Qualunque mapping persistito DEVE ora superare il confronto esatto e
 fail-closed previsto dal contratto dedicato; i record legacy senza binding non
 sono eleggibili.
 
+Ordine runtime, candidate discovery e transazione del futuro collegamento sono
+definiti dal
+[contratto runtime matching](MAINTAIN_PLAN_RUNTIME_MATCHING_CONTRACT.md), senza
+estendere il perimetro di cattura di questo documento.
+
 ## 11. Criteri di accettazione
 
 Il futuro servizio P0 è conforme soltanto se:
