@@ -44,7 +44,9 @@ Il boundary che potrà usare questo binding per discovery e associazione è
 definito separatamente nel
 [contratto runtime matching](MAINTAIN_PLAN_RUNTIME_MATCHING_CONTRACT.md), che
 estende la stessa uguaglianza byte-per-byte allo scope di sincronizzazione e
-alle confirmation discovery; il
+alle confirmation discovery e prescrive che v7→v8 indicizzi
+transazionalmente ogni snapshot ownership-bound valido, lasciando non
+indicizzati quelli legacy con ownership nulla; il
 presente documento non ne abilita il wiring.
 
 ## 4. Persistenza, retry e idempotenza

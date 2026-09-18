@@ -85,22 +85,35 @@ Namespace: `maintain-plan:sync-coverage:v1:sha256:<64 hex>`. Retry con stesso
 ID e contenuto equivalente restituisce la riga esistente; contenuto divergente
 fallisce. Nessun matching è consentito usando il solo state file legacy.
 
-### 3.2 Relevance scope
+### 3.2 Relevance scope ed evidence adiacente limitata
 
-Uno snapshot same-subject è rilevante per uno scope se e soltanto se la sua
-finestra interseca l'intervallo coperto:
+Il set rilevante è l'unione deduplicata di (a) ogni snapshot same-subject la
+cui finestra interseca l'intervallo coperto e (b), per **ciascuna**
+`ActualSession` coperta, i vicini temporali immediati same-subject attorno a
+`session.start`. La parte (a) usa:
 
 ```text
 snapshot.scheduled_window.start < coverage_end
 AND snapshot.scheduled_window.end >= coverage_start
 ```
 
-La query fisica recupera soltanto righe con `subject_ref` esattamente uguale e
-potenzialmente appartenenti allo scope; poiché la finestra è in `payload_json`,
-v8 DEVE fornire colonne indicizzate immutabili `scheduled_window_start` e
-`scheduled_window_end`, duplicate e validate byte-per-byte rispetto al payload.
-Così il repository delimita autorevolmente le righe prima della decodifica,
-senza scansionare tutta la storia.
+Per la parte (b), il predecessore è ogni riga con il massimo
+`scheduled_window_end < session.start`; il successore è ogni riga con il minimo
+`scheduled_window_start > session.start`. Tutti gli istanti sono canonical UTC
+RFC 3339 prima del confronto. **Tutte** le righe a pari timestamp
+estremo sono incluse. Finestre che contengono o toccano esattamente lo start
+sono già evidence ordinaria; i confronti stretti non diventano una tolleranza.
+Le query usano esclusivamente l'indice v8 e ordinano per estremi finestra e poi
+`prescription_snapshot_id` UTF-8. Sono al massimo due gruppi di confine per
+sessione, non ranking: sono vietati grace period, distanze inventate e scansione
+della storia nel matcher.
+
+La query fisica recupera soltanto righe indice con `subject_ref` esattamente
+uguale che soddisfano (a) o (b). Ogni riga indice selezionata e il relativo
+snapshot devono essere riletti e decodificati totalmente. Riga indice/snapshot
+mancante, timestamp malformato, finestra invalida, ownership o duplicati
+incoerenti causano errore tecnico e rollback dell'intero scope: non possono
+essere omessi per ottenere un falso singleton.
 
 Ogni riga nel perimetro deve essere decodificata e validata totalmente. Una
 riga corrotta, metadata/payload incoerenti, timestamp non confrontabile o
@@ -109,10 +122,11 @@ essere omessa per ottenere un falso singleton. Snapshot `NULL`/cross-subject
 non sono candidati. Non esistono filtri per lifecycle, discipline,
 composition, durata o similarità.
 
-La finestra delimita lo **scope**, non elimina evidence. Tutti gli snapshot
-rilevanti vengono passati al matcher: anche uno snapshot per cui la sessione è
-fuori finestra resta evidence e conduce a `CONFIRMATION_REQUIRED`. Nessun
-periodo storico estraneo allo scope partecipa alla cardinalità.
+L'intersezione delimita lo scope ordinario; i soli vicini immediati ne sono
+l'estensione strutturalmente limitata. Tutti vengono passati al matcher: anche
+un vicino appena oltre una boundary di sincronizzazione conserva il check
+temporale falso e conduce a `CONFIRMATION_REQUIRED`. Nessun altro periodo
+storico partecipa alla cardinalità.
 
 ## 4. Percorso session-driven e discovery
 
@@ -189,6 +203,16 @@ risultato con candidate session o un mapping prodotto dal percorso
 session-driven. Questa verifica e l'insert sono atomici. Una risposta chiude la
 richiesta tramite un nuovo record append-only; non aggiorna il risultato.
 
+Prima di invocare il matcher, la stessa transazione cerca ogni testa di catena
+discovery session-driven ancora `CONFIRMATION_REQUIRED` la cui sessione
+appartiene allo scope e il cui candidate set congelato contiene lo snapshot.
+Una tale relazione snapshot/sessione impone di saltare deterministicamente lo
+snapshot (anche al retry): non nasce risultato automatico né mapping. Il check
+segue il commit di tutte le discovery session-driven e precede qualsiasi insert
+window-driven. Una risposta non selettiva continua a vietare il mapping; dopo
+un `SELECT_SNAPSHOT` valido, soltanto il percorso confirmation-aware del §6 può
+crearlo. I due percorsi non competono e resta un solo mapping per sessione.
+
 ## 6. Confirmation discovery dedicata
 
 `maintain_plan_confirmations` non è riusata per `ZERO`/`MULTIPLE`: richiede un
@@ -210,6 +234,7 @@ CREATE TABLE maintain_plan_matching_discovery_confirmations (
     occurred_at TEXT NOT NULL,
     payload_schema_version TEXT NOT NULL,
     payload_json TEXT NOT NULL,
+    UNIQUE(request_ref),
     CHECK (
       (record_kind='REQUEST' AND request_ref IS NULL AND answer_type IS NULL AND selected_snapshot_ref IS NULL AND actor IS NULL)
       OR
@@ -224,21 +249,32 @@ Ogni `REQUEST` punta a un discovery irrisolto `ZERO` o `MULTIPLE`; al massimo
 una request logica è consentita dalla sua identità deterministica, non tramite
 update. Ogni `ANSWER` punta alla request, allo stesso discovery e scope. Per
 `MULTIPLE`, `SELECT_SNAPSHOT` deve scegliere esattamente un membro del candidate
-set congelato. Per `ZERO`, può scegliere soltanto uno snapshot same-subject la
-cui finestra appartiene allo stesso scope, riletto e validato; ciò rappresenta
+set congelato. Per `ZERO`, può scegliere soltanto uno snapshot same-subject
+rilevante per lo stesso scope secondo il §3.2, riletto e validato; ciò rappresenta
 una correzione manuale dell'assenza iniziale, non amplia lo scope. In entrambi i
 casi snapshot, sessione, discovery, confirmation e scope devono avere lo stesso
 `subject_ref`; mismatch o dangling ref causa rollback.
 
-`SELECT_SNAPSHOT` crea un nuovo discovery `SINGLE`, ricollega la confirmation
-di risposta e solo allora invoca il matcher. `NO_RELEVANT_PRESCRIPTION` e
+`SELECT_SNAPSHOT` è conferma umana autorevole: crea un nuovo discovery
+`SINGLE`, ma **non** reinvoca il matcher automatico invariato. Nella stessa
+transazione crea direttamente un nuovo `MatchingResult MATCHED` e un
+`PrescriptionMapping` con `resolution_method=ATHLETE_CONFIRMATION`; entrambi
+riferiscono la confirmation di risposta, actor e `occurred_at`. Il result
+conserva senza alterazioni candidate/direct evidence e gli esiti
+incompatibile/fuori-finestra della discovery originaria. La scelta prova la
+relazione snapshot/sessione, non l'aderenza del workout.
+
+`NO_RELEVANT_PRESCRIPTION` e
 `DONT_KNOW` creano un nuovo discovery con lo stesso candidate set e
 `NOT_EVALUABLE`, senza result o mapping. Una seconda risposta alla stessa
 request è un conflitto, salvo retry byte-equivalente dello stesso ID.
 
 Request, answer e discovery derivato sono inseriti nella stessa
-`BEGIN IMMEDIATE` nell'ordine delle foreign key. Payload e colonne duplicate
-devono coincidere. Trigger `BEFORE UPDATE` e `BEFORE DELETE` abortiscono sempre;
+`BEGIN IMMEDIATE`. Per `SELECT_SNAPSHOT` l'ordine è: answer, result, mapping,
+sidecar confirmation-resolution, discovery derivato; per le altre risposte è
+answer, discovery derivato. Le verifiche e la ricerca di mapping/sessione
+preesistente precedono gli insert. Payload e colonne duplicate devono
+coincidere. Trigger `BEFORE UPDATE` e `BEFORE DELETE` abortiscono sempre;
 foreign key sono attive, nessun cascade è ammesso. Non vi è lock durante
 l'interazione umana.
 
@@ -248,13 +284,30 @@ v8 aggiunge, senza cambiare v1–v7:
 
 - `maintain_plan_sync_coverages`, con colonne del §3, FK ownership applicativa,
   indici `(subject_ref, coverage_start, coverage_end)` e trigger append-only;
-- `scheduled_window_start/end` agli snapshot tramite nuova tabella indice
-  immutabile 1:1 (non alterazione distruttiva), FK allo snapshot e trigger
-  append-only;
+- `maintain_plan_snapshot_window_index(snapshot_ref TEXT PRIMARY KEY,
+  subject_ref TEXT NOT NULL, scheduled_window_start TEXT NOT NULL,
+  scheduled_window_end TEXT NOT NULL, payload_sha256 TEXT NOT NULL,
+  FOREIGN KEY(snapshot_ref) REFERENCES maintain_plan_prescription_snapshots
+  (prescription_snapshot_id), CHECK(scheduled_window_start <
+  scheduled_window_end))`, con indici covering `(subject_ref,
+  scheduled_window_start, scheduled_window_end, snapshot_ref)` e
+  `(subject_ref, scheduled_window_end, scheduled_window_start, snapshot_ref)`;
+  trigger `BEFORE UPDATE/DELETE` abortiscono sempre;
 - `maintain_plan_matching_discoveries`, con colonne del §4 e FK a scope,
   sessione, discovery precedente, confirmation discovery, result e mapping;
 - la tabella confirmation discovery del §6, indici per ogni FK e trigger
   append-only.
+- `maintain_plan_matching_confirmation_resolutions(matching_result_ref TEXT
+  PRIMARY KEY, prescription_mapping_ref TEXT NOT NULL UNIQUE,
+  discovery_result_ref TEXT NOT NULL, discovery_confirmation_ref TEXT NOT NULL
+  UNIQUE, actor TEXT NOT NULL CHECK(length(actor)>0), confirmed_at TEXT NOT
+  NULL, FOREIGN KEY ... ON DELETE NO ACTION)` come sidecar immutabile 1:1: le
+  quattro FK puntano rispettivamente a result `MATCHED`, mapping
+  `ATHLETE_CONFIRMATION`, discovery originaria e record `ANSWER SELECT_SNAPSHOT`;
+  payload, subject, snapshot e sessione devono coincidere tra tutte le righe;
+- un indice univoco v8 su `maintain_plan_prescription_mappings
+  (actual_session_ref)`, oltre ai trigger append-only esistenti, per rendere
+  fisica l'invariante di un solo mapping per sessione.
 
 Ogni unit of work apre `BEGIN IMMEDIATE` **prima** delle riletture, verifica
 payload, metadata, ownership, scope e retry, esegue il matcher puro e inserisce
@@ -263,12 +316,38 @@ gli artefatti nell'ordine imposto dalle FK. Result, mapping e discovery
 corruzione o insert parziale eseguono rollback completo. Un retry equivalente
 restituisce i record esistenti; nessun upsert distruttivo è ammesso.
 
+L'upgrade v7→v8 è una singola transazione `BEGIN IMMEDIATE`. Dopo aver creato
+le strutture, enumera in ordine byte UTF-8 di ID **ogni** snapshot v7 con
+`subject_ref IS NOT NULL`, decodifica strict il payload, verifica subject
+duplicato, finestra completa timezone-aware con `start < end`, canonicalizza i
+due istanti e calcola il digest del payload canonico; quindi inserisce
+esattamente una riga indice per snapshot. Riga eleggibile indecodificabile o
+incoerente, conflitto, ID duplicato o violazione FK abortisce e rollbacka
+l'intero upgrade.
+
+Prima di impostare `user_version=8` e committare, la migrazione verifica:
+conteggio indice uguale al conteggio degli snapshot v7 non-null; nessun
+eleggibile senza indice; nessun indice senza snapshot eleggibile; uguaglianza
+byte-per-byte di subject e finestra decodificata per ogni coppia; e
+`foreign_key_check` vuoto. Snapshot legacy con ownership null restano senza
+indice e ineleggibili. Il matching non può essere abilitato su un database v8
+parzialmente popolato.
+
+Nella stessa validazione, eventuali mapping v7 duplicati per sessione o
+resolution metadata contraddittori abortiscono l'upgrade prima di creare
+l'indice univoco. La sidecar confirmation nasce vuota: popolare l'indice
+finestre è struttura obbligatoria, mentre sintetizzare conferme storiche è
+vietato.
+
 ## 8. Lifecycle degli output
 
 Un `MatchingResult` `MATCHED` richiede un mapping. `CONFIRMATION_REQUIRED` e
 `NOT_EVALUABLE` richiedono mapping null. Soltanto una risposta umana valida
 produce un nuovo risultato `MATCHED` e mapping con
 `resolution_method=ATHLETE_CONFIRMATION`, actor, timestamp e confirmation ref.
+Un indice univoco sul mapping per `actual_session_ref` e la verifica preventiva
+nella transazione impediscono un secondo mapping. Retry identico restituisce la
+coppia esistente; contenuto divergente rollbacka.
 «Non svolta», «non sincronizzata» e «non lo so» non producono mapping.
 
 Gli artefatti precedenti rimangono immutabili. Evaluation e consumer possono
@@ -292,7 +371,7 @@ Il discovery derivato aggiunge `confirmation_id` e
 `previous_discovery_result_id`. Namespace
 `maintain-plan:matching-discovery:v1:sha256:<hash>`.
 
-Matching result (valido per entrambi i percorsi):
+Matching result automatico (valido per entrambi i percorsi automatici):
 
 ```json
 {"confirmation_id":null,"direct_evidence_ids":[],"matching_policy_id":"maintain-plan-matching","matching_policy_version":"1.0.0-draft","prescription_snapshot_id":"<id>","session_ids":["<ordinati, anche vuoto>"],"sync_scope_id":"<id>"}
@@ -301,6 +380,19 @@ Matching result (valido per entrambi i percorsi):
 Namespace `maintain-plan:matching-result:v1:sha256:<hash>`. Il mapping mantiene
 la preimage esistente con confirmation, snapshot, sessione e resolution method;
 non esiste mapping nel caso zero sessioni.
+
+Matching result da selezione discovery:
+
+```json
+{"actor":"<actor>","confirmation_id":"<answer id>","confirmed_at":"<RFC3339>","discovery_result_id":"<discovery originaria>","matching_policy_id":"maintain-plan-matching","matching_policy_version":"1.0.0-draft","prescription_snapshot_id":"<id scelto>","session_id":"<id>","subject_ref":"<ref>"}
+```
+
+Namespace `maintain-plan:matching-result:v1:sha256:<hash>`. La mapping preimage
+aggiunge alla stessa forma `matching_result_id` e
+`resolution_method:"ATHLETE_CONFIRMATION"`; namespace
+`maintain-plan:prescription-mapping:v1:sha256:<hash>`. Actor e timestamp sono
+parte dell'identità, non metadata sostituibili. Retry richiede equivalenza di
+preimage, evidence conservata e payload; altrimenti è conflitto.
 
 Confirmation discovery request:
 
@@ -320,6 +412,15 @@ SHA-256: 18f679e4657f2976e75e2ede0b63c6c8ebac21f571a86867d1a1fe0d97043856
 matching_result_id: maintain-plan:matching-result:v1:sha256:18f679e4657f2976e75e2ede0b63c6c8ebac21f571a86867d1a1fe0d97043856
 ```
 
+Vettori normativi per `SELECT_SNAPSHOT` (`é` è U+00E9):
+
+```text
+result preimage: {"actor":"athlete-é","confirmation_id":"answer-é","confirmed_at":"2026-09-18T10:15:00Z","discovery_result_id":"discovery-é","matching_policy_id":"maintain-plan-matching","matching_policy_version":"1.0.0-draft","prescription_snapshot_id":"snapshot-é","session_id":"session-é","subject_ref":"subject-é"}
+result SHA-256: 8695891d6cfd60a9fbd12cbd4d8ae7494297f4d2c66cfcc825cce434fca25d09
+mapping preimage: {"actor":"athlete-é","confirmation_id":"answer-é","confirmed_at":"2026-09-18T10:15:00Z","discovery_result_id":"discovery-é","matching_policy_id":"maintain-plan-matching","matching_policy_version":"1.0.0-draft","matching_result_id":"maintain-plan:matching-result:v1:sha256:8695891d6cfd60a9fbd12cbd4d8ae7494297f4d2c66cfcc825cce434fca25d09","prescription_snapshot_id":"snapshot-é","resolution_method":"ATHLETE_CONFIRMATION","session_id":"session-é","subject_ref":"subject-é"}
+mapping SHA-256: 090e65a0386027a4f69fc4bc2327137ed9abc7651165d64070a87c982dc7f2b3
+```
+
 ## 10. Esempi normativi
 
 ### 10.1 Sessione appena fuori finestra
@@ -333,9 +434,10 @@ degradato a discovery `ZERO`.
 ### 10.2 Storia non pertinente
 
 Nello stesso database esistono snapshot di giugno e settembre. Uno scope del
-17–18 settembre include soltanto finestre che lo intersecano. Gli snapshot di
-giugno non entrano nel conteggio e non causano `MULTIPLE`; nessun lifecycle o
-grace period è inferito.
+17–18 settembre include le finestre intersecanti e, per le sessioni coperte, i
+soli gruppi immediatamente adiacenti; snapshot di settembre occupano entrambi i
+confini. Quelli di giugno non entrano nel conteggio e non causano `MULTIPLE`;
+nessun lifecycle o grace period è inferito.
 
 ### 10.3 Finestra chiusa senza attività
 
@@ -351,6 +453,17 @@ Una sessione e due snapshot rilevanti producono discovery `MULTIPLE` e una
 request nella tabella dedicata. La risposta seleziona uno dei due ID congelati;
 nella stessa transazione vengono verificati ownership e FK e nasce un nuovo
 discovery `SINGLE`. La vecchia discovery e la request non sono aggiornate.
+Il result e mapping nuovi citano risposta, actor e timestamp e mantengono
+l'evidence incompatibile originale; il matcher non viene rieseguito.
+
+### 10.5 Boundary di sincronizzazione e guard tra percorsi
+
+Uno scope inizia alle 00:00; una finestra termina alle 23:59 del giorno prima e
+una sessione coperta inizia alle 00:01. La finestra non interseca lo scope, ma è
+il predecessore immediato same-subject e quindi entra nell'evidence: l'esito è
+`CONFIRMATION_REQUIRED`, mai `ZERO`. Se due snapshot vicini producono
+`MULTIPLE`, il percorso window-driven li salta entrambi finché la discovery è
+irrisolta. Dopo `SELECT_SNAPSHOT`, il solo mapping è quello confirmation-aware.
 
 ## 11. Errori, upgrade e decisioni residue
 
@@ -361,9 +474,23 @@ allo scope; retry divergente. Sono esiti di dominio: zero/più snapshot,
 zero/più sessioni, fuori finestra, mismatch, direct ID ben formato ma
 irrisolto, e risposta non risolutiva.
 
-DB v1–v7 non abilita questo boundary. La futura v8 è additiva, nasce senza
-backfill storico e richiede tutte le tabelle, indici, trigger e checksum
-coerenti. Record legacy con ownership nulla restano ineleggibili.
+DB v1–v7 non abilita questo boundary. La futura v8 è additiva e richiede tutte
+le tabelle, indici, trigger e checksum coerenti. “Nessun backfill storico” vale
+per discovery, result, confirmation e mapping: non inventa outcome per sync
+passati. **Non** vale per la popolazione strutturale obbligatoria dell'indice
+finestre durante v7→v8 (§7). Record legacy con ownership nulla restano non
+indicizzati e ineleggibili.
+
+### 11.1 Audit interno di coerenza
+
+L'audit normativo completo ha verificato: (1) ordine session-driven prima del
+window-driven e guardia sulle discovery irrisolte; (2) transizioni `ZERO`,
+`SINGLE`, `MULTIPLE`, `MATCHED`, `CONFIRMATION_REQUIRED` e `NOT_EVALUABLE`;
+(3) confirmation snapshot-centric e discovery-specific senza riuso di shape
+incompatibili; (4) `SELECT_SNAPSHOT` confirmation-aware senza secondo giudizio
+automatico; (5) upgrade v7→v8 tutto-o-niente con popolazione e conteggi esatti;
+(6) ordine FK di ogni transazione; (7) retry equivalenti idempotenti e conflitti
+divergenti fail-closed; (8) un solo mapping per sessione tra entrambi i percorsi.
 
 **Non resta alcuna decisione normativa bloccante.** Restano lavoro
 implementativo: definire modelli/codec, migrazione v8, repository, adapter dello

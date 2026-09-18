@@ -304,7 +304,9 @@ definiti dal
 [contratto runtime matching](MAINTAIN_PLAN_RUNTIME_MATCHING_CONTRACT.md), che
 richiede un `SynchronizationCoverage` autorevole e limitato e ordina il
 percorso session-driven prima di quello prescription/window-driven, senza
-estendere il perimetro di cattura di questo documento.
+estendere il perimetro di cattura di questo documento. Lo scope aggiunge
+soltanto i vicini indicizzati immediati attorno allo start di ogni sessione e
+il secondo percorso deve rispettare la guardia delle discovery irrisolte.
 
 ## 11. Criteri di accettazione
 
