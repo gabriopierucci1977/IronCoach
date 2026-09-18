@@ -2,7 +2,8 @@
 
 **Stato:** normativo contract-first — decisioni R1, R2 e R3 approvate; runtime non implementato
 
-**Perimetro dati corrente:** schema SQLite v7, senza modifiche o nuove migrazioni in questo slice
+**Perimetro dati:** schema corrente v7; persistenza discovery approvata per la
+futura migrazione additiva v8, non implementata in questo slice
 
 **Policy di dominio:** `maintain-plan-matching/1.0.0-draft`
 
@@ -28,8 +29,8 @@ Per ogni attività accettata l'ordine obbligatorio sarà:
 
 1. completare la cattura e il commit dell'`ActualSession`;
 2. riaprire dal repository quella sessione e scoprire gli snapshot autorevoli;
-3. persistere il discovery result append-only, eseguire il matcher puro e
-   persistere atomicamente il solo esito consentito;
+3. costruire il discovery result, eseguire il matcher puro e persistere nella
+   stessa transazione il discovery append-only e il solo esito consentito;
 4. soltanto dopo il commit consentire la normale Decision Memory e poi il
    Coach Engine.
 
@@ -158,7 +159,12 @@ matching_discovery_result:
   actual_session_ref: string
   subject_ref: string
   candidate_snapshot_refs: [string]       # ordine canonico §4.3
-  direct_evidence_refs: [string]           # ordine per byte UTF-8
+  direct_id_evidence:                      # ordine per evidence_id UTF-8
+    - evidence_id: string
+      session_id: string
+      returned_prescription_id: string | null
+      source: string
+      provenance: object
   candidate_evidence:
     - prescription_snapshot_ref: string
       matching_status: MATCHED | CONFIRMATION_REQUIRED | NOT_EVALUABLE
@@ -170,6 +176,8 @@ matching_discovery_result:
   matching_policy_version: 1.0.0-draft
   previous_discovery_result_ref: string | null
   confirmation_ref: string | null
+  matching_result_ref: string | null
+  prescription_mapping_ref: string | null
   discovered_at: datetime
   provenance: object
 ```
@@ -185,12 +193,114 @@ entrambi null per il discovery iniziale e entrambi obbligatori per la
 selezione umana da `MULTIPLE`. Il nuovo `SINGLE` contiene soltanto lo snapshot
 selezionato; il predecessore conserva per sempre l'insieme completo.
 
-Questo contratto approva forma e semantica dell'artefatto, non una modifica
-schema. Lo schema v7 non dispone di una tabella per persisterlo. La scelta tra
-una futura migrazione additiva e un event store append-only già autorevole è
-ancora indeterminata e richiede una proposta separata con necessità dimostrata.
-Fino a quella decisione il wiring produttivo resta vietato; non è ammesso
-incorporare l'artefatto in campi generici di altri record.
+`matching_result_ref` e `prescription_mapping_ref` sono entrambi obbligatori
+soltanto con `resolution_status: MATCHED` e sono entrambi null con
+`CONFIRMATION_REQUIRED` o `NOT_EVALUABLE`. Quando presenti devono risolvere
+esattamente il `MatchingResult` e il `PrescriptionMapping` persistiti per la
+stessa sessione e lo snapshot selezionato; il mapping incorporato nel risultato
+deve essere byte-per-byte lo stesso record. `confirmation_ref` è null per un
+esito automatico e risolve una confirmation immutabile quando una risposta
+umana determina questo discovery o il relativo mapping. Non si aggiornano i
+riferimenti su un discovery precedente: si inserisce un nuovo artefatto.
+
+### 5.1 Destinazione persistente v8
+
+La destinazione approvata è una nuova tabella SQLite dedicata,
+`maintain_plan_matching_discoveries`, nello stesso database e nello stesso
+repository degli altri artefatti. Sarà introdotta esclusivamente dalla futura
+migrazione additiva v8. Non è ammesso un event store separato né l'inserimento
+del payload in campi generici di altre tabelle.
+
+La struttura normativa della tabella è:
+
+```sql
+CREATE TABLE maintain_plan_matching_discoveries (
+    discovery_result_id TEXT PRIMARY KEY,
+    artifact_version TEXT NOT NULL CHECK (artifact_version = '1'),
+    status TEXT NOT NULL CHECK (status IN ('ZERO', 'SINGLE', 'MULTIPLE')),
+    resolution_status TEXT NOT NULL CHECK (
+        resolution_status IN ('MATCHED', 'CONFIRMATION_REQUIRED', 'NOT_EVALUABLE')
+    ),
+    actual_session_ref TEXT NOT NULL
+        REFERENCES maintain_plan_actual_sessions(session_id),
+    subject_ref TEXT NOT NULL,
+    matching_policy_id TEXT NOT NULL,
+    matching_policy_version TEXT NOT NULL,
+    previous_discovery_result_ref TEXT
+        REFERENCES maintain_plan_matching_discoveries(discovery_result_id),
+    confirmation_ref TEXT
+        REFERENCES maintain_plan_confirmations(confirmation_id),
+    matching_result_ref TEXT
+        REFERENCES maintain_plan_matching_results(matching_result_id),
+    prescription_mapping_ref TEXT
+        REFERENCES maintain_plan_prescription_mappings(mapping_id),
+    payload_schema_version TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    CHECK (
+        (resolution_status = 'MATCHED'
+         AND matching_result_ref IS NOT NULL
+         AND prescription_mapping_ref IS NOT NULL)
+        OR
+        (resolution_status <> 'MATCHED'
+         AND matching_result_ref IS NULL
+         AND prescription_mapping_ref IS NULL)
+    ),
+    CHECK (
+        (previous_discovery_result_ref IS NULL AND confirmation_ref IS NULL)
+        OR
+        (previous_discovery_result_ref IS NOT NULL AND confirmation_ref IS NOT NULL)
+    )
+);
+```
+
+La migrazione v8 aggiunge inoltre, con questi scopi e senza cambiare le tabelle
+v1–v7:
+
+```sql
+CREATE INDEX idx_mp_discoveries_session
+    ON maintain_plan_matching_discoveries(actual_session_ref);
+CREATE INDEX idx_mp_discoveries_subject_status
+    ON maintain_plan_matching_discoveries(subject_ref, status, resolution_status);
+CREATE INDEX idx_mp_discoveries_previous
+    ON maintain_plan_matching_discoveries(previous_discovery_result_ref);
+CREATE INDEX idx_mp_discoveries_confirmation
+    ON maintain_plan_matching_discoveries(confirmation_ref);
+CREATE INDEX idx_mp_discoveries_matching_result
+    ON maintain_plan_matching_discoveries(matching_result_ref);
+CREATE INDEX idx_mp_discoveries_mapping
+    ON maintain_plan_matching_discoveries(prescription_mapping_ref);
+```
+
+Due trigger v8 `BEFORE UPDATE` e `BEFORE DELETE` sulla tabella devono abortire
+sempre l'operazione. Non esistono update, upsert distruttivi, delete o cascade:
+la tabella è insert-only. Tutte le foreign key sono verificate con
+`PRAGMA foreign_keys=ON`. La cancellazione di un artefatto referenziato è già
+vietata dall'append-only complessivo e non deve essere introdotto
+`ON DELETE CASCADE`.
+
+### 5.2 Payload, candidate ed evidence
+
+`payload_json` contiene l'intero payload canonico del §5, inclusi candidate ed
+evidence; le colonne sono metadata duplicati e devono coincidere esattamente
+con i relativi campi decodificati. `payload_schema_version` deve essere la
+versione del codec MAINTAIN_PLAN supportata dal repository v8.
+
+`candidate_snapshot_refs` contiene esattamente tutti gli snapshot congelati,
+senza duplicati, ordinati per byte UTF-8 dell'ID. `candidate_evidence` contiene
+esattamente una voce per ogni candidato, nello stesso ordine, e nessuna voce
+estranea. Ogni ref deve risolvere uno snapshot persistito, valido e con lo
+stesso `subject_ref`. `direct_id_evidence` conserva gli oggetti validati
+completi, con `evidence_id` univoci ordinati per byte UTF-8; tutti i
+`session_id` coincidono con `actual_session_ref`. Gli ID di questi oggetti sono
+i `direct_evidence_ids` usati nelle preimage del §9. `candidate_session_refs`,
+`reasons` e `warnings` sono array JSON, non set: preservano l'ordine canonico
+definito dal contratto e non possono essere riordinati in lettura.
+
+La cardinalità è vincolante e validata dal repository prima dell'insert e a
+ogni lettura: `ZERO` richiede zero candidate/evidence, `SINGLE` esattamente una,
+`MULTIPLE` almeno due. SQLite non deve tentare di dedurre questa cardinalità
+con query JSON o trigger: il payload tipizzato e il validator sono autorevoli,
+mentre i `CHECK` proteggono i metadata relazionali.
 
 ## 6. Direct ID
 
@@ -349,10 +459,16 @@ ordine diverso, spazi JSON o BOM si ottengono byte non conformi.
 
 ### 9.5 Retry, cambiamenti e conflitti
 
-Timestamp e provenance non entrano nell'identità, ma restano contenuto
-persistito. Stesso ID e contenuto semanticamente equivalente è un retry e
-restituisce il record esistente. Stesso ID con contenuto diverso è conflitto
-divergente: rollback, nessun overwrite.
+`discovery_result_id` è anche la primary key v8. Il payload viene serializzato
+con la stessa policy JSON canonica del §9; il repository deve verificare che la
+preimage ricostruita dal payload produca esattamente la primary key. Timestamp
+e provenance non entrano nell'identità, ma restano nel payload persistito.
+
+Stesso ID e contenuto semanticamente equivalente è un retry e restituisce il
+record esistente. Nel confronto di equivalenza può essere ignorato
+esclusivamente `discovered_at`, timestamp di processo; provenance, candidate,
+evidence, stati, riferimenti e ogni altro campo devono coincidere. Stesso ID con
+contenuto diverso è conflitto divergente: rollback, nessun overwrite.
 
 Il candidate set è congelato. Se l'insieme cambia, si produce un nuovo
 `discovery_result_id`; il risultato storico e gli eventuali mapping risolti non
@@ -368,14 +484,21 @@ same-subject e direct evidence. Nella stessa transazione deve:
 2. congelare l'insieme completo e costruire il discovery result;
 3. eseguire il matcher puro per ogni snapshot;
 4. verificare retry o conflitti;
-5. persistere atomicamente discovery e, solo quando ammessi, mapping e
-   `MatchingResult`;
+5. quando l'esito è `MATCHED`, inserire nell'ordine imposto dalle foreign key
+   `PrescriptionMapping`, `MatchingResult` e infine
+   `MatchingDiscoveryResult`; per gli altri esiti inserire soltanto il
+   discovery result e gli eventuali artefatti di confirmation già risolti;
 6. committare soltanto se l'intera operazione riesce.
 
 Nessun lock resta aperto durante un'interazione umana. La risposta apre una
 nuova `BEGIN IMMEDIATE`, riacquisisce gli artefatti tramite i riferimenti
 congelati e ne riverifica ownership e contenuto. Non usa lo stato corrente per
 reinterpretare la domanda storica.
+
+Il discovery result, il matching result e il mapping diventano visibili insieme
+al commit della medesima transazione `BEGIN IMMEDIATE`; nessun consumer può
+osservare un discovery `MATCHED` senza entrambi gli output. Un fallimento di
+qualsiasi insert annulla tutti gli insert della unit of work.
 
 Writer concorrenti equivalenti convergono sul record esistente; writer
 divergenti falliscono. Vincoli, race, errore del matcher, serializzazione o
@@ -404,28 +527,36 @@ sono risolti. Nessun errore o esito irrisolto produce evaluation, report,
 learning, modifica del piano, Decision Memory o Coach Engine nello stesso
 ciclo.
 
-## 12. Compatibilità database e decisione ancora aperta
+## 12. Upgrade v7→v8 e compatibilità database
 
-- **database v1–v6 non migrato:** il runtime matching rifiuta l'avvio;
-- **record v1–v6 migrati a v7:** restano leggibili, ma `subject_ref=NULL` li
-  rende non eleggibili e non è ammesso backfill;
-- **schema v7:** è il solo schema supportato dagli input correnti; payload e
-  colonne ownership devono coincidere;
-- **questo slice:** non modifica schema, migrazioni v1–v7 o checksum.
+- **database v1–v6 non migrato:** il runtime matching rifiuta l'avvio; upgrade
+  supportato soltanto applicando in ordine tutte le migrazioni fino a v8;
+- **upgrade v7→v8:** crea esclusivamente tabella, indici e trigger del §5.1,
+  registra versione/checksum secondo il migration runner esistente e non
+  modifica né ricalcola le migrazioni v1–v7;
+- **record legacy migrati:** snapshot/sessioni restano leggibili, ma
+  `subject_ref=NULL` non è eleggibile e non viene sottoposto a backfill;
+- **assenza di backfill discovery:** v8 non costruisce discovery retroattivi da
+  snapshot, sessioni o mapping storici; la nuova tabella nasce vuota;
+- **database v7 non ancora aggiornato:** cattura e letture già consentite dal
+  relativo contratto restano compatibili, ma il runtime matching non può essere
+  abilitato perché manca la destinazione append-only obbligatoria;
+- **database v8:** è il requisito minimo per il futuro runtime matching; un DB
+  con versione maggiore non riconosciuta o una v8 parziale/incoerente viene
+  rifiutato fail-closed.
 
-R1, R2 e R3 non sono più decisioni aperte. Resta indeterminata esclusivamente
-la destinazione persistente di `MatchingDiscoveryResult`: il requisito
-append-only è normativo, ma schema v7 non offre una tabella adeguata. Non si
-inventa storage implicito. Una futura proposta dovrà dimostrare se serve una
-migrazione additiva oppure se esiste un event store autorevole compatibile,
-prima di qualunque wiring produttivo.
+Questo slice modifica soltanto il contratto e non implementa schema v8,
+migrazione, repository o wiring. Con l'approvazione della tabella dedicata non
+restano decisioni normative bloccanti per proporre il futuro slice di
+implementazione.
 
 ## 13. Criteri per l'implementazione successiva
 
 Il futuro slice runtime dovrà aggiungere, senza cambiare questo significato:
 
 - query fisica same-subject fail-closed e unit of work `BEGIN IMMEDIATE`;
-- modello e persistenza append-only del discovery dopo la decisione storage;
+- modello, codec, validator e persistenza append-only del discovery nella
+  tabella v8 approvata;
 - adapter direct-ID esplicito, vuoto per Garmin finché indisponibile;
 - flag R1 e wiring nell'ordine del §2;
 - generatori ID R3, persistenza idempotente e confirmation R2;
@@ -434,5 +565,6 @@ Il futuro slice runtime dovrà aggiungere, senza cambiare questo significato:
   dry-run;
 - nessuna evaluation, reporting, learning o modifica del piano.
 
-Questo documento non implementa né autorizza automaticamente tali modifiche:
-è il contratto contro cui dovranno essere proposte e revisionate.
+Questo documento non implementa tali modifiche: è il contratto completo contro
+cui dovranno essere proposte e revisionate. Non restano scelte normative
+bloccanti; restano soltanto lavoro implementativo e verifica.
