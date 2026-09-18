@@ -355,6 +355,7 @@ def build_actual_session(payload: dict, subject_ref: str, *, normalized_at: date
     value = ActualSessionInput(
         runtime_actual_session_id(subject, activity_id), (source,), start, end,
         timezone_name, Composition.SINGLE, (component,), normalized_at,
+        subject,
         missing_fields=("completion", "athlete_feedback", "weather_context"),
     )
     return ActualSessionNormalizer.normalize(value)

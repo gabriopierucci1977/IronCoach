@@ -103,6 +103,7 @@ class ActualSessionInput:
     composition: Composition | None
     components: tuple[ComponentObservationInput, ...]
     normalized_at: datetime
+    subject_ref: str
     transitions: tuple[TransitionObservationInput, ...] = ()
     completion_status: str | None = None
     interruption_reason: str | None = None
@@ -184,6 +185,7 @@ class ActualSessionNormalizer:
             provenance={"normalized_at": value.normalized_at},
             missing_fields=value.missing_fields,
             warnings=value.warnings,
+            subject_ref=value.subject_ref,
         )
         errors = validate_actual_session(session)
         if errors:

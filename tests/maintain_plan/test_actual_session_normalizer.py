@@ -43,6 +43,7 @@ def session_input(**changes):
         session_id="session-1", source_activities=(source(),), start=NOW,
         end=NOW + timedelta(hours=1), timezone="UTC", composition=Composition.SINGLE,
         components=(component(),), normalized_at=NOW + timedelta(hours=2),
+        subject_ref="athlete-1",
         completion_status="COMPLETED", data_quality={"completeness": "PARTIAL"},
         missing_fields=("components[0].quantity.value",), warnings=("telemetry_missing",),
     )

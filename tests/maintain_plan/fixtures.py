@@ -27,6 +27,7 @@ def prescription(*components: PlannedComponent, composition=Composition.SINGLE, 
         PolicyRef("maintain-plan-brick-consecutivity", "1.0.0-draft")
         if composition is Composition.BRICK else NULL_POLICY,
         Provenance("synthetic-fixture", NOW), PrescriptionAudit(None),
+        subject_ref="athlete-1",
     )
 
 
@@ -116,7 +117,7 @@ def execution(results, coverage=CoverageStatus.FULLY_SUPPORTED, snapshot=None):
 
 
 RUN_PRESCRIPTION = prescription(planned("run", 0, Discipline.RUN))
-RUN_SESSION = ActualSession("session-1", NOW, Composition.SINGLE, (observed("run", 0, Discipline.RUN, {"seconds": 3600}),))
+RUN_SESSION = ActualSession("session-1", NOW, Composition.SINGLE, (observed("run", 0, Discipline.RUN, {"seconds": 3600}),), subject_ref="athlete-1")
 RUN_MAPPING = mapping((("run", "run", Requiredness.REQUIRED, SupportStatus.SUPPORTED),))
 RUN_EXECUTION = execution((component_result("run"),), snapshot=RUN_PRESCRIPTION)
 
@@ -129,7 +130,7 @@ BRICK_PRESCRIPTION = prescription(
     transitions=(PlannedTransition(
         "run-to-bike", "run", "bike",
         PolicyRef("maintain-plan-brick-consecutivity", "1.0.0-draft"), 15),))
-BRICK_SESSION = ActualSession("session-1", NOW, Composition.BRICK, (observed("run", 0, Discipline.RUN), observed("bike", 1, Discipline.BIKE)))
+BRICK_SESSION = ActualSession("session-1", NOW, Composition.BRICK, (observed("run", 0, Discipline.RUN), observed("bike", 1, Discipline.BIKE)), subject_ref="athlete-1")
 BRICK_MAPPING = mapping((("run", "run", Requiredness.REQUIRED, SupportStatus.SUPPORTED),
                          ("bike", "bike", Requiredness.REQUIRED, SupportStatus.SUPPORTED)))
 BRICK_EXECUTION = execution((component_result("run"), component_result("bike")), snapshot=BRICK_PRESCRIPTION)

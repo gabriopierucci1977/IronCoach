@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Callable, Iterable
 
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
 
 @dataclass(frozen=True)
@@ -385,6 +385,35 @@ def _migration_6(connection: sqlite3.Connection) -> None:
 
 MIGRATIONS = MIGRATIONS + (Migration(
     6, hashlib.sha256(_MIGRATION_6_SQL.encode("utf-8")).hexdigest(), _migration_6,
+),)
+
+
+_MIGRATION_7_STATEMENTS = (
+    "ALTER TABLE maintain_plan_prescription_snapshots ADD COLUMN subject_ref TEXT",
+    "ALTER TABLE maintain_plan_actual_sessions ADD COLUMN subject_ref TEXT",
+    "CREATE INDEX idx_mp_snapshots_subject ON maintain_plan_prescription_snapshots(subject_ref)",
+    "CREATE INDEX idx_mp_sessions_subject ON maintain_plan_actual_sessions(subject_ref)",
+    """CREATE TRIGGER maintain_plan_snapshots_require_subject_insert
+       BEFORE INSERT ON maintain_plan_prescription_snapshots
+       WHEN NEW.subject_ref IS NULL OR length(NEW.subject_ref) = 0
+            OR length(trim(NEW.subject_ref)) = 0
+       BEGIN SELECT RAISE(ABORT, 'subject_ref required for prescription snapshot'); END""",
+    """CREATE TRIGGER maintain_plan_sessions_require_subject_insert
+       BEFORE INSERT ON maintain_plan_actual_sessions
+       WHEN NEW.subject_ref IS NULL OR length(NEW.subject_ref) = 0
+            OR length(trim(NEW.subject_ref)) = 0
+       BEGIN SELECT RAISE(ABORT, 'subject_ref required for actual session'); END""",
+)
+_MIGRATION_7_SQL = ";\n".join(_MIGRATION_7_STATEMENTS)
+
+
+def _migration_7(connection: sqlite3.Connection) -> None:
+    for statement in _MIGRATION_7_STATEMENTS:
+        connection.execute(statement)
+
+
+MIGRATIONS = MIGRATIONS + (Migration(
+    7, hashlib.sha256(_MIGRATION_7_SQL.encode("utf-8")).hexdigest(), _migration_7,
 ),)
 
 

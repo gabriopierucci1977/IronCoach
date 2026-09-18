@@ -11,6 +11,12 @@
 > dell'attivazione, `MAINTAIN_PLAN` deve restare `INSUFFICIENT_DATA` e non deve
 > ricevere esiti tramite fallback o proxy.
 
+Il binding di ownership comune tra prescrizione e sessione è disciplinato dal
+[contratto subject ownership](MAINTAIN_PLAN_SUBJECT_OWNERSHIP_CONTRACT.md).
+Qualunque futuro mapping o outcome deve rispettarne il rifiuto fail-closed di
+binding mancanti o discordanti; questo riferimento non abilita evaluation o
+altri comportamenti draft descritti nel presente documento.
+
 ## 1. Scopo e confini
 
 Questo documento definisce il contratto dati, semantico e di governance per

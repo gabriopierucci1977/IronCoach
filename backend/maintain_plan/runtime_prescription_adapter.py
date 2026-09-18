@@ -42,6 +42,7 @@ from .models import (
 )
 from .prescription_snapshot_service import CommunicatedPrescription
 from .validators import validate_prescription
+from .ownership import require_subject_ref
 
 
 _CAPABILITY_POLICY = PolicyRef(
@@ -192,6 +193,7 @@ def build_communicated_prescription(
     training: dict,
     decision: dict,
     *,
+    subject_ref: str,
     communicated_at: datetime,
     timezone_name: str,
 ) -> CommunicatedPrescription:
@@ -211,6 +213,7 @@ def build_communicated_prescription(
         )
 
     captured_at = _aware_datetime(communicated_at)
+    subject = require_subject_ref(subject_ref)
     athlete_timezone = _timezone(timezone_name)
 
     decision_id = _required_string(decision, "decision_id")
@@ -404,6 +407,7 @@ def build_communicated_prescription(
             captured_at,
         ),
         PrescriptionAudit(None),
+        subject_ref=subject,
     )
 
     errors = validate_prescription(snapshot)

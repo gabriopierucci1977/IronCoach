@@ -666,6 +666,7 @@ def run_pipeline(
             "cattura prescrizione MAINTAIN_PLAN",
             lambda: RuntimePrescriptionCapture().capture(
                 runtime_config=runtime_config,
+                athlete=context.get("athlete"),
                 training=context.get("training", {}),
                 decision=decision,
             ),

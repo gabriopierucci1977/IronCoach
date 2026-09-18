@@ -152,6 +152,7 @@ def _build_runtime_prescription(
     return build_communicated_prescription(
         training if training is not None else _runtime_training(),
         decision if decision is not None else _runtime_decision(),
+        subject_ref="athlete-1",
         communicated_at=(
             communicated_at
             if communicated_at is not None
@@ -415,6 +416,7 @@ def test_runtime_service_persists_through_repository_and_snapshot_service(tmp_pa
         clock=lambda: datetime(2026, 9, 14, 10, tzinfo=timezone.utc)
     ).capture(
         runtime_config=config,
+        athlete={"source_id": "athlete-1"},
         training=_runtime_training(),
         decision=_runtime_decision(),
     )
@@ -442,6 +444,7 @@ def test_runtime_service_requires_flag_to_be_exactly_true(enabled):
 
     assert RuntimePrescriptionCapture(repository_factory).capture(
         runtime_config=config,
+        athlete={"source_id": "athlete-1"},
         training=_runtime_training(),
         decision=_runtime_decision(),
     ) is None
@@ -465,6 +468,7 @@ def test_runtime_service_skips_non_p0_decisions_without_sqlite(decision):
 
     assert RuntimePrescriptionCapture(repository_factory).capture(
         runtime_config=_CaptureConfig(),
+        athlete={"source_id": "athlete-1"},
         training=_runtime_training(),
         decision=decision,
     ) is None
@@ -484,6 +488,7 @@ def test_runtime_service_validates_before_sqlite_initialization():
     with pytest.raises(RuntimePrescriptionError):
         RuntimePrescriptionCapture(repository_factory).capture(
             runtime_config=_CaptureConfig(),
+            athlete={"source_id": "athlete-1"},
             training=_runtime_training(intensity_method=None),
             decision=_runtime_decision(),
         )
