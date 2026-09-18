@@ -42,7 +42,9 @@ gli stati. Non autorizza candidate discovery runtime né sintetizza
 
 Il boundary che potrà usare questo binding per discovery e associazione è
 definito separatamente nel
-[contratto runtime matching](MAINTAIN_PLAN_RUNTIME_MATCHING_CONTRACT.md); il
+[contratto runtime matching](MAINTAIN_PLAN_RUNTIME_MATCHING_CONTRACT.md), che
+estende la stessa uguaglianza byte-per-byte allo scope di sincronizzazione e
+alle confirmation discovery; il
 presente documento non ne abilita il wiring.
 
 ## 4. Persistenza, retry e idempotenza

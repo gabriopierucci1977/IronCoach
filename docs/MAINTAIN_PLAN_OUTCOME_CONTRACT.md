@@ -558,6 +558,13 @@ ordine runtime, dry-run, transazioni e compatibilità legacy, è specificato nel
 regole di dominio di questa sezione restano normative e non sono sostituite da
 quel documento.
 
+In particolare, quel contratto definisce due invocazioni dopo un sync riuscito:
+quella session-driven e quella prescription/window-driven per finestre chiuse
+senza sessione catturata. Definisce inoltre lo scope di rilevanza come
+intervallo autorevole e limitato della sincronizzazione; «candidate» nelle
+sezioni 5.4–5.5 significa sempre candidate appartenenti a tale scope, mai tutta
+la storia same-subject.
+
 ### 5.1 Schema canonico
 
 ```yaml
@@ -1595,9 +1602,11 @@ Policy draft: `maintain-plan-matching/1.0.0-draft`.
 Questa sezione risolve esplicitamente il rilievo della vecchia PR #7:
 **“Define deterministic matching without a direct identifier”.**
 
-Senza direct ID, la futura implementazione dovrà applicare queste regole:
+Senza direct ID, la futura implementazione dovrà applicare queste regole agli
+snapshot preservati dallo scope autorevole della sincronizzazione:
 
-1. l'inizio dell'attività dovrà ricadere nella `scheduled_window`;
+1. l'inizio dell'attività dovrà ricadere nella `scheduled_window` per il match
+   automatico;
 2. un'attività fuori finestra dovrà richiedere conferma e non dovrà essere
    scartata definitivamente;
 3. `composition` dovrà coincidere;
@@ -1610,7 +1619,11 @@ Senza direct ID, la futura implementazione dovrà applicare queste regole:
 8. dopo la conferma, ogni scostamento resterà valutato separatamente.
 
 L'associazione automatica sarà ammessa soltanto se resterà esattamente una
-candidata compatibile. Zero candidate o più candidate richiederanno conferma.
+candidata compatibile. Uno snapshot rilevante fuori finestra o incompatibile
+resta evidence e richiede conferma: non viene eliminato dal discovery. Zero
+snapshot nello scope o più snapshot richiederanno la confirmation discovery
+dedicata; zero sessioni per uno snapshot scaduto produrrà invece il
+`MatchingResult` snapshot-centric della sezione 5.5.
 Non dovranno essere usati spareggi impliciti basati su durata, distanza, nome,
 carico o somiglianza. Candidate set, evidence, provenance e stato della
 conferma dovranno essere conservati. Nessun learning sarà ammesso prima della
@@ -1624,8 +1637,10 @@ immutabile descritto nella sezione 5.1.
 
 ### 5.5 Zero candidate
 
-Dopo la fine della finestra e almeno una sincronizzazione riuscita, il testo
-obbligatorio dovrà essere:
+Dopo la fine della finestra e una sincronizzazione riuscita il cui scope copre
+quella finestra, l'invocazione prescription/window-driven dovrà chiamare il
+matcher snapshot-centric anche in assenza di sessioni. Il testo obbligatorio
+dovrà essere:
 
 > Non ho trovato un'attività associabile alla seduta prevista
 

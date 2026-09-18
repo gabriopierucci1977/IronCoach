@@ -301,7 +301,9 @@ sono eleggibili.
 
 Ordine runtime, candidate discovery e transazione del futuro collegamento sono
 definiti dal
-[contratto runtime matching](MAINTAIN_PLAN_RUNTIME_MATCHING_CONTRACT.md), senza
+[contratto runtime matching](MAINTAIN_PLAN_RUNTIME_MATCHING_CONTRACT.md), che
+richiede un `SynchronizationCoverage` autorevole e limitato e ordina il
+percorso session-driven prima di quello prescription/window-driven, senza
 estendere il perimetro di cattura di questo documento.
 
 ## 11. Criteri di accettazione
