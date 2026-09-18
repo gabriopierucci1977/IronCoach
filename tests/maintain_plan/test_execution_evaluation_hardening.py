@@ -230,6 +230,6 @@ def test_v1_through_v5_checksums_and_real_v4_upgrade_are_exact(tmp_path):
     run_migrations(path)
     run_migrations(path)
     with sqlite3.connect(path) as connection:
-        assert connection.execute("SELECT count(*) FROM maintain_plan_schema_migrations").fetchone() == (6,)
+        assert connection.execute("SELECT count(*) FROM maintain_plan_schema_migrations").fetchone() == (7,)
         assert connection.execute("SELECT count(*) FROM maintain_plan_source_conflict_impact_evaluations").fetchone() == (0,)
         assert before

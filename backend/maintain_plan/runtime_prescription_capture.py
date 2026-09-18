@@ -21,7 +21,7 @@ class RuntimePrescriptionCapture:
         self._repository_factory = repository_factory
         self._clock = clock
 
-    def capture(self, *, runtime_config, training, decision):
+    def capture(self, *, runtime_config, athlete, training, decision):
         """Capture an eligible decision, or return ``None`` when not enabled."""
         if getattr(runtime_config, "maintain_plan_snapshot_enabled", None) is not True:
             return None
@@ -33,11 +33,16 @@ class RuntimePrescriptionCapture:
         ):
             return None
 
+        if type(athlete) is not dict:
+            raise ValueError("athlete must be an exact dict")
+        subject_ref = athlete.get("source_id")
+
         # Build (including domain validation) before repository construction;
         # repository construction runs the SQLite migrations.
         communicated = build_communicated_prescription(
             training,
             decision,
+            subject_ref=subject_ref,
             communicated_at=self._clock(),
             timezone_name=runtime_config.maintain_plan_timezone,
         )

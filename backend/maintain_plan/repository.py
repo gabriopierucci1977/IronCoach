@@ -44,9 +44,12 @@ class ActualSessionCaptureTransaction:
     def create(self, value: ActualSession) -> None:
         self._repository._require_valid(validate_actual_session(value))
         self._connection.execute(
-            "INSERT INTO maintain_plan_actual_sessions VALUES (?, ?, ?, ?, ?, ?)",
+            "INSERT INTO maintain_plan_actual_sessions "
+            "(session_id, start, composition, contract_version, payload_schema_version, payload_json, subject_ref) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
             (value.session_id, value.start.isoformat(), value.composition.value,
-             value.contract_version, PAYLOAD_SCHEMA_VERSION, serialize_contract(value)),
+             value.contract_version, PAYLOAD_SCHEMA_VERSION, serialize_contract(value),
+             value.subject_ref),
         )
 
 
@@ -76,9 +79,12 @@ class PrescriptionSnapshotTransaction:
     def create(self, value: PrescriptionSnapshot) -> None:
         self._repository._require_valid(validate_prescription(value))
         self._connection.execute(
-            "INSERT INTO maintain_plan_prescription_snapshots VALUES (?, ?, ?, ?, ?, ?)",
+            "INSERT INTO maintain_plan_prescription_snapshots "
+            "(prescription_snapshot_id, workout_id, decision_id, contract_version, "
+            "payload_schema_version, payload_json, subject_ref) VALUES (?, ?, ?, ?, ?, ?, ?)",
             (value.prescription_snapshot_id, value.workout_id, value.decision_id,
-             value.contract_version, PAYLOAD_SCHEMA_VERSION, serialize_contract(value)),
+             value.contract_version, PAYLOAD_SCHEMA_VERSION, serialize_contract(value),
+             value.subject_ref),
         )
 
 
@@ -117,9 +123,12 @@ class MaintainPlanRepository:
     def create_prescription_snapshot(self, value: PrescriptionSnapshot) -> None:
         self._require_valid(validate_prescription(value))
         self._insert(
-            "INSERT INTO maintain_plan_prescription_snapshots VALUES (?, ?, ?, ?, ?, ?)",
+            "INSERT INTO maintain_plan_prescription_snapshots "
+            "(prescription_snapshot_id, workout_id, decision_id, contract_version, "
+            "payload_schema_version, payload_json, subject_ref) VALUES (?, ?, ?, ?, ?, ?, ?)",
             (value.prescription_snapshot_id, value.workout_id, value.decision_id,
-             value.contract_version, PAYLOAD_SCHEMA_VERSION, serialize_contract(value)),
+             value.contract_version, PAYLOAD_SCHEMA_VERSION, serialize_contract(value),
+             value.subject_ref),
         )
 
     @contextmanager
@@ -145,10 +154,12 @@ class MaintainPlanRepository:
         if stored is None:
             return None
         row, value = stored
-        self._require_valid(validate_prescription(value))
+        self._require_valid(validate_prescription(
+            value, allow_legacy_subject=row["subject_ref"] is None))
         if (row["prescription_snapshot_id"], row["workout_id"], row["decision_id"],
                 row["contract_version"]) != (value.prescription_snapshot_id, value.workout_id,
-                                             value.decision_id, value.contract_version):
+                                             value.decision_id, value.contract_version) or \
+                row["subject_ref"] != value.subject_ref:
             raise ValueError("stored prescription snapshot metadata does not match payload")
         return value
 
@@ -156,10 +167,12 @@ class MaintainPlanRepository:
         if row["payload_schema_version"] != PAYLOAD_SCHEMA_VERSION:
             raise ValueError("unsupported stored MAINTAIN_PLAN payload schema version")
         value = deserialize_contract(row["payload_json"], PrescriptionSnapshot)
-        self._require_valid(validate_prescription(value))
+        self._require_valid(validate_prescription(
+            value, allow_legacy_subject=row["subject_ref"] is None))
         if (row["prescription_snapshot_id"], row["workout_id"], row["decision_id"],
                 row["contract_version"]) != (value.prescription_snapshot_id, value.workout_id,
-                                             value.decision_id, value.contract_version):
+                                             value.decision_id, value.contract_version) or \
+                row["subject_ref"] != value.subject_ref:
             raise ValueError("stored prescription snapshot metadata does not match payload")
         return value
 
@@ -182,10 +195,13 @@ class MaintainPlanRepository:
     def create_actual_session(self, value: ActualSession) -> None:
         self._require_valid(validate_actual_session(value))
         self._insert(
-            "INSERT INTO maintain_plan_actual_sessions VALUES (?, ?, ?, ?, ?, ?)",
+            "INSERT INTO maintain_plan_actual_sessions "
+            "(session_id, start, composition, contract_version, payload_schema_version, payload_json, subject_ref) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
             (value.session_id, value.start.isoformat(),
              None if value.composition is None else value.composition.value,
-             value.contract_version, PAYLOAD_SCHEMA_VERSION, serialize_contract(value)),
+             value.contract_version, PAYLOAD_SCHEMA_VERSION, serialize_contract(value),
+             value.subject_ref),
         )
 
     @contextmanager
@@ -207,12 +223,13 @@ class MaintainPlanRepository:
         if row["payload_schema_version"] != PAYLOAD_SCHEMA_VERSION:
             raise ValueError("unsupported stored MAINTAIN_PLAN payload schema version")
         value = deserialize_contract(row["payload_json"], ActualSession)
-        self._require_valid(validate_actual_session(value))
+        self._require_valid(validate_actual_session(
+            value, allow_legacy_subject=row["subject_ref"] is None))
         metadata = (value.session_id, value.start.isoformat(),
                     None if value.composition is None else value.composition.value,
                     value.contract_version)
         if (row["session_id"], row["start"], row["composition"],
-                row["contract_version"]) != metadata:
+                row["contract_version"]) != metadata or row["subject_ref"] != value.subject_ref:
             raise ValueError("stored actual session metadata does not match payload")
         return value
 
@@ -221,12 +238,13 @@ class MaintainPlanRepository:
         if stored is None:
             return None
         row, value = stored
-        self._require_valid(validate_actual_session(value))
+        self._require_valid(validate_actual_session(
+            value, allow_legacy_subject=row["subject_ref"] is None))
         metadata = (value.session_id, value.start.isoformat(),
                     None if value.composition is None else value.composition.value,
                     value.contract_version)
         if (row["session_id"], row["start"], row["composition"],
-                row["contract_version"]) != metadata:
+                row["contract_version"]) != metadata or row["subject_ref"] != value.subject_ref:
             raise ValueError("stored actual session metadata does not match payload")
         return value
 

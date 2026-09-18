@@ -112,7 +112,7 @@ def test_v5_to_v6_preserves_rows_payload_constraints_and_is_idempotent(tmp_path)
     run_migrations(path); run_migrations(path)
     with sqlite3.connect(path) as connection:
         assert connection.execute("SELECT * FROM maintain_plan_source_conflict_impact_evaluations").fetchall() == before
-        assert connection.execute("SELECT count(*) FROM maintain_plan_schema_migrations").fetchone() == (6,)
+        assert connection.execute("SELECT count(*) FROM maintain_plan_schema_migrations").fetchone() == (7,)
         info = connection.execute("PRAGMA table_info(maintain_plan_source_conflict_impact_evaluations)").fetchall()
         assert next(row for row in info if row[1] == "prescription_mapping_ref")[3] == 0
-    assert SCHEMA_VERSION == 6
+    assert SCHEMA_VERSION == 7

@@ -1,0 +1,70 @@
+# Contratto normativo — Subject ownership binding
+
+**Stato:** normativo e implementato  
+**Perimetro schema:** `SCHEMA_VERSION = 7`  
+**Artefatti:** `PrescriptionSnapshot`, `ActualSession`, `PrescriptionMapping`
+
+## 1. Scopo e autorità
+
+`subject_ref` è il binding di ownership immutabile comune alla prescrizione e
+alla sessione reale. Deriva **esclusivamente** da
+`context["athlete"]["source_id"]`, cioè dalla stessa identità atleta
+autorevole usata dalla cattura runtime di `ActualSession`.
+
+È vietato derivarlo, sostituirlo o recuperarlo da `activity_id`, dal
+`source_id` di un'attività, `file_hash`, `record_id`, `decision_id`,
+`workout_id`, nome atleta o qualunque altro identificativo tecnico. Non
+esistono fallback o inferenze.
+
+## 2. Forma e validazione
+
+Il valore è una stringa opaca, esplicita, non vuota, non composta unicamente
+da whitespace, case-sensitive e codificabile integralmente come UTF-8 strict.
+La rappresentazione viene conservata e confrontata byte-for-byte: sono vietati
+trim, case folding, normalizzazione Unicode, cleanup e coercizioni. Unicode
+valido è ammesso; un surrogate isolato è invalido.
+
+Ogni nuovo `PrescriptionSnapshot` e `ActualSession` DEVE contenere un
+`subject_ref` valido. Modello, codec e repository lo conservano senza
+trasformazioni; le colonne v7 devono corrispondere esattamente al payload.
+
+## 3. Associazione e mismatch
+
+Prima di persistere un `PrescriptionMapping`, il repository DEVE risolvere
+entrambi gli artefatti e verificare che i rispettivi `subject_ref` siano
+presenti, validi e identici con confronto esatto. Binding mancante, malformato
+o discordante è un errore fail-closed e non produce alcuna scrittura. Nessuna
+associazione cross-athlete è permessa.
+
+Questo controllo non modifica il matcher puro, le sue finestre, i tie-break o
+gli stati. Non autorizza candidate discovery runtime né sintetizza
+`returned_prescription_id`.
+
+## 4. Persistenza, retry e idempotenza
+
+La migrazione v7 è append-only: aggiunge una colonna `subject_ref` nullable a
+ciascuna delle due tabelle per preservare i record storici, indici dedicati e
+guardie sugli insert futuri. Non modifica le migrazioni v1–v6 né i relativi
+checksum e non esegue backfill.
+
+Per i nuovi record il repository valida il binding prima dell'insert. Un retry
+è idempotente soltanto se il contenuto semantico, incluso `subject_ref`, è
+equivalente secondo le regole già definite per l'artefatto. Lo stesso ID o lo
+stesso `decision_id` con binding differente è un conflitto divergente: rollback
+e nessun overwrite.
+
+## 5. Legacy v1–v6
+
+I payload storici privi del campo restano decodificabili come
+`subject_ref=None` e le righe migrate conservano `NULL`. Questa tolleranza è
+riservata alla lettura. Un artefatto legacy senza binding non è eleggibile per
+mapping e non viene associato automaticamente. È vietato qualunque backfill
+euristico.
+
+## 6. Confini dello slice
+
+Questo slice introduce esclusivamente ownership comune, persistenza v7,
+validazione fail-closed e wiring dell'identità autorevole nella cattura della
+prescrizione. Restano fuori scope: modifiche al matcher, candidate discovery,
+evaluation, reporting, learning, modifica del piano e Coach Engine.
+

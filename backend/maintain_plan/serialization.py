@@ -71,9 +71,15 @@ def _decode(value: Any) -> Any:
         if not isinstance(value["fields"], dict):
             raise ValueError("invalid MAINTAIN_PLAN dataclass fields")
         expected_fields = {field.name for field in fields(cls)}
-        if set(value["fields"]) != expected_fields:
+        actual_fields = set(value["fields"])
+        legacy_subject = cls in (models.PrescriptionSnapshot, models.ActualSession) and \
+            actual_fields == expected_fields - {"subject_ref"}
+        if actual_fields != expected_fields and not legacy_subject:
             raise ValueError("MAINTAIN_PLAN dataclass fields do not match its type")
-        return cls(**{name: _decode(item) for name, item in value["fields"].items()})
+        decoded = {name: _decode(item) for name, item in value["fields"].items()}
+        if legacy_subject:
+            decoded["subject_ref"] = None
+        return cls(**decoded)
     if kind == "enum":
         _require_keys(value, {"$type", "name", "value"})
         try:

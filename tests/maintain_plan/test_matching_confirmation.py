@@ -69,7 +69,7 @@ def test_brick_requires_order_timing_transition_and_declared_gap():
     second = ObservedComponent("bike", 1, Discipline.BIKE,
                                start=NOW + timedelta(minutes=40), end=NOW + timedelta(minutes=90))
     session = ActualSession("brick", NOW, Composition.BRICK, (first, second), transition_ids=("t",), transitions=(
-        ObservedTransition("t", "run", "bike", duration_minutes=10),))
+        ObservedTransition("t", "run", "bike", duration_minutes=10),), subject_ref="athlete-1")
     assert _match(BRICK_PRESCRIPTION, (session,)).status is MatchingStatus.MATCHED
     too_late = replace(session, components=(first, replace(second, start=NOW + timedelta(minutes=46))), transition_ids=("t2",),
                        transitions=(ObservedTransition("t2", "run", "bike", duration_minutes=16),))
@@ -231,7 +231,8 @@ def test_non_zero_based_component_indices_do_not_index_planned_tuple():
     second = ObservedComponent("bike", 6, Discipline.BIKE, start=NOW + timedelta(minutes=3),
                                end=NOW + timedelta(minutes=4))
     session = ActualSession("nonzero", NOW, Composition.BRICK, (first, second),
-        transition_ids=("t",), transitions=(ObservedTransition("t", "run", "bike", duration_minutes=1),))
+        transition_ids=("t",), transitions=(ObservedTransition("t", "run", "bike", duration_minutes=1),),
+        subject_ref="athlete-1")
     assert _match(BRICK_PRESCRIPTION, (session,)).status is MatchingStatus.MATCHED
     incompatible = replace(session, components=(replace(first, component_index=7), second))
     assert _match(BRICK_PRESCRIPTION, (incompatible,)).status is MatchingStatus.CONFIRMATION_REQUIRED
@@ -239,7 +240,8 @@ def test_non_zero_based_component_indices_do_not_index_planned_tuple():
 
 def test_direct_id_observed_extra_survives_downstream_planned_lookup():
     session = ActualSession("direct-extra", NOW, Composition.BRICK,
-                            (observed("run", 0, Discipline.RUN), observed("extra", 1, Discipline.BIKE)))
+                            (observed("run", 0, Discipline.RUN), observed("extra", 1, Discipline.BIKE)),
+                            subject_ref="athlete-1")
     result = _match(RUN_PRESCRIPTION, (session,), (
         DirectIdEvidence("direct", "direct-extra", "workout-1", "device", {}),))
     assert result.prescription_mapping.component_mappings[-1].match_status is MatchStatus.OBSERVED_ONLY
@@ -263,7 +265,8 @@ def test_direct_id_observed_extra_survives_downstream_planned_lookup():
 ])
 def test_observed_only_evaluation_must_match_canonical_mapping(mutation):
     session = ActualSession("direct-extra", NOW, Composition.BRICK,
-                            (observed("run", 0, Discipline.RUN), observed("extra", 1, Discipline.BIKE)))
+                            (observed("run", 0, Discipline.RUN), observed("extra", 1, Discipline.BIKE)),
+                            subject_ref="athlete-1")
     matching = _match(RUN_PRESCRIPTION, (session,), (
         DirectIdEvidence("direct", "direct-extra", "workout-1", "device", {}),))
     planned_result = replace(component_result("run"), observed_component_ref=ObservedComponentRef(
@@ -280,7 +283,8 @@ def test_observed_only_evaluation_must_match_canonical_mapping(mutation):
 
 def test_observed_only_duplicate_repository_rejection_and_tamper_detection(tmp_path):
     session = ActualSession("direct-extra", NOW, Composition.BRICK,
-                            (observed("run", 0, Discipline.RUN), observed("extra", 1, Discipline.BIKE)))
+                            (observed("run", 0, Discipline.RUN), observed("extra", 1, Discipline.BIKE)),
+                            subject_ref="athlete-1")
     matching = _match(RUN_PRESCRIPTION, (session,), (
         DirectIdEvidence("direct", "direct-extra", "workout-1", "device", {}),))
     planned_result = replace(component_result("run"), observed_component_ref=ObservedComponentRef(
@@ -324,7 +328,7 @@ def test_mapping_hierarchy_rejects_cross_component_blocks_repetitions_and_transi
     )
     session = ActualSession("hierarchy", NOW, Composition.BRICK, observed_components,
         transition_ids=("observed-transition",), transitions=(ObservedTransition(
-            "observed-transition", "run", "bike"),))
+            "observed-transition", "run", "bike"),), subject_ref="athlete-1")
     mapping = build_mapping(snapshot, session, mapping_id="hierarchy-map", created_at=NOW,
                             resolution_method=ResolutionMethod.AUTOMATIC)
     assert validate_mapping_ownership(mapping, snapshot, session) == ()

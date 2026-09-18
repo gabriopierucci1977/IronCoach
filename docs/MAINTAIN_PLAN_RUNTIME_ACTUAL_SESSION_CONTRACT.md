@@ -1,7 +1,11 @@
 # Contratto runtime P0 — cattura `ActualSession`
 
 **Stato:** normativo per il primo incremento runtime di `MAINTAIN_PLAN`
-**Perimetro schema:** schema SQLite esistente, `SCHEMA_VERSION = 6`
+**Perimetro storico P0:** schema SQLite `SCHEMA_VERSION = 6`
+
+> Il binding persistente successivo è definito dal
+> [contratto subject ownership](MAINTAIN_PLAN_SUBJECT_OWNERSHIP_CONTRACT.md),
+> che porta lo schema a v7 senza cambiare le regole di cattura qui definite.
 **Flag:** `IRONCOACH_MAINTAIN_PLAN_ACTUAL_SESSION_ENABLED`
 
 ## 1. Scopo
@@ -280,22 +284,20 @@ per quell'elemento; un guasto tecnico genera errore e rollback.
 
 ## 10. Divieto di ownership implicita e matching
 
-`PrescriptionSnapshot` e `ActualSession` non possiedono oggi un ownership
-binding comune verificabile. `subject_ref` serve all'identità della cattura ma
-non è presente come binding confrontabile nella prescription corrente. Perciò
-matching automatico, matching diretto e creazione di `PrescriptionMapping`
-sono **VIETATI** nel primo incremento, anche se date, disciplina o ID sembrano
-coincidere.
+Nel perimetro storico P0 mancava un ownership binding comune verificabile e il
+matching era quindi vietato. Lo slice successivo persiste il binding comune
+secondo il
+[contratto subject ownership](MAINTAIN_PLAN_SUBJECT_OWNERSHIP_CONTRACT.md).
+Questa evoluzione non abilita candidate discovery runtime e non modifica il
+matcher puro.
 
 Il database P0 può operare inizialmente per un solo atleta come vincolo
 operativo di deployment; questa assunzione NON costituisce prova di ownership
 e non attenua il divieto.
 
-Prima di qualsiasi matching cross-runtime, un incremento successivo DEVE
-definire e persistere un ownership binding normativo comune a
-`PrescriptionSnapshot` e `ActualSession`, specificandone autorità, identità,
-validazione, migrazione e comportamento in caso di mismatch. Solo dopo tale
-incremento potrà essere progettato il matching.
+Qualunque mapping persistito DEVE ora superare il confronto esatto e
+fail-closed previsto dal contratto dedicato; i record legacy senza binding non
+sono eleggibili.
 
 ## 11. Criteri di accettazione
 

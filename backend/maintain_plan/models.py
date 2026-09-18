@@ -430,6 +430,7 @@ class PrescriptionSnapshot(_DeepFrozen):
     provenance: Provenance
     audit: PrescriptionAudit
     contract_version: str = CONTRACT_VERSION
+    subject_ref: str | None = None
 
 
 @dataclass(frozen=True)
@@ -533,6 +534,7 @@ class ActualSession(_DeepFrozen):
     provenance: Mapping[str, Any] = MappingProxyType({})
     missing_fields: tuple[str, ...] = ()
     warnings: tuple[str, ...] = ()
+    subject_ref: str | None = None
 
 
 # Append-only feedback and source-conflict lifecycle contracts.  Identifiers,

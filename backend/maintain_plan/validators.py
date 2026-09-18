@@ -18,6 +18,7 @@ from .models import (
     Requiredness, SessionType, SourceConflictRef, SupportStatus,
     CONTRACT_VERSION,
 )
+from .ownership import subject_ref_errors
 
 
 def _duplicates(values: Iterable[str]) -> set[str]:
@@ -131,8 +132,10 @@ def _validate_planned_component(component: PlannedComponent) -> list[str]:
     return errors
 
 
-def validate_prescription(snapshot: PrescriptionSnapshot) -> tuple[str, ...]:
+def validate_prescription(snapshot: PrescriptionSnapshot, *, allow_legacy_subject: bool = False) -> tuple[str, ...]:
     errors: list[str] = []
+    if not (allow_legacy_subject and snapshot.subject_ref is None):
+        errors.extend(subject_ref_errors(snapshot.subject_ref))
     for value, name in (
         (snapshot.prescription_snapshot_id, "prescription_snapshot_id"),
         (snapshot.workout_id, "workout_id"),
@@ -192,8 +195,10 @@ def validate_prescription(snapshot: PrescriptionSnapshot) -> tuple[str, ...]:
     return tuple(errors)
 
 
-def validate_actual_session(session: ActualSession) -> tuple[str, ...]:
+def validate_actual_session(session: ActualSession, *, allow_legacy_subject: bool = False) -> tuple[str, ...]:
     errors: list[str] = []
+    if not (allow_legacy_subject and session.subject_ref is None):
+        errors.extend(subject_ref_errors(session.subject_ref))
     if not session.session_id:
         errors.append("session_id is required")
     if session.contract_version != CONTRACT_VERSION:
@@ -392,6 +397,10 @@ def validate_mapping_ownership(mapping: PrescriptionMapping, snapshot: Prescript
                                session: ActualSession) -> tuple[str, ...]:
     """Resolve every mapping reference through its complete canonical parent chain."""
     errors = list(validate_mapping(mapping))
+    if snapshot.subject_ref is None or session.subject_ref is None:
+        errors.append("mapping requires subject_ref on snapshot and actual session")
+    elif snapshot.subject_ref != session.subject_ref:
+        errors.append("mapping snapshot and actual session subject_ref mismatch")
     if mapping.prescription_snapshot_ref != snapshot.prescription_snapshot_id or \
             mapping.actual_session_ref != session.session_id:
         errors.append("mapping ownership root does not match snapshot and session")

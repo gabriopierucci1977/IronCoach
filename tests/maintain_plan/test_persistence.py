@@ -47,7 +47,7 @@ def test_migration_on_empty_database_is_versioned_and_idempotent(tmp_path):
         versions = connection.execute(
             "SELECT version, checksum FROM maintain_plan_schema_migrations"
         ).fetchall()
-        assert [item[0] for item in versions] == [1, 2, 3, 4, 5, 6]
+        assert [item[0] for item in versions] == [1, 2, 3, 4, 5, 6, 7]
         assert all(len(item[1]) == 64 for item in versions)
     run_migrations(path)
     with sqlite3.connect(path) as connection:
@@ -57,16 +57,24 @@ def test_migration_on_empty_database_is_versioned_and_idempotent(tmp_path):
         assert before == after
         assert connection.execute(
             "SELECT count(*) FROM maintain_plan_schema_migrations"
-            ).fetchone() == (6,)
+            ).fetchone() == (7,)
 
 
 def _seed_confirmation_parents(connection):
+    has_subject = any(row[1] == "subject_ref" for row in connection.execute(
+        "PRAGMA table_info(maintain_plan_prescription_snapshots)"))
+    subject_columns = ", subject_ref" if has_subject else ""
+    subject_value = ", 'athlete-1'" if has_subject else ""
     connection.execute(
-        "INSERT INTO maintain_plan_prescription_snapshots VALUES "
-        "('snapshot', 'workout', 'decision', 'contract', 'payload-v', 'snapshot-payload')")
+        "INSERT INTO maintain_plan_prescription_snapshots "
+        "(prescription_snapshot_id, workout_id, decision_id, contract_version, payload_schema_version, payload_json"
+        f"{subject_columns}) VALUES "
+        f"('snapshot', 'workout', 'decision', 'contract', 'payload-v', 'snapshot-payload'{subject_value})")
     connection.execute(
-        "INSERT INTO maintain_plan_actual_sessions VALUES "
-        "('session', '2026-01-01T00:00:00+00:00', 'single', 'contract', 'payload-v', 'session-payload')")
+        "INSERT INTO maintain_plan_actual_sessions "
+        "(session_id, start, composition, contract_version, payload_schema_version, payload_json"
+        f"{subject_columns}) VALUES "
+        f"('session', '2026-01-01T00:00:00+00:00', 'single', 'contract', 'payload-v', 'session-payload'{subject_value})")
     connection.execute(
         "INSERT INTO maintain_plan_matching_results VALUES "
         "('matching', 'CONFIRMATION_REQUIRED', NULL, 'policy', 'version', 'payload-v', 'matching-payload')")
@@ -88,12 +96,12 @@ def test_historical_v3_checksum_and_upgrade_to_v4_preserve_existing_rows(tmp_pat
     with sqlite3.connect(path) as connection:
         assert connection.execute("SELECT * FROM maintain_plan_confirmations").fetchall() == before
         assert [row[0] for row in connection.execute(
-            "SELECT version FROM maintain_plan_schema_migrations ORDER BY version")] == [1, 2, 3, 4, 5, 6]
-        assert {row[0] for row in connection.execute(
-            "SELECT name FROM sqlite_master WHERE type='trigger'")} == {
-                "maintain_plan_confirmations_validate_insert",
-                "maintain_plan_confirmations_validate_update",
-            }
+            "SELECT version FROM maintain_plan_schema_migrations ORDER BY version")] == [1, 2, 3, 4, 5, 6, 7]
+        assert {
+            "maintain_plan_confirmations_validate_insert",
+            "maintain_plan_confirmations_validate_update",
+        } <= {row[0] for row in connection.execute(
+            "SELECT name FROM sqlite_master WHERE type='trigger'")}
 
 
 @pytest.mark.parametrize("status,answer,selected", [
@@ -159,7 +167,7 @@ def test_v4_rejects_invalid_historical_rows_atomically(tmp_path):
         assert connection.execute(
             "SELECT count(*) FROM sqlite_master WHERE type='trigger' AND name LIKE 'maintain_plan_confirmations_validate_%'"
         ).fetchone() == (0,)
-    assert SCHEMA_VERSION == 6
+    assert SCHEMA_VERSION == 7
 
 
 def test_migration_preserves_legacy_schema_and_record_exactly(tmp_path):
@@ -235,6 +243,7 @@ def test_round_trip_preserves_none_tuple_frozenset_and_nested_mapping(tmp_path):
             "run", 0, None, (),
             {"missing": None, "nested": {"tuple": (1, 2), "set": frozenset({"b", "a"})}},
         ),),
+        subject_ref="athlete-1",
     )
     repository = MaintainPlanRepository(tmp_path / "complex.db")
     repository.create_actual_session(session)
