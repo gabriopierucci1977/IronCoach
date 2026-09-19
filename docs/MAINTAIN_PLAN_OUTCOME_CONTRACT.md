@@ -1726,8 +1726,12 @@ senza learning. Una sincronizzazione tardiva potrà aggiornare lo storico dopo
 conferma, ma non dovrà generare un nuovo report visibile sulla vecchia seduta
 ormai superata.
 
-La deadline è il primo inizio-finestra autorevole same-subject strettamente
-successivo alla fine della finestra originaria, includendo tutti i pari bordo.
+La deadline zero-sessioni usa l'ordinamento canonico delle prescrizioni: gruppi
+same-subject per `scheduled_window.start`, exact same-start indivisibili e
+internamente ordinati per ID UTF-8. Il successore è il gruppo immediatamente
+seguente con start strettamente maggiore dello start originario, anche in caso
+di overlap, containment o esatta adiacenza end/start; il boundary è quello
+start.
 Se non è ancora noto, la request resta pending finché una sync lo scopre. Dopo
 che il successor è noto ma prima sia del percorso session-driven sia di
 quello prescription/window-driven, il synchronization pre-processing dovrà
@@ -1736,7 +1740,13 @@ eseguire e committare uno sweep che appende un result terminale
 answer né mapping, preservando warning ed evidence; request e result originari
 restano immutati. Answer, expiry e avvio reconciliation competeranno sotto
 `BEGIN IMMEDIATE` dopo rilettura della testa, così un solo successore sarà
-ammesso e retry/stale answer non potranno creare mapping duplicati.
+ammesso e retry/stale answer non potranno creare mapping duplicati. Ogni
+reconciliation tardiva persisterà inoltre una deadline propria: start del primo
+gruppo same-subject strettamente successivo al suo `created_at` committato, mai
+il boundary zero-sessioni già trascorso. Se il gruppo futuro non è noto resterà
+pending fino a synchronization autorevole; scheduling ed expiry
+`NOT_EVALUABLE` senza answer/mapping precederanno il processing del gruppo e
+competeranno con l'answer sulla stessa testa append-only.
 
 ### 5.6 Sessioni composte e consecutività
 

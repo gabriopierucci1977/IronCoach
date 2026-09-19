@@ -319,8 +319,13 @@ La relativa answer vive in una relazione append-only dedicata, valida membership
 della selezione e non muta mai la request `REQUIRED`.
 La request zero originaria resta vuota e non offre associazione manuale. Lo
 sweep expiry prescritto precede entrambi i percorsi, anche quando la stessa sync
-importa una sessione della prescrizione successiva. L'handled predicate di una
-`ActualSession` resta session-level: la esclude da nuove candidature se è già
+importa una sessione della prescrizione successiva. Il successore zero-sessioni
+è il gruppo di start canonico immediatamente seguente, senza richiedere che
+inizi dopo l'end originario; overlap, containment, point window e adiacenza
+restano validi. Ogni reconciliation usa invece il proprio primo gruppo con
+start successivo al `created_at` committato, scoperto ora o da una sync futura,
+e scade append-only prima che quel gruppo sia processato. L'handled predicate
+di una `ActualSession` resta session-level: la esclude da nuove candidature se è già
 mappata o in una catena autorevole, ma non rende handled uno snapshot estraneo.
 Il percorso window-driven deve quindi creare il caso zero per uno snapshot mai
 gestito quando tutte le sessioni dello scope sono state escluse perché trattate

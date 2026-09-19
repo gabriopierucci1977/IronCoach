@@ -31,12 +31,15 @@ riceve il `SynchronizationCoverage` autorevole del §3 e, in quest'ordine:
 2. dopo che input autorevoli e boundary dell'indice successor sono disponibili,
    esegue e committa la fase obbligatoria di **synchronization pre-processing**:
    scheduling dei boundary appena rivelati e sweep expiry di tutte le request
-   zero-sessioni pending same-subject il cui boundary deterministico è raggiunto;
+   zero-sessioni **e reconciliation** pending same-subject il cui rispettivo
+   boundary deterministico è raggiunto;
 3. soltanto dopo quel commit esegue il percorso **session-driven** per ciascuna
    sessione coperta, ordinata per `(start, session_id UTF-8)`;
 4. quindi esegue il percorso **prescription/window-driven** per ciascuno snapshot
-   rilevante la cui finestra è ormai chiusa, ordinato per
-   `(scheduled_window.end, prescription_snapshot_id UTF-8)`;
+   rilevante la cui finestra è ormai chiusa, in gruppi same-subject ordinati per
+   `scheduled_window.start`; tutti gli exact same-start restano nello stesso
+   gruppo e sono ordinati internamente per `prescription_snapshot_id` secondo
+   l'ordinamento canonico byte UTF-8 già definito;
 5. committa gli artefatti di matching prima di qualsiasi consumer downstream.
 
 Un sync fallito, parziale o best-effort degradato a warning non invoca nessuno
@@ -391,32 +394,46 @@ una risposta non associativa resta terminale e non riapre il rapporto.
 ### 5.1 Expiry deterministica della request zero-sessioni
 
 La fase A del caso zero committa atomicamente result e request insieme a
-`expiry_boundary_at` e `expiry_successor_snapshot_refs`. Il boundary è l'inizio
-canonico minimo della finestra di prescrizione same-subject **strettamente
-successiva** alla fine della finestra dello snapshot originario; tutti gli
-snapshot con quell'identico inizio, ordinati per ID UTF-8, sono congelati nella
-tupla successor. Questi sono input autorevoli dell'indice §3, non un timeout di
-parete né un grace period. Se nessun successore è ancora noto, boundary e tupla
-sono null/vuoti e la request resta pending. Ogni sincronizzazione successiva
-che scopre il primo gruppo successore appende un record `EXPIRY_SCHEDULED` con
-gli stessi input canonici; non aggiorna request o result.
+`expiry_boundary_at` e `expiry_successor_snapshot_refs`. Per ogni subject gli
+snapshot formano gruppi canonici ordinati esclusivamente per
+`scheduled_window.start`: tutti gli snapshot con start identico sono congelati
+nello stesso gruppo, ordinati internamente per `prescription_snapshot_id`
+secondo i byte UTF-8 canonici, senza usare `end` come tie-break fra gruppi. Per
+uno snapshot o gruppo A, il successore di expiry è il gruppo immediatamente
+seguente con start **strettamente maggiore dello start canonico di A**; il
+boundary è precisamente quello start. Non si richiede mai che lo start del
+successore sia successivo a `A.scheduled_window.end`: sovrapposizione,
+contenimento ed esatta adiacenza end/start sono tutti validi.
 
-Il loop window-driven raggruppa snapshot same-subject per
-`(scheduled_window.start, scheduled_window.end, snapshot_id UTF-8)` e processa i
-gruppi cronologicamente, con tie risolti sui byte UTF-8. Dopo aver creato il caso
-zero di A, rivalida immediatamente il successore autorevole: se il boundary è già
-noto ed è raggiunto dalla sincronizzazione corrente, **nella stessa
+Tutti i ref del gruppo successor sono congelati nella tupla. Questi sono input
+autorevoli dell'indice §3, non un timeout di parete né un grace period. Se
+nessun gruppo successivo è ancora noto, boundary e tupla sono null/vuoti e la
+request resta pending. Ogni sincronizzazione successiva che scopre il primo
+gruppo successore appende un record `EXPIRY_SCHEDULED` con gli stessi input
+canonici; non aggiorna request o result. Gli snapshot exact same-start di A non
+sono successori reciproci e condividono il medesimo successore; una finestra
+puntuale (`start=end`) segue esattamente la stessa regola.
+
+Il loop window-driven usa questo medesimo ordine per gruppi e non separa mai un
+gruppo same-start, neppure se i suoi `end` differiscono. Dopo aver creato il caso
+zero di A, rivalida immediatamente il successore autorevole: se il boundary è
+già raggiunto all'istante di creazione della request, **nella stessa
 `BEGIN IMMEDIATE`** inserisce result, request, scheduling e terminale
-`NOT_EVALUABLE/EXPIRED` di A. Soltanto il commit consente di avanzare a B. Il
-loop non può mai processare discovery, matching o confirmation di B mentre A è
-pending quando B costituisce già il suo boundary. ID, one-successor e race con
-un answer seguono le regole append-only sotto indicate; l'unità atomica evita
-qualsiasi finestra osservabile intermedia.
+`NOT_EVALUABLE/EXPIRED` di A. Soltanto il commit consente di processare un
+qualsiasi membro del gruppo B. Finestre parzialmente sovrapposte o contenute
+restano contemporaneamente candidate e possono quindi produrre discovery
+`MULTIPLE`; ciò non allenta l'obbligo di chiudere A prima di processare il
+gruppo ordinato successivo. Il loop non può mai creare discovery, matching o
+confirmation per B mentre A è pending quando B costituisce già il suo boundary.
+ID, one-successor e race con un answer seguono le regole append-only sotto
+indicate; l'unità atomica evita qualsiasi finestra osservabile intermedia.
 
 Nella fase obbligatoria di synchronization pre-processing del §2, **prima di
-entrambi i percorsi**, il boundary identifica in ordine
-`(expiry_boundary_at, origin_request_ref UTF-8)` ogni request pending
-same-subject il cui gruppo successor è stato raggiunto. Per ciascuna, una
+entrambi i percorsi**, il boundary identifica sia request zero-sessioni sia
+request reconciliation pending con il rispettivo boundary raggiunto. Le ordina
+insieme per `(effective_expiry_boundary_at, request_kind,
+request_id UTF-8)` (`ZERO_SESSION` prima di `RECONCILIATION`) e non processa
+alcun membro del gruppo finché tutte le expiry dovute non sono committate. Per ciascuna, una
 `BEGIN IMMEDIATE` rilegge request, result, catena, boundary e indice e valida
 che il gruppo sia ancora quello canonico. Se la request è ancora pending,
 appende
@@ -461,6 +478,31 @@ Il boundary appende un `LATE_SESSION_RECONCILIATION` result/attempt e una nuova
 request collegati a result e request zero originari e alla testa precedente;
 non altera la tupla vuota né l'evidence originaria.
 
+Ogni request di reconciliation persiste il proprio
+`reconciliation_expiry_boundary_at` e
+`reconciliation_expiry_successor_snapshot_refs`, distinti dal boundary ormai
+trascorso della request zero-sessioni. Il boundary di reconciliation è lo start
+canonico del primo gruppo di prescrizioni same-subject con
+`scheduled_window.start` **strettamente successivo** al `created_at` committato
+della request di reconciliation; la tupla evidence contiene l'intero gruppo
+same-start in ordine byte UTF-8. `created_at` è parte immutabile della request e
+della sua identità canonica; non si riusa mai l'expiry originaria.
+
+Se al commit non è noto alcun gruppo futuro, boundary e tupla sono null/vuoti e
+la reconciliation resta pending. Una sincronizzazione autorevole successiva
+che scopre il primo gruppo futuro appende un unico scheduling con FK alla
+request, boundary e tupla; la coppia immutabile request+scheduling è la deadline
+persistita propria della reconciliation e non muta la request. La lettura
+canonica `effective_reconciliation_expiry_*` usa i campi request quando già
+noti, altrimenti quelli dell'unico scheduling, e fallisce chiusa se entrambi
+sono valorizzati ma differiscono.
+Il pre-processing globale rivalida e committa l'expiry reconciliation prima che
+uno dei due percorsi elabori un membro del gruppo. Se il boundary è già dovuto
+quando viene scoperto, nella stessa unità serializzata appende prima result
+`NOT_EVALUABLE` ed evento `EXPIRED`. L'expiry non crea answer né mapping,
+conserva original result/request zero-sessioni, request/evidence reconciliation
+e tuple congelate, e non aggiorna alcuna request.
+
 Solo questa nuova request può offrire `MANUAL_ASSOCIATION`/`SELECT_CANDIDATE`.
 La risposta è persistita esclusivamente nella relazione dedicata
 `maintain_plan_late_session_reconciliation_answers` del §7, mai nella answer
@@ -473,6 +515,13 @@ associativa usa **answer → result `NOT_EVALUABLE` → evento testa**, senza
 mapping; l'expiry automatica usa result → evento e non crea answer. Nessuna
 risposta produce un
 nuovo report visibile per una vecchia seduta già superata.
+
+Answer ed expiry della reconciliation competono sotto la stessa
+`BEGIN IMMEDIATE`: rileggono request e chain head, rivalidano boundary/evidence e
+usano il vincolo one-successor sul precedente head. Il vincitore appende l'unico
+terminale; il retry byte-identico del perdente rilegge/no-op, mentre intenzione
+divergente o answer stale fallisce chiusa. Nessun percorso può mutare request,
+answer o evidence originali.
 
 Una catena pending, già expired/`NOT_EVALUABLE` o già risolta non viene
 ignorata: genera al massimo una reconciliation per la medesima tupla canonica.
@@ -493,7 +542,7 @@ Matrice normativa della catena snapshot-centric:
 | zero pending o terminale / sessione tardiva | `LATE_SESSION_RECONCILIATION` pending | non vuota, canonica | solo membri congelati | nessuno prima dell'answer |
 | reconciliation pending / selezione valida | dedicated answer + result `MATCHED` | non vuota, invariata | membro selezionato nella request | uno, `ATHLETE_CONFIRMATION` |
 | reconciliation pending / risposta non associativa | dedicated answer + result `NOT_EVALUABLE` | non vuota, invariata | `selected_session_ref=null` | nessuno |
-| reconciliation pending / expiry automatica | result `NOT_EVALUABLE` + `EXPIRED` | non vuota, invariata | nessuna answer | nessuno |
+| reconciliation pending / proprio boundary futuro raggiunto | result `NOT_EVALUABLE` + `EXPIRED` | non vuota, invariata | nessuna answer | nessuno |
 | qualunque testa / mapping già esistente | no-op verificato | invariata | — | mapping esistente |
 
 La catena conserva sempre warning/evidence zero originari. Un nuovo head cita
@@ -678,14 +727,18 @@ v8 aggiunge, senza cambiare v1–v7:
 - `maintain_plan_zero_session_chain_events(event_id TEXT PRIMARY KEY,
   origin_request_ref TEXT NOT NULL, previous_chain_head_ref TEXT NOT NULL,
   event_kind TEXT NOT NULL CHECK(event_kind IN ('EXPIRY_SCHEDULED','EXPIRED',
+  'RECONCILIATION_EXPIRY_SCHEDULED','RECONCILIATION_EXPIRED',
   'LATE_SESSION_RECONCILIATION','ANSWERED')), expiry_boundary_at TEXT,
   expiry_successor_snapshot_refs_json TEXT NOT NULL,
   reconciliation_request_ref TEXT, reconciliation_answer_ref TEXT,
   terminal_result_ref TEXT, occurred_at TEXT NOT NULL, payload_json TEXT NOT
   NULL, UNIQUE(origin_request_ref,
   previous_chain_head_ref), FOREIGN KEY ... ON DELETE NO ACTION)`. CHECK e
-  trigger impongono: scheduling senza terminal result; expiry con result
-  `NOT_EVALUABLE` e senza answer/mapping; reconciliation con request e tupla
+  trigger impongono: scheduling senza terminal result; expiry zero-sessioni o
+  reconciliation con result `NOT_EVALUABLE` e senza answer/mapping; gli eventi
+  reconciliation-expiry richiedono `reconciliation_request_ref`, ricopiano il
+  relativo boundary/gruppo futuro e vietano l'uso del boundary zero originario;
+  reconciliation con request e tupla
   candidata non vuota; `ANSWERED` con FK alla dedicated reconciliation answer
   e result terminale; `EXPIRED` senza answer ref. Un indice
   `(origin_request_ref,event_id)` e i link previous formano una sola catena
@@ -696,14 +749,32 @@ v8 aggiunge, senza cambiare v1–v7:
   NOT NULL, subject_ref TEXT NOT NULL, snapshot_ref TEXT NOT NULL,
   sync_scope_ref TEXT NOT NULL, candidate_session_refs_json TEXT NOT NULL,
   declared_session_refs_json TEXT NOT NULL, candidate_evidence_json TEXT NOT
-  NULL, status TEXT NOT NULL CHECK(status='REQUIRED'), occurred_at TEXT NOT NULL,
+  NULL, status TEXT NOT NULL CHECK(status='REQUIRED'), created_at TEXT NOT NULL,
+  reconciliation_expiry_boundary_at TEXT,
+  reconciliation_expiry_successor_snapshot_refs_json TEXT NOT NULL,
   payload_json TEXT NOT NULL, UNIQUE(original_confirmation_request_ref,
   previous_chain_head_ref), FOREIGN KEY ... ON DELETE NO ACTION)`. CHECK e
   trigger richiedono tuple uguali, non vuote, ordinate e senza duplicati; ogni
   sessione deve essere same-subject, persisted, scope-eligible e unmapped;
   update/delete sono vietati. La request resta per sempre immutabile con
   `status='REQUIRED'`: la chiusura logica esiste soltanto nella answer e nel
-  successivo evento di catena;
+  successivo evento di catena. CHECK impone boundary null se e solo se la tupla
+  successor è vuota; se valorizzato, esso deve essere maggiore di `created_at`
+  ed essere lo start del primo gruppo futuro same-subject. Indici
+  `(subject_ref,reconciliation_expiry_boundary_at,reconciliation_request_id)` e
+  sui ref del gruppo supportano scheduling e sweep deterministici;
+- `maintain_plan_late_session_reconciliation_expiry_schedules(schedule_id TEXT
+  PRIMARY KEY, reconciliation_request_ref TEXT NOT NULL UNIQUE REFERENCES
+  maintain_plan_late_session_reconciliations(reconciliation_request_id),
+  boundary_at TEXT NOT NULL, successor_snapshot_refs_json TEXT NOT NULL,
+  discovered_sync_scope_ref TEXT NOT NULL, payload_json TEXT NOT NULL,
+  FOREIGN KEY ... ON DELETE NO ACTION)`, append-only. Esiste solo quando la
+  request era nata senza futuro noto; CHECK/trigger impongono gruppo non vuoto,
+  primo start strictly-after `created_at`, ownership same-subject, ordine UTF-8
+  e uguaglianza payload/colonne. Indici `(boundary_at,
+  reconciliation_request_ref)` e sui membership del gruppo rendono lo sweep
+  deterministico; retry equivalente rilegge/no-op e un secondo schedule
+  divergente fallisce chiuso;
 - `maintain_plan_late_session_reconciliation_answers(answer_id TEXT PRIMARY KEY,
   reconciliation_request_ref TEXT NOT NULL UNIQUE REFERENCES
   maintain_plan_late_session_reconciliations(reconciliation_request_id) ON
@@ -921,6 +992,13 @@ Namespace `maintain-plan:matching-confirmation-answer:v1:sha256:<hash>`. Fase A
 e fase B usano dunque identità indipendenti; nessuna identità dipende dal tempo
 di commit o da un ordine di arrivo non persistito.
 
+La canonical identity di un gruppo prescrizione è la tupla
+`(subject_ref, scheduled_window_start, ordered_snapshot_ids)`: la lista contiene
+tutti e soli gli exact same-start in ordine byte UTF-8. `scheduled_window_end`
+resta evidence per containment/overlap e discovery, ma non entra nell'ordine fra
+gruppi né nella scelta del successore. Ogni identity di schedule/expiry duplica
+questa tupla e il digest delle righe indice validate.
+
 Gli eventi della catena zero-sessioni usano il namespace
 `maintain-plan:zero-session-event:v1:sha256:<hash>`. `EXPIRY_SCHEDULED` ed
 `EXPIRED` includono `origin_request_id`, `previous_chain_head_id`,
@@ -930,7 +1008,12 @@ kind, subject e policy; `EXPIRED` include inoltre
 `maintain-plan:late-session-reconciliation:v1:sha256:<hash>` e include original
 result/request, previous head, snapshot, subject, evidence fingerprint e la tupla ordinata
 non vuota `candidate_session_ids`. La request di reconciliation deriva a sua
-volta dall'ID attempt e dalla stessa tupla. La dedicated answer usa namespace
+volta dall'ID attempt, dalla stessa tupla, dal `created_at` canonico e dai campi
+`reconciliation_expiry_boundary_at` e
+`reconciliation_expiry_successor_snapshot_ids` (null/tupla vuota quando non
+ancora noti). Lo scheduling successivo identifica request, previous head,
+boundary e gruppo futuro; l'expiry aggiunge reason
+`UNANSWERED_RECONCILIATION_BEFORE_NEXT_PRESCRIPTION`. La dedicated answer usa namespace
 `maintain-plan:late-session-reconciliation-answer:v1:sha256:<hash>` e la
 preimage canonica contiene reconciliation request, response kind, selected
 session nullable, candidate tuple congelata, subject, actor, `answered_at`,
@@ -944,11 +1027,14 @@ Vettori normativi aggiuntivi (`é` è U+00E9):
 expiry preimage: {"event_kind":"EXPIRED","expiry_boundary_at":"2026-09-20T08:00:00Z","expiry_successor_snapshot_ids":["snapshot-next-é"],"matching_policy_id":"maintain-plan-matching","matching_policy_version":"1.0.0-draft","origin_request_id":"request-é","previous_chain_head_id":"request-é","reason":"UNANSWERED_BEFORE_NEXT_PRESCRIPTION","subject_ref":"subject-é"}
 SHA-256: 6f688b8c61ceac7b3f0ac10e256b1672c25fb77ebd08e8609b83ff0e67788f04
 
-reconciliation preimage: {"candidate_session_ids":["session-late-é"],"matching_policy_id":"maintain-plan-matching","matching_policy_version":"1.0.0-draft","original_matching_result_id":"result-zero-é","original_request_id":"request-zero-é","previous_chain_head_id":"head-é","record_kind":"LATE_SESSION_RECONCILIATION","snapshot_id":"snapshot-é","subject_ref":"subject-é"}
-SHA-256: 22c1083ace91667b26d97b0bda5dcc6994b69391f5a0d05fcd52742ef43761b9
+reconciliation preimage: {"candidate_session_ids":["session-late-é"],"created_at":"2026-09-19T12:00:00Z","matching_policy_id":"maintain-plan-matching","matching_policy_version":"1.0.0-draft","original_matching_result_id":"result-zero-é","original_request_id":"request-zero-é","previous_chain_head_id":"head-é","reconciliation_expiry_boundary_at":"2026-09-21T08:00:00Z","reconciliation_expiry_successor_snapshot_ids":["snapshot-future-é"],"record_kind":"LATE_SESSION_RECONCILIATION","snapshot_id":"snapshot-é","subject_ref":"subject-é"}
+SHA-256: c44aefe14f276682319addbce3db760fd55dde0d506f535e234dae6bdea6af0b
 
 reconciliation answer preimage: {"actor":"athlete-é","answered_at":"2026-09-19T12:00:00Z","audit_evidence_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","candidate_session_ids":["session-late-é"],"payload_schema_version":"1","reconciliation_request_id":"reconciliation-é","response_kind":"MANUAL_ASSOCIATION","selected_session_id":"session-late-é","subject_ref":"subject-é"}
 SHA-256: 203dc37fe80846ca2a9a50342f705eb196f279ff95ca308296de875c629599ef
+
+reconciliation expiry preimage: {"event_kind":"RECONCILIATION_EXPIRED","matching_policy_id":"maintain-plan-matching","matching_policy_version":"1.0.0-draft","previous_chain_head_id":"reconciliation-request-é","reason":"UNANSWERED_RECONCILIATION_BEFORE_NEXT_PRESCRIPTION","reconciliation_expiry_boundary_at":"2026-09-21T08:00:00Z","reconciliation_expiry_successor_snapshot_ids":["snapshot-future-é"],"reconciliation_request_id":"reconciliation-request-é","subject_ref":"subject-é"}
+SHA-256: ae20b0ac63a6aec9f489b9416769e5d65b1cb9d3dbea034c1f75954e1674be2f
 ```
 
 Vettore normativo per il percorso zero-sessioni (`é` è U+00E9):
@@ -1069,8 +1155,10 @@ mutano la request: una sola può vincere `UNIQUE(request_ref)`.
 ### 10.8 Expiry senza risposta e prescrizione successiva
 
 Una request zero-sessioni per lo snapshot A non riceve risposta. Quando lo
-scope rende noto B, primo snapshot same-subject con inizio finestra successivo,
-viene congelato il gruppo di B. Prima di qualunque processing session-driven o
+scope rende noto B, gruppo same-subject immediatamente seguente con start
+strettamente maggiore dello start di A, viene congelato l'intero gruppo di B.
+B è successore anche se la sua finestra si sovrappone ad A, è contenuta in A o
+inizia esattamente a `A.end`; non deve iniziare dopo `A.end`. Prima di qualunque processing session-driven o
 window-driven di B, lo sweep globale rilegge la testa
 e appende per A `NOT_EVALUABLE/UNANSWERED_BEFORE_NEXT_PRESCRIPTION`, senza
 answer né mapping e conservando warning/evidence. Soltanto il commit successivo
@@ -1144,6 +1232,31 @@ result, sidecar con `discovery_result_ref=null` e
 soddisfatta in ogni passaggio e la catena zero originaria resta raggiungibile
 attraverso request e answer di reconciliation.
 
+### 10.14 Gruppi canonici, overlap e finestre puntuali
+
+A1 e A2 hanno lo stesso start ma end diversi: costituiscono un solo gruppo A,
+ordinato internamente per ID UTF-8, e non scadono l'uno per l'altro. B ha start
+strettamente maggiore ma precedente ad `A1.end` (overlap/containment): è il
+successore immediato di entrambi. Prima di processare qualsiasi membro di B le
+request zero-sessioni di A sono chiuse; nello stesso tempo una sessione nel
+tratto sovrapposto conserva A e B come candidate e può produrre `MULTIPLE`.
+La medesima regola vale se A è puntuale, se B inizia esattamente ad `A.end` o se
+B è parzialmente sovrapposto: contano soltanto gruppi/start canonici, mai la
+relazione fra gli end.
+
+### 10.15 Deadline propria della reconciliation
+
+La request zero di A è già scaduta quando una sessione tardiva genera R alle
+`2026-09-19T12:00:00Z`: R non riusa il vecchio boundary. Il primo gruppo
+same-subject con start strettamente successivo al `created_at` committato di R,
+per esempio C alle `2026-09-21T08:00:00Z`, diventa il suo boundary e l'intero
+gruppo C ne è evidence. Se C non è ancora noto, R resta pending; la sync che lo
+scopre schedula e, se già dovuto, committa `RECONCILIATION_EXPIRED` con result
+`NOT_EVALUABLE` prima di qualsiasi matching di C. Nessuna answer o mapping è
+creata e tutte le evidence zero/reconciliation restano raggiungibili. Answer ed
+expiry concorrenti rileggono la stessa testa sotto `BEGIN IMMEDIATE`: un solo
+successore vince.
+
 ## 11. Errori, upgrade e decisioni residue
 
 Sono errori tecnici: scope assente/non riuscito/incoerente; righe nel perimetro
@@ -1204,7 +1317,12 @@ per reconciliation; (28) tutti i valori confirmation verificati contro
 (29) predicati handled snapshot-level e session-level distinti, con empty tuple
 post-filtro che crea il caso zero per uno snapshot mai gestito, lookup
 indicizzato deterministico, idempotenza su scope sovrapposti e nessuna
-reinterpretazione delle sessioni legate ad altre prescrizioni.
+reinterpretazione delle sessioni legate ad altre prescrizioni; (30) ordine
+canonico per gruppi di start con same-start indivisibili e successore immediato
+a start maggiore, incluse finestre overlapping, contenute, puntuali e adiacenti;
+(31) expiry già dovuta atomica prima del gruppo successivo pur preservando
+`MULTIPLE`; (32) deadline reconciliation propria, successiva al `created_at`
+committato, discovery futura, scheduling e race answer/expiry append-only.
 
 **Non resta alcuna decisione normativa bloccante.** Restano lavoro
 implementativo: definire modelli/codec, migrazione v8, repository, adapter dello

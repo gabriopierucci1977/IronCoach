@@ -54,7 +54,11 @@ rivalidate in transazioni separate senza lock durante l'attesa; il
 presente documento non ne abilita il wiring. La reconciliation tardiva usa una
 answer relation dedicata con FK alla propria request immutabile, membership
 same-subject esatta e closure append-only. L'expiry pre-processing committa
-prima di entrambi i percorsi; expiry e reconciliation tardiva rivalidano inoltre
+prima di entrambi i percorsi. Il successore zero-sessioni è il gruppo
+same-subject immediatamente seguente per start canonico (anche overlapping o
+end/start adiacente); una reconciliation usa invece un boundary proprio al
+primo gruppo con start successivo al suo `created_at` committato, eventualmente
+scoperto da una sync futura. Expiry e reconciliation tardiva rivalidano inoltre
 ownership byte-per-byte di snapshot, subject, scope e ogni
 sessione congelata sotto `BEGIN IMMEDIATE`; nessuna sessione cross-subject può
 essere offerta o selezionata e la guardia opera prima di entrambi i percorsi.
