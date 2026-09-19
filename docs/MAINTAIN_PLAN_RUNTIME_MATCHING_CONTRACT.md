@@ -537,7 +537,7 @@ Matrice normativa della catena snapshot-centric:
 
 | testa osservata / evento | nuova testa append-only | tuple sessioni | opzioni associative | mapping |
 |---|---|---|---|---|
-| zero request pending | answer non associativa | vuota originale | vietate | nessuno |
+| zero request pending | initial confirmation answer + `ANSWERED` + result `NOT_EVALUABLE` | vuota originale | vietate | nessuno |
 | zero request pending / successor raggiunto | `EXPIRED` + result `NOT_EVALUABLE` | vuota originale | nessuna answer | nessuno |
 | zero pending o terminale / sessione tardiva | `LATE_SESSION_RECONCILIATION` pending | non vuota, canonica | solo membri congelati | nessuno prima dell'answer |
 | reconciliation pending / selezione valida | dedicated answer + result `MATCHED` | non vuota, invariata | membro selezionato nella request | uno, `ATHLETE_CONFIRMATION` |
@@ -547,6 +547,22 @@ Matrice normativa della catena snapshot-centric:
 
 La catena conserva sempre warning/evidence zero originari. Un nuovo head cita
 il precedente; request, result, attempt e answer restano tutti immutabili.
+
+Per la request zero-sessioni iniziale, ognuna delle sole risposte legali
+`NOT_PERFORMED`, `NOT_SYNCHRONIZED` e `DONT_KNOW` chiude la catena. La fase B
+usa un'unica `BEGIN IMMEDIATE`, rilegge la request e la testa pending, quindi
+inserisce nell'ordine FK-immediate-safe **matching confirmation answer → result
+terminale `NOT_EVALUABLE` → evento `ANSWERED` con origine
+`INITIAL_CONFIRMATION`**. Answer, result ed evento sono atomici: nessuno di essi
+può essere osservato senza gli altri. L'evento cita esclusivamente
+`initial_confirmation_answer_ref`; non può citare una reconciliation answer.
+Subito dopo il commit la testa è chiusa. Sweep expiry e avvio reconciliation
+rileggono obbligatoriamente quella testa sotto `BEGIN IMMEDIATE` e non possono
+più avanzare la precedente request pending. Retry byte-identico rilegge/no-op;
+una risposta divergente, un'expiry o una reconciliation concorrente perde il
+vincolo one-successor e poi fallisce chiusa (o no-op soltanto se semanticamente
+equivalente). Non esiste una finestra in cui l'answer sia committata ma la testa
+resti stale.
 
 ## 6. Confirmation: discovery dedicata e SINGLE esistente
 
@@ -689,6 +705,30 @@ v8 aggiunge, senza cambiare v1–v7:
   scheduled_window_start, scheduled_window_end, snapshot_ref)` e
   `(subject_ref, scheduled_window_end, scheduled_window_start, snapshot_ref)`;
   trigger `BEFORE UPDATE/DELETE` abortiscono sempre;
+
+  La creazione repository di **ogni** nuova `PrescriptionSnapshot` v8 ha un
+  contratto atomico obbligatorio, indipendente dal backfill di upgrade. Una sola
+  `BEGIN IMMEDIATE` valida ownership e ID, decodifica strict il payload canonico,
+  verifica `subject_ref` duplicato e finestra timezone-aware (`start <= end`,
+  inclusa `start == end`), calcola `payload_sha256`, inserisce lo snapshot e
+  inserisce esattamente una riga indice derivata **dallo stesso payload**; poi
+  verifica la coppia 1:1 prima del commit. Qualunque errore di derivazione,
+  validazione o insert rollbacka anche lo snapshot. La soluzione normativa è
+  questa unit of work repository: non si affida a un trigger SQLite per
+  decodificare JSON, salvo futura prova che quel trigger esegua la medesima
+  validazione strict e canonica.
+
+  Dopo l'upgrade non può esistere alcuno snapshot v8 ownership-bound committato
+  senza esattamente una riga indice corrispondente, né una riga indice senza il
+  proprio snapshot; discovery continua a interrogare esclusivamente l'indice
+  validato. Un retry con stesso ID, payload canonico, digest, ownership e finestra
+  rilegge entrambe le righe e fa no-op. Stesso ID con payload/digest o ownership
+  diversi è conflitto fail-closed. Un indice preesistente senza snapshot, uno
+  snapshot senza indice o una coppia discordante è corruzione e non viene
+  riparata con upsert. Insert concorrenti sullo stesso ID serializzano: il primo
+  commit vince, il perdente equivalente rilegge la coppia completa, quello
+  divergente rollbacka. Insert concorrenti con ID distinti producono ciascuno la
+  propria coppia 1:1. Nessun commit parziale è consentito;
 - `maintain_plan_matching_discoveries`, con colonne del §4 e FK a scope,
   sessione, discovery precedente, confirmation discovery, confirmation
   MatchingResult esistente, result e mapping. CHECK implementano esattamente
@@ -730,7 +770,12 @@ v8 aggiunge, senza cambiare v1–v7:
   'RECONCILIATION_EXPIRY_SCHEDULED','RECONCILIATION_EXPIRED',
   'LATE_SESSION_RECONCILIATION','ANSWERED')), expiry_boundary_at TEXT,
   expiry_successor_snapshot_refs_json TEXT NOT NULL,
-  reconciliation_request_ref TEXT, reconciliation_answer_ref TEXT,
+  reconciliation_request_ref TEXT, answer_source TEXT CHECK(answer_source IN
+  ('INITIAL_CONFIRMATION','LATE_RECONCILIATION')),
+  initial_confirmation_answer_ref TEXT REFERENCES
+  maintain_plan_matching_confirmation_answers(answer_id),
+  reconciliation_answer_ref TEXT REFERENCES
+  maintain_plan_late_session_reconciliation_answers(answer_id),
   terminal_result_ref TEXT, occurred_at TEXT NOT NULL, payload_json TEXT NOT
   NULL, UNIQUE(origin_request_ref,
   previous_chain_head_ref), FOREIGN KEY ... ON DELETE NO ACTION)`. CHECK e
@@ -739,10 +784,35 @@ v8 aggiunge, senza cambiare v1–v7:
   reconciliation-expiry richiedono `reconciliation_request_ref`, ricopiano il
   relativo boundary/gruppo futuro e vietano l'uso del boundary zero originario;
   reconciliation con request e tupla
-  candidata non vuota; `ANSWERED` con FK alla dedicated reconciliation answer
-  e result terminale; `EXPIRED` senza answer ref. Un indice
+  candidata non vuota. `ANSWERED` richiede result terminale e distingue
+  esplicitamente l'origine: con `answer_source='INITIAL_CONFIRMATION'` richiede
+  **esattamente** `initial_confirmation_answer_ref` non-null e
+  `reconciliation_answer_ref` null; con
+  `answer_source='LATE_RECONCILIATION'` richiede esattamente il contrario e la
+  reconciliation request coerente. `EXPIRED`, scheduling e ogni altro evento
+  answerless richiedono `answer_source` e **entrambi** gli answer ref null.
+  Trigger validano che l'answer iniziale punti alla stessa origin request e che
+  la reconciliation answer raggiunga la medesima catena tramite la propria
+  request. Le due FK sono immediate e `ON DELETE NO ACTION`. Un indice
   `(origin_request_ref,event_id)` e i link previous formano una sola catena
   append-only, senza fork;
+
+  Matrice normativa delle reference evento (le celle “—” sono obbligatoriamente
+  null):
+
+  | `event_kind` | `answer_source` | initial answer ref | reconciliation answer ref | terminal result |
+  |---|---|---|---|---|
+  | `ANSWERED` iniziale | `INITIAL_CONFIRMATION` | esattamente una | — | `NOT_EVALUABLE`, required |
+  | `ANSWERED` reconciliation | `LATE_RECONCILIATION` | — | esattamente una | `MATCHED` o `NOT_EVALUABLE`, required |
+  | `EXPIRED` | — | — | — | `NOT_EVALUABLE`, required |
+  | `RECONCILIATION_EXPIRED` | — | — | — | `NOT_EVALUABLE`, required |
+  | `EXPIRY_SCHEDULED` | — | — | — | — |
+  | `RECONCILIATION_EXPIRY_SCHEDULED` | — | — | — | — |
+  | `LATE_SESSION_RECONCILIATION` | — | — | — | — |
+
+  Nessun altro incrocio è schema-valid. La riga iniziale richiede inoltre una
+  answer con tipo in `NOT_PERFORMED|NOT_SYNCHRONIZED|DONT_KNOW`; quella
+  reconciliation applica la propria matrice associativa/non associativa;
 - `maintain_plan_late_session_reconciliations(reconciliation_request_id TEXT
   PRIMARY KEY, original_matching_result_ref TEXT NOT NULL,
   original_confirmation_request_ref TEXT NOT NULL, previous_chain_head_ref TEXT
@@ -850,6 +920,16 @@ sul precedente head assicura un solo successor e, insieme a
 answer vincente e un solo mapping: retry byte-identici rileggono/no-op, answer
 divergenti o race perse falliscono chiuso senza record parziali.
 
+In particolare le risposte iniziali `NOT_PERFORMED`, `NOT_SYNCHRONIZED` e
+`DONT_KNOW` eseguono **answer → result terminale → evento `ANSWERED` iniziale**
+nella stessa unit of work. La reconciliation associativa conserva
+**reconciliation answer → mapping → result → sidecar → evento `ANSWERED`
+reconciliation**; quella non associativa usa **reconciliation answer → result
+terminale → evento**. Gli eventi rendono le origini non intercambiabili tramite
+i CHECK e le FK dedicate sopra. Dopo il commit di un qualsiasi evento terminale,
+ogni sweep o reconciliation concorrente osserva la nuova testa e non può
+avanzare la request pending precedente.
+
 L'upgrade v7→v8 è una singola transazione `BEGIN IMMEDIATE`. Dopo aver creato
 le strutture, enumera in ordine byte UTF-8 di ID **ogni** snapshot v7 con
 `subject_ref IS NOT NULL`, decodifica strict il payload, verifica subject
@@ -867,6 +947,20 @@ byte-per-byte di subject e finestra decodificata per ogni coppia; e
 `foreign_key_check` vuoto. Snapshot legacy con ownership null restano senza
 indice e ineleggibili. Il matching non può essere abilitato su un database v8
 parzialmente popolato.
+
+Questo backfill copre soltanto gli snapshot già presenti al passaggio v7→v8.
+La completezza continuativa è garantita separatamente dal contratto atomico di
+creazione v8 sopra: backfill e write path convergono sulla stessa decodifica,
+canonicalizzazione, digest, ownership, vincolo `start <= end` e cardinalità
+1:1, ma nessuno dei due sostituisce l'altro.
+
+L'identità canonica della riga indice post-upgrade è lo
+`prescription_snapshot_id` (PK/FK 1:1); il contenuto canonico confrontato nei
+retry è `(snapshot_ref, subject_ref, scheduled_window_start,
+scheduled_window_end, payload_sha256)`. Il digest è SHA-256 dei byte del payload
+canonico strict già persistito, non del JSON ricevuto dal client. Duplicate-ID,
+digest mismatch e ownership mismatch sono pertanto conflitti distinti e
+deterministici, non occasioni per sostituire la riga.
 
 Nella stessa validazione, eventuali mapping v7 duplicati per sessione o
 resolution metadata contraddittori abortiscono l'upgrade prima di creare
@@ -1021,9 +1115,20 @@ versione payload e digest SHA-256 dell'audit evidence; result, mapping, sidecar
 e evento successor includono il suo `answer_id`. Nessuna identità dipende dallo
 stato mutabile della request.
 
+Un evento terminale da answer include sempre `answer_source` e **uno solo** fra
+`initial_confirmation_answer_id` e `reconciliation_answer_id`. Per la risposta
+zero iniziale include inoltre `origin_request_id`, `previous_chain_head_id`,
+`terminal_result_id`, `response_kind`, subject e policy; per la reconciliation
+include request e answer reconciliation. Un evento answerless include entrambi
+gli ID come null. Questa discriminazione fa parte della preimage e impedisce a
+due tipi di answer con lo stesso testo di condividere identità.
+
 Vettori normativi aggiuntivi (`é` è U+00E9):
 
 ```text
+initial answer event preimage: {"answer_source":"INITIAL_CONFIRMATION","event_kind":"ANSWERED","initial_confirmation_answer_id":"initial-answer-é","matching_policy_id":"maintain-plan-matching","matching_policy_version":"1.0.0-draft","origin_request_id":"request-é","previous_chain_head_id":"request-é","reconciliation_answer_id":null,"response_kind":"NOT_SYNCHRONIZED","subject_ref":"subject-é","terminal_result_id":"result-terminal-é"}
+SHA-256: 8389135c0bcf0ae780d828f3b7a08115c44b6d03ee6fd112855e3c7e6c26321e
+
 expiry preimage: {"event_kind":"EXPIRED","expiry_boundary_at":"2026-09-20T08:00:00Z","expiry_successor_snapshot_ids":["snapshot-next-é"],"matching_policy_id":"maintain-plan-matching","matching_policy_version":"1.0.0-draft","origin_request_id":"request-é","previous_chain_head_id":"request-é","reason":"UNANSWERED_BEFORE_NEXT_PRESCRIPTION","subject_ref":"subject-é"}
 SHA-256: 6f688b8c61ceac7b3f0ac10e256b1672c25fb77ebd08e8609b83ff0e67788f04
 
@@ -1257,6 +1362,28 @@ creata e tutte le evidence zero/reconciliation restano raggiungibili. Answer ed
 expiry concorrenti rileggono la stessa testa sotto `BEGIN IMMEDIATE`: un solo
 successore vince.
 
+### 10.16 Answer iniziale e testa terminale
+
+Una request zero-sessioni pending riceve `NOT_SYNCHRONIZED`. La fase B rilegge
+la testa, inserisce la `maintain_plan_matching_confirmation_answers`, il result
+`NOT_EVALUABLE` e l'evento `ANSWERED/INITIAL_CONFIRMATION` che cita soltanto
+quella answer, quindi committa. Uno sweep expiry partito subito dopo vede la
+testa terminale e fa no-op; se aveva acquisito prima `BEGIN IMMEDIATE`, vince
+invece l'expiry e l'answer diventa stale senza insert parziali. La stessa regola
+vale per `NOT_PERFORMED` e `DONT_KNOW`. Una answer reconciliation usa
+`ANSWERED/LATE_RECONCILIATION` e soltanto la FK reconciliation dedicata.
+
+### 10.17 Snapshot creato dopo l'upgrade
+
+Il repository riceve un nuovo snapshot v8 con finestra puntuale valida. Nella
+stessa `BEGIN IMMEDIATE` decodifica e valida il payload, inserisce snapshot e
+unica riga `maintain_plan_snapshot_window_index`, verifica subject, finestra e
+digest, poi committa. Un errore indice rollbacka anche lo snapshot. Un retry
+identico osserva la coppia e fa no-op; stesso ID con digest o ownership diverso
+fallisce chiuso. Due writer concorrenti non possono lasciare né uno snapshot
+orfano né una riga indice orfana. Il successivo discovery interroga soltanto
+l'indice e vede la finestra zero-length perché `start == end` è valido.
+
 ## 11. Errori, upgrade e decisioni residue
 
 Sono errori tecnici: scope assente/non riuscito/incoerente; righe nel perimetro
@@ -1323,6 +1450,18 @@ a start maggiore, incluse finestre overlapping, contenute, puntuali e adiacenti;
 (31) expiry già dovuta atomica prima del gruppo successivo pur preservando
 `MULTIPLE`; (32) deadline reconciliation propria, successiva al `created_at`
 committato, discovery futura, scheduling e race answer/expiry append-only.
+
+L'estensione di audit richiesta ha inoltre verificato: (33) ogni event kind
+zero-sessioni contro entrambe le answer FK e la matrice nullability, inclusa la
+distinzione fra answer iniziale e reconciliation; (34) le tre risposte iniziali
+chiudono atomicamente la testa prima che expiry o reconciliation possano
+osservarla; (35) backfill v7→v8 e creazione snapshot v8 sono percorsi separati
+ma applicano la stessa validazione strict e preservano `start <= end`; (36)
+completezza bidirezionale snapshot/indice 1:1 dopo ogni commit; (37) rollback,
+retry equivalente, duplicate ID, mismatch di digest/ownership e insert
+concorrenti non possono produrre coppie parziali; (38) discovery legge ancora
+esclusivamente l'indice validato. Nessuna delle verifiche richiede trigger JSON
+SQLite o modifica runtime in questa PR.
 
 **Non resta alcuna decisione normativa bloccante.** Restano lavoro
 implementativo: definire modelli/codec, migrazione v8, repository, adapter dello
