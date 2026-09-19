@@ -86,3 +86,17 @@ Questo slice introduce esclusivamente ownership comune, persistenza v7,
 validazione fail-closed e wiring dell'identità autorevole nella cattura della
 prescrizione. Restano fuori scope: modifiche al matcher, candidate discovery,
 evaluation, reporting, learning, modifica del piano e Coach Engine.
+
+### Addendum normativo v8 — overlap, expiry e origine confirmation
+
+La verifica ownership v8 è globale rispetto agli scope sovrapposti: la guard
+pre-matcher usa `actual_session_ref` e le catene autorevoli, non
+`sync_scope_ref`, per stabilire se una relazione è già gestita. Il fingerprint
+semantico include subject, payload canonici, finestre, candidate e direct
+evidence, ma esclude la provenance dello scope.
+
+I gruppi same-subject sono processati cronologicamente e in ordine ID UTF-8; se
+la request appena creata per A ha il successore B già noto e raggiunto, expiry e
+creazione di A committano nella stessa `BEGIN IMMEDIATE` prima di B. Una sidecar
+di late-session reconciliation richiede answer dedicata e discovery nulla;
+una sidecar discovery richiede discovery e vieta la reconciliation answer.

@@ -396,3 +396,14 @@ I test del futuro incremento DEVONO includere almeno:
 - tentativi di usare qualunque ID come returned prescription ID o di creare
   matching/`PrescriptionMapping`: vietati;
 - deployment single-athlete: prova che non viene trattato come ownership.
+
+### Addendum normativo v8 — sessione già gestita
+
+Prima di passare una `ActualSession` al matcher, il runtime v8 cerca senza filtro
+su synchronization scope mapping, discovery/confirmation e reconciliation che
+la contengono. Mapping o catena esistente rendono la relazione già gestita; una
+request pending viene ripresa, una testa terminale con identica evidence non
+genera un nuovo tentativo. Soltanto evidence canonica realmente cambiata può
+creare un tentativo append-only collegato alla testa terminale precedente. Lo
+scope resta provenance e l'indice univoco garantisce un solo mapping per
+sessione anche tra coverage sovrapposte.

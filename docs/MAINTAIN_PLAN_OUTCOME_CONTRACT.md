@@ -3450,3 +3450,21 @@ tassonomia iniziale, meteo/privacy, conflitti o feedback già approvati.
 Il completamento della checklist implementativa non cambia automaticamente lo
 stato del documento. Fino a una successiva approvazione esplicita resta
 **DRAFT — NON IMPLEMENTATO**.
+
+### Addendum normativo v8 — identità cross-scope e reconciliation
+
+Il boundary runtime v8 applica prima di ogni matcher la guard autorevole globale
+del contratto runtime matching: `sync_scope_ref` è sola provenance e non può
+rendere nuova una relazione sessione/snapshot già mappata, presente in una
+catena discovery/confirmation o in una reconciliation pending o terminale. Un
+mapping per `actual_session_ref` chiude semanticamente la sessione; una catena
+irrisolta viene ripresa, non duplicata. Un nuovo tentativo append-only dopo una
+testa terminale senza mapping è ammesso soltanto per un diverso fingerprint
+dell'evidence canonica ed è collegato alla testa precedente.
+
+Per finestre consecutive già note, la creazione zero-sessioni del predecessore
+e la sua expiry già dovuta sono atomiche e precedono ogni elaborazione del
+successore. Le resolution sidecar discovery richiedono la discovery; quelle da
+late-session reconciliation la vietano e usano esclusivamente la dedicated
+reconciliation answer, dalla quale rimane raggiungibile la catena originaria.
+Il solo spelling ammesso per la risposta esistente è `NOT_SYNCHRONIZED`.
