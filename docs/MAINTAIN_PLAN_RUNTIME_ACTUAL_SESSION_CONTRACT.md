@@ -306,9 +306,11 @@ richiede un `SynchronizationCoverage` autorevole e limitato e ordina il
 percorso session-driven prima di quello prescription/window-driven, senza
 estendere il perimetro di cattura di questo documento. Per ciascuna sessione
 usa tutte le finestre contenenti; soltanto quando queste mancano usa i vicini
-indicizzati immediati attorno allo start. Il secondo percorso deve rispettare
-la guardia delle discovery irrisolte e ogni confirmation committa la request
-prima dell'attesa umana.
+indicizzati immediati attorno allo start. Questi vicini non entrano
+nell'enumerazione synchronization-wide, limitata alle finestre che intersecano
+la coverage. Il secondo percorso deve rispettare come già gestita ogni
+relazione presente in qualsiasi catena discovery, inclusa una testa terminale,
+e ogni confirmation committa la request prima dell'attesa umana.
 
 ## 11. Criteri di accettazione
 

@@ -561,7 +561,8 @@ quel documento.
 In particolare, quel contratto definisce due invocazioni dopo un sync riuscito:
 quella session-driven e quella prescription/window-driven per finestre chiuse
 senza sessione catturata. Definisce inoltre un set synchronization-wide,
-riservato al percorso senza sessione, e un candidate set distinto per ogni
+riservato al percorso senza sessione e composto **soltanto** da finestre
+same-subject che intersecano la coverage autorevole, e un candidate set distinto per ogni
 sessione: direct target validato, finestre che ne contengono inclusivamente lo
 start oppure, **solo quando nessuna finestra contiene lo start**, esatti gruppi
 same-subject immediatamente precedente e successivo, inclusi tutti i pari
@@ -1642,9 +1643,14 @@ l'evidence originale fuori-finestra/incompatibile. La kind continua a
 rappresentare la cardinalità congelata: una selezione da `MULTIPLE` produce
 `MULTIPLE/MATCHED`, non un falso `SINGLE`. Analogamente un direct ID strict e
 same-subject può risolvere `MULTIPLE` conservando tutte le candidate e
-registrando selected snapshot e source `DIRECT_ID`. Finché una discovery che
-contiene la relazione snapshot/sessione è irrisolta, il percorso window-driven
-deve saltare quello snapshot e non può creare un mapping concorrente.
+registrando selected snapshot e source `DIRECT_ID`; il mapping usa però il
+valore schema-valid `resolution_method=AUTOMATIC`, senza confondere source di
+discovery ed enum mapping. Se una relazione snapshot/sessione compare in una
+qualsiasi catena discovery, il percorso window-driven deve considerarla già
+gestita indipendentemente dallo stato della testa. Per un'origine `MULTIPLE`
+ciò vale per tutte le candidate congelate, incluse le non selezionate dopo una
+risoluzione, e impedisce mapping concorrenti anche dopo `MATCHED` o
+`NOT_EVALUABLE`.
 
 Quando esiste un solo snapshot ma il matcher puro richiede conferma, la
 discovery `SINGLE` conserva obbligatoriamente il riferimento a quel
@@ -1670,9 +1676,13 @@ immutabile descritto nella sezione 5.1.
 ### 5.5 Zero candidate
 
 Dopo la fine della finestra e una sincronizzazione riuscita il cui scope copre
-quella finestra, l'invocazione prescription/window-driven dovrà chiamare il
-matcher snapshot-centric anche in assenza di sessioni. Il testo obbligatorio
-dovrà essere:
+quella finestra, l'invocazione prescription/window-driven dovrà creare senza
+invocare il matcher un `MatchingResult` snapshot-centric deterministico con
+zero candidate session, mapping nullo e `CONFIRMATION_REQUIRED`. Questo
+boundary outcome vale identicamente per prescrizioni `SINGLE`, `MULTISPORT` e
+`BRICK`; descrive assenza di attività e non introduce compatibilità o ranking.
+Il matcher puro sarà chiamato soltanto quando è fornita almeno una
+`ActualSession` persistita. Il testo obbligatorio dovrà essere:
 
 > Non ho trovato un'attività associabile alla seduta prevista
 

@@ -47,7 +47,9 @@ estende la stessa uguaglianza byte-per-byte allo scope di sincronizzazione e
 alle confirmation discovery e prescrive che v7→v8 indicizzi
 transazionalmente ogni snapshot ownership-bound valido, lasciando non
 indicizzati quelli legacy con ownership nulla. Un direct ID dichiarato ma
-dangling, ambiguo o cross-subject fallisce chiuso, e request e answer sono
+dangling, ambiguo o cross-subject fallisce chiuso. Quando è valido,
+`DIRECT_ID` resta source/evidence della discovery mentre il mapping usa l'enum
+esistente `AUTOMATIC`. Request e answer sono
 rivalidate in transazioni separate senza lock durante l'attesa; il
 presente documento non ne abilita il wiring.
 
