@@ -109,3 +109,12 @@ same-subject già trattata per B viene esclusa dalla tupla di A, ma non prova ch
 A sia gestito. Se A non possiede propri mapping/discovery, result/request
 zero-sessioni, reconciliation o terminali e la tupla residua è vuota, deve
 nascere l'unico outcome zero-sessioni di A.
+
+La futura v8 aggiunge inoltre una sidecar result/snapshot 1:1 con FK immediate a
+entrambi gli artefatti e `subject_ref` canonico. L'upgrade deve popolarla
+transazionalmente per ogni result eleggibile v7; ogni write successiva inserisce
+result e sidecar nella stessa unit of work. Riferimenti mancanti, dangling o
+cross-subject, digest divergenti e cardinalità diversa da 1:1 rollbackano.
+Lookup e guard usano la relazione e il suo indice
+`(prescription_snapshot_ref,matching_result_ref)`, non estrazione JSON né una
+colonna inesistente sulla tabella result.

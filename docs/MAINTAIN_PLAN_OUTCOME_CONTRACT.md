@@ -1637,6 +1637,18 @@ carico o somiglianza. Candidate set, evidence, provenance e stato della
 conferma dovranno essere conservati. Nessun learning sarà ammesso prima della
 conferma.
 
+Il matcher futuro deve avere tre branch validi distinti. `SINGLE` conserva il
+comportamento corrente; `BRICK` conserva la consecutività governata dalla brick
+policy; `MULTISPORT` non richiede né accetta brick policy e applica soltanto i
+predicati esatti di finestra, composition, cardinalità, ordine e discipline/
+sostituzioni autorizzate definiti dal
+[contratto runtime matching](MAINTAIN_PLAN_RUNTIME_MATCHING_CONTRACT.md#41-contratto-puro-composition-aware).
+Un `MULTISPORT` same-subject, in finestra ed esattamente compatibile può quindi
+produrre `MATCHED` automatico; incompatibilità o ambiguità richiedono conferma,
+mentre struttura canonica insufficiente produce `NOT_EVALUABLE` con reason
+esplicita. Il matcher corrente non implementa ancora questo dispatch e il
+feature resta disabilitato fino alla futura modifica runtime.
+
 Una selezione snapshot valida dell'atleta è essa stessa conferma autorevole:
 non riesegue il matcher automatico, crea result e mapping confirmation-aware
 con riferimento a confirmation discovery, actor e timestamp, e conserva

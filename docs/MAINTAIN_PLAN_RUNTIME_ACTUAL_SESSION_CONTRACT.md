@@ -418,3 +418,11 @@ genera un nuovo tentativo. Soltanto evidence canonica realmente cambiata può
 creare un tentativo append-only collegato alla testa terminale precedente. Lo
 scope resta provenance e l'indice univoco garantisce un solo mapping per
 sessione anche tra coverage sovrapposte.
+
+Per una sessione canonica `MULTISPORT`, il futuro boundary non può chiamare il
+matcher corrente invariato. Deve usare il branch composition-aware normativo:
+brick policy assente, uguaglianza di composition/cardinalità/ordine e confronto
+esatto di discipline o sostituzioni autorizzate, oltre alla finestra inclusiva.
+Un unico caso compatibile può creare il normale mapping automatico; mismatch o
+ambiguità richiedono conferma e struttura insufficiente è `NOT_EVALUABLE` con
+reason esplicita. Il feature resta disabilitato finché quel branch non esiste.

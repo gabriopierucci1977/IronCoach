@@ -171,9 +171,12 @@ solo percorso senza sessione del §5 e non viene unito a questo set.
 
 Per una sessione `S` coperta dallo scope, il repository rilegge `S`, verifica
 che `S.subject_ref == scope.subject_ref` byte-per-byte e carica **soltanto** il
-candidate set proprio di `S` dal §3.3. Senza direct ID risolto invoca
-`backend.maintain_plan.matching_service.match(snapshot, (S,))` separatamente
-per ogni snapshot, senza algoritmo alternativo:
+candidate set proprio di `S` dal §3.3. Senza direct ID risolto invoca il futuro
+matcher puro conforme al contratto composition-aware del §4.1 separatamente
+per ogni snapshot. Fino a quando
+`backend.maintain_plan.matching_service.match` non implementa quel contratto,
+il feature flag DEVE restare disabilitato: invocare oggi il matcher invariato
+su un `MULTISPORT` valido è esplicitamente vietato.
 
 - zero snapshot produce `MatchingDiscoveryResult.ZERO`, non un
   `MatchingResult`;
@@ -253,7 +256,58 @@ confirmation né una sidecar; result, mapping e discovery citano la stessa
 direct evidence e selezione. Retry equivalente restituisce la catena esistente;
 una diversa risoluzione dello stesso ID o un mapping concorrente rollbacka.
 
-### 4.1 Guard pre-matcher cross-scope e identità semantica
+### 4.1 Contratto puro composition-aware
+
+L'implementazione futura DEVE correggere l'ordine oggi presente in
+`matching_service.match`: l'early return che tratta ogni composition diversa
+da `single` come bisognosa di brick policy precede oggi
+`validate_prescription`. Questo rende impossibile `MULTISPORT`, perché il
+validator richiede la policy per `BRICK` e la vieta per ogni composition non
+`BRICK`. Il dispatch normativo, dopo la validazione canonica di snapshot e
+sessioni uniche, è invece esattamente:
+
+1. `SINGLE` conserva il comportamento attuale: una componente, nessuna brick
+   policy e consecutività vera per definizione;
+2. `BRICK` conserva il comportamento attuale: brick policy completa
+   obbligatoria e controlli di consecutività/transizione di `_consecutivity`;
+3. `MULTISPORT` è un branch valido distinto: almeno due componenti, brick
+   policy obbligatoriamente assente e nessun controllo di consecutività,
+   transition-gap o brick policy. Una brick policy presente è input invalido,
+   non un modo per entrare nel branch `BRICK`.
+
+Per `MULTISPORT` senza direct ID la compatibilità riusa **esattamente** gli
+input e la semantica non-BRICK già espressi da `_component_checks`, senza
+fallback: (a) `scheduled_window.start <= S.start <= scheduled_window.end`;
+(b) `S.composition is MULTISPORT`; (c) uguale cardinalità di componenti
+planned/observed; (d) indici observed contigui, cioè ogni indice successivo è
+il precedente più uno; (e) dopo ordinamento per `component_index`, ogni
+disciplina coincide oppure la disciplina observed è una
+`allowed_substitution` della componente planned e i suoi eventuali vincoli
+`environment`/`mode` coincidono. Ownership byte-esatta, persistenza canonica,
+validazione `validate_prescription`/`validate_actual_session`, finestra e
+candidate tuple restano quelli dei §§3–4. Non si aggiungono similarità,
+ranking, distanza, tolleranza, inferenza di transizioni o tie-break.
+
+Il risultato è deterministico. Con esattamente una sessione same-subject nella
+tupla, tutti e cinque i predicati veri producono `MATCHED`, mapping automatico
+e gli stessi `candidate_session_ids`, `CandidateEvidence`, component/block/
+repetition/transition mapping e provenance usati dagli altri match automatici
+non ambigui. Uno o più predicati falsi producono
+`CONFIRMATION_REQUIRED`, nessun mapping, warning esistente quando non rimane
+alcuna candidata e reason keys esatte fra `scheduled_window`, `composition`,
+`component_cardinality`, `component_order`, `disciplines`. Più sessioni
+compatibili producono `CONFIRMATION_REQUIRED`, mai una scelta implicita.
+
+Un input canonico valido ma privo di struttura sufficiente a calcolare uno di
+questi predicati produce `NOT_EVALUABLE`, mapping nullo e reason esplicita
+`multisport compatibility input is structurally incomplete`; non deve essere
+reinterpretato come incompatibilità o brick-policy mancante. Payload, enum,
+timestamp, ownership, riferimenti o versioni che falliscono i validator/codec
+restano invece errori tecnici fail-closed e rollbackano: non vengono trasformati
+in outcome di dominio. Il direct-ID strict conserva il percorso autorevole del
+§4 e non altera queste regole per il caso senza direct ID.
+
+### 4.2 Guard pre-matcher cross-scope e identità semantica
 
 Prima di invocare il matcher per **ogni** `ActualSession`, una `BEGIN IMMEDIATE`
 rilegge artefatti autorevoli senza alcun filtro su `sync_scope_ref`. L'ordine di
@@ -753,9 +807,22 @@ v8 aggiunge, senza cambiare v1–v7:
   gli indici `(prescription_snapshot_ref,actual_session_ref,
   discovery_result_ref)` e `(actual_session_ref,prescription_snapshot_ref,
   discovery_result_ref)`;
-- indici lookup window-driven `(prescription_snapshot_ref,matching_result_id)`
-  sui result, `(prescription_snapshot_ref,request_id)` sulle confirmation
-  snapshot-centric e quelli già definiti su mapping, reconciliation ed eventi.
+- `maintain_plan_matching_result_snapshot_index(matching_result_ref TEXT
+  PRIMARY KEY REFERENCES maintain_plan_matching_results(matching_result_id),
+  prescription_snapshot_ref TEXT NOT NULL REFERENCES
+  maintain_plan_prescription_snapshots(prescription_snapshot_id), subject_ref
+  TEXT NOT NULL, payload_sha256 TEXT NOT NULL, FOREIGN KEY ... ON DELETE NO
+  ACTION)`, sidecar append-only 1:1. `subject_ref` e `payload_sha256` sono le
+  sole evidence canoniche duplicate necessarie: devono coincidere byte-per-byte
+  con snapshot ownership-bound e payload canonico del result. Trigger
+  `BEFORE UPDATE/DELETE` abortiscono; CHECK/trigger vietano snapshot/result
+  discordanti. L'indice lookup reale è
+  `(prescription_snapshot_ref,matching_result_ref)`. Non viene dichiarato alcun
+  indice su `maintain_plan_matching_results.prescription_snapshot_ref`, perché
+  tale colonna non esiste in v1–v7;
+- indici lookup window-driven sulla sidecar precedente,
+  `(prescription_snapshot_ref,request_id)` sulle confirmation snapshot-centric
+  e quelli già definiti su mapping, reconciliation ed eventi.
   Non è lecito scandire o interpretare parzialmente tuple JSON. Le query
   seguono l'ordine §5 e poi PK UTF-8, senza filtro scope;
 - la tabella confirmation discovery del §6, indici per ogni FK e trigger
@@ -897,6 +964,25 @@ confirmation punta subito a result e snapshot. Poiché non sono deferred e v8
 non cambia v1–v7, il mapping deve precedere il result dopo la precomputazione
 deterministica di entrambi gli ID.
 
+Ogni write post-upgrade di un `MatchingResult` eleggibile inserisce nella
+**stessa** transazione prima il result (dopo l'eventuale mapping richiesto dalla
+sua FK immediata) e subito dopo la sua
+`maintain_plan_matching_result_snapshot_index`; soltanto allora può inserire
+request, resolution sidecar, discovery o chain event dipendenti. Prima del
+commit rilegge result, sidecar e snapshot e verifica cardinalità esattamente
+1:1, ownership, snapshot ref e digest. Nessun result eleggibile può essere
+committato senza sidecar e nessuna sidecar senza result e snapshot. Discovery,
+guard e lookup window-driven interrogano questa relazione, mai JSON estratto a
+query time.
+
+Un retry con `matching_result_id`, bytes canonici, snapshot, subject e digest
+identici rilegge e fa no-op; stesso ID con contenuto, snapshot o digest diverso
+è conflitto e rollback. Una sidecar già presente ma divergente, un result senza
+sidecar o una sidecar orfana è corruzione fail-closed, non viene riparata con
+upsert. Due insert concorrenti sullo stesso ID serializzano sotto
+`BEGIN IMMEDIATE`: il perdente equivalente rilegge la coppia, quello divergente
+fallisce; ID diversi producono coppie indipendenti complete.
+
 Ogni unit of work apre `BEGIN IMMEDIATE` **prima** delle proprie riletture,
 senza mai attraversare l'attesa umana; request e answer appartengono alle due
 unit of work distinte del §6. Ciascuna
@@ -940,6 +1026,25 @@ coerentemente con il validator v7; una finestra puntuale valida deve essere
 indicizzata. Riga eleggibile indecodificabile o incoerente, conflitto, ID
 duplicato o violazione FK abortisce e rollbacka l'intero upgrade.
 
+Nella stessa transazione, dopo la popolazione dell'indice finestre e prima di
+creare i lookup result, la migrazione enumera per `matching_result_id` UTF-8
+ogni result v7 eleggibile. Decodifica strict e valida interamente payload,
+schema/versione, status/mapping coherence e riferimento snapshot; risolve uno e
+un solo snapshot ownership-bound già indicizzato, verifica che result, mapping
+eventuale, snapshot e `subject_ref` concordino, calcola il digest canonico e
+inserisce esattamente una riga
+`maintain_plan_matching_result_snapshot_index`. Riferimento assente,
+malformato, multiplo o confliggente, dangling, ownership incoerente, digest
+discordante o result duplicato abortisce e rollbacka **tutto** l'upgrade. Un
+result esistente che non può dimostrare queste condizioni non viene omesso: la
+migrazione fallisce.
+
+È eleggibile ogni result v7 il cui payload strict dichiara un
+`prescription_snapshot_ref` verso uno snapshot con `subject_ref` non-null. Un
+payload che non permette nemmeno di decidere tale eleggibilità è malformato e
+fa fallire la migrazione; soltanto un riferimento strict a snapshot legacy con
+ownership null è esplicitamente ineleggibile e resta fuori dalla sidecar.
+
 Prima di impostare `user_version=8` e committare, la migrazione verifica:
 conteggio indice uguale al conteggio degli snapshot v7 non-null; nessun
 eleggibile senza indice; nessun indice senza snapshot eleggibile; uguaglianza
@@ -947,6 +1052,14 @@ byte-per-byte di subject e finestra decodificata per ogni coppia; e
 `foreign_key_check` vuoto. Snapshot legacy con ownership null restano senza
 indice e ineleggibili. Il matching non può essere abilitato su un database v8
 parzialmente popolato.
+
+La verifica pre-commit comprende inoltre: conteggio sidecar result uguale al
+conteggio dei result v7 eleggibili; nessun result eleggibile senza esattamente
+una sidecar; nessuna sidecar senza result e snapshot; uguaglianza di snapshot,
+subject e digest ricavati strict; e presenza del solo indice schema-valid
+`(prescription_snapshot_ref,matching_result_ref)` sulla nuova relazione. Un
+retry dell'intera migrazione dopo rollback ripete deterministicamente lo stesso
+ordine; una v8 già committata non riesegue né duplica il backfill.
 
 Questo backfill copre soltanto gli snapshot già presenti al passaggio v7→v8.
 La completezza continuativa è garantita separatamente dal contratto atomico di
@@ -1384,6 +1497,37 @@ fallisce chiuso. Due writer concorrenti non possono lasciare né uno snapshot
 orfano né una riga indice orfana. Il successivo discovery interroga soltanto
 l'indice e vede la finestra zero-length perché `start == end` è valido.
 
+### 10.18 MULTISPORT compatible, incompatible, ambiguous e malformed
+
+Snapshot `M` e sessione `S` sono ownership-bound allo stesso subject, entrambi
+`MULTISPORT`, in finestra, con due componenti ordinate e discipline esatte:
+il branch §4.1 produce `MATCHED` automatico e lo stesso mapping posizionale di
+un caso `SINGLE` non ambiguo, senza brick policy. Se `S.start` è fuori finestra
+oppure una disciplina/cardinalità/ordine/composition non coincide, produce
+`CONFIRMATION_REQUIRED`, mapping nullo e le reason keys esatte dei predicati
+falliti. Se la candidate tuple contiene due sessioni entrambe compatibili,
+produce ancora `CONFIRMATION_REQUIRED` e conserva entrambe, senza ranking.
+
+Se `M` è valido ma una sessione canonica non porta la struttura necessaria a
+calcolare uno dei cinque predicati, il risultato è `NOT_EVALUABLE` con reason
+`multisport compatibility input is structurally incomplete`. Se invece `M`
+porta una brick policy, un timestamp è naive, una reference è dangling o il
+subject non coincide, il validator/ownership boundary fallisce tecnicamente e
+rollbacka: non pubblica un falso outcome. Il matcher corrente non soddisfa
+ancora questo esempio; il flag resta disabilitato fino alla sua modifica futura.
+
+### 10.19 Backfill e write atomica della sidecar result
+
+Durante v7→v8 un result `R` decodifica univocamente lo snapshot ownership-bound
+`P`: la migrazione inserisce `(R,P,subject,payload_sha256)` nella sidecar e solo
+dopo crea l'indice `(P,R)`. Un secondo result dangling o con ownership diversa
+fa rollbackare anche la riga di `R`; non rimane una v8 parziale. Dopo l'upgrade,
+un nuovo result inserisce result e sidecar nello stesso `BEGIN IMMEDIATE` (e,
+per `MATCHED`, mapping → result → sidecar). Un retry identico fa no-op; stesso
+ID con digest diverso fallisce; due writer concorrenti non possono committare
+un result orfano. Guard e discovery trovano `R` mediante la sidecar, senza
+estrarre `prescription_snapshot_ref` dal JSON.
+
 ## 11. Errori, upgrade e decisioni residue
 
 Sono errori tecnici: scope assente/non riuscito/incoerente; righe nel perimetro
@@ -1463,7 +1607,18 @@ concorrenti non possono produrre coppie parziali; (38) discovery legge ancora
 esclusivamente l'indice validato. Nessuna delle verifiche richiede trigger JSON
 SQLite o modifica runtime in questa PR.
 
+L'audit aggiuntivo ha confrontato direttamente l'ordine degli early return di
+`matching_service.match` e la composizione di `validate_prescription`: (39)
+`SINGLE` e `BRICK` mantengono i branch esistenti, mentre `MULTISPORT` richiede
+il branch futuro senza brick policy e il feature resta disabilitato; (40) i
+casi automatico, incompatibile, ambiguo e strutturalmente incompleto seguono la
+matrice del §4.1; (41) l'inventario v8 non dichiara indici su colonne result
+inesistenti; (42) backfill result-sidecar, write atomiche post-upgrade,
+completezza 1:1, rollback, retry e concorrenza sono eseguibili con FK immediate
+nell'ordine mapping → result → sidecar.
+
 **Non resta alcuna decisione normativa bloccante.** Restano lavoro
 implementativo: definire modelli/codec, migrazione v8, repository, adapter dello
-scope, flag/wiring e test di race/rollback. Fino ad allora tutto il comportamento
+scope, aggiornare il matcher composition-aware, flag/wiring e test di
+race/rollback. Fino ad allora tutto il comportamento
 descritto resta non implementato e disabilitato.
