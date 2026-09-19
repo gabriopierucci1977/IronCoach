@@ -560,11 +560,13 @@ quel documento.
 
 In particolare, quel contratto definisce due invocazioni dopo un sync riuscito:
 quella session-driven e quella prescription/window-driven per finestre chiuse
-senza sessione catturata. Definisce inoltre lo scope di rilevanza come
-intervallo autorevole della sincronizzazione più gli esatti gruppi di finestre
-same-subject immediatamente precedente e successivo a ogni sessione coperta,
+senza sessione catturata. Definisce inoltre un set synchronization-wide,
+riservato al percorso senza sessione, e un candidate set distinto per ogni
+sessione: direct target validato, finestre che ne contengono inclusivamente lo
+start ed esatti gruppi same-subject immediatamente precedente e successivo,
 inclusi tutti i pari merito di boundary. «Candidate» nelle sezioni 5.4–5.5
-significa tale insieme indicizzato e limitato, mai tutta la storia
+significa il pertinente insieme indicizzato e limitato; l'unione dell'intero
+sync non viene passata a ogni sessione e non si usa mai tutta la storia
 same-subject.
 
 ### 5.1 Schema canonico
@@ -1637,6 +1639,14 @@ con riferimento a confirmation discovery, actor e timestamp, e conserva
 l'evidence originale fuori-finestra/incompatibile. Finché una discovery che
 contiene la relazione snapshot/sessione è irrisolta, il percorso window-driven
 deve saltare quello snapshot e non può creare un mapping concorrente.
+
+Quando esiste un solo snapshot ma il matcher puro richiede conferma, la
+discovery `SINGLE` conserva obbligatoriamente il riferimento a quel
+`MatchingResult`; il mapping resta nullo. Questo caso usa la confirmation
+MatchingResult esistente, non lo storage discovery-specific riservato a `ZERO`
+e `MULTIPLE`. Una risposta associativa crea mapping e nuovo result
+confirmation-aware e una discovery `SINGLE` derivata, senza perdere result,
+evidence, answer, actor o timestamp originari.
 
 Il `matching_result` dovrà mantenere `prescription_mapping: null` quando lo
 stato sarà `CONFIRMATION_REQUIRED` o `NOT_EVALUABLE`, oppure quando non vi sarà
