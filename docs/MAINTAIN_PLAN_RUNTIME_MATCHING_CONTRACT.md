@@ -134,14 +134,26 @@ a una sessione e non determina la cardinalità della sua discovery.
 ### 3.3 Candidate set per-sessione
 
 Per ogni sessione coperta `S` il repository costruisce un set distinto,
-same-subject e deduplicato, composto soltanto da: (a) lo snapshot target di un
-direct ID dopo validazione completa e risoluzione univoca, se presente; (b)
-tutte le finestre che contengono `S.start`, con predicate inclusivo
-`start <= S.start AND end >= S.start`; (c) l'intero gruppo predecessore con il
-massimo `scheduled_window_end < S.start` e l'intero gruppo successore con il
-minimo `scheduled_window_start > S.start`. Tutti gli exact tie del massimo o
-minimo sono inclusi. Una finestra zero-length contiene la sessione quando i tre
+same-subject e deduplicato in due passi. Prima carica **tutte e sole** le
+finestre che contengono `S.start`, con predicate inclusivo
+`start <= S.start AND end >= S.start`. Se questo insieme non è vuoto, esso è
+l'intero set temporale: predecessore e successore non vengono né caricati né
+contati. Soltanto se non esiste alcuna finestra contenente, il set temporale è
+l'unione dell'intero gruppo predecessore con il massimo
+`scheduled_window_end < S.start` e dell'intero gruppo successore con il minimo
+`scheduled_window_start > S.start`. Tutti gli exact tie del massimo o minimo
+sono inclusi. Una finestra zero-length contiene la sessione quando i tre
 istanti coincidono.
+
+Un direct ID, quando presente, viene risolto e validato **prima** di pubblicare
+la discovery. Deve essere sintatticamente valido, esistere in modo univoco,
+decodificarsi strict e avere `subject_ref` identico byte-per-byte a `S`; valore
+mancante, dangling, ambiguo, indecodificabile o cross-subject fallisce chiuso
+come errore tecnico e rollbacka, senza confirmation sostitutiva. Il target
+validato è evidence autorevole: viene unito al set temporale se non vi è già,
+ma non abilita il caricamento incondizionato dei gruppi adiacenti. Quindi può
+selezionare un membro di un set contenente multiplo o aggiungere una sola
+evidence fuori-finestra al set adiacente limitato; non tronca mai le evidence.
 
 Le query sono separate per `S`, usano gli indici v8 e ordinano il risultato
 deduplicato per `prescription_snapshot_id` byte UTF-8. La validazione strict,
@@ -168,9 +180,8 @@ per ogni snapshot, senza algoritmo alternativo:
 `ZERO` e `MULTIPLE` hanno `CONFIRMATION_REQUIRED`. Nessun primo elemento,
 ranking, fuzzy match o tie-break è ammesso. Un direct ID esplicito, valido,
 same-subject e risolto univocamente seleziona lo snapshot indicato anche in un
-set multiplo. Un ID ben formato ma dangling, non verificabile, duplicato o
-contraddittorio è un esito `CONFIRMATION_REQUIRED`; un ID malformato o
-cross-subject è errore tecnico.
+set multiplo. Tutti gli altri casi direct-ID falliscono chiusi secondo il
+§3.3: non è lecito degradarli a una scelta umana.
 
 ```yaml
 matching_discovery_result:
@@ -184,6 +195,8 @@ matching_discovery_result:
   candidate_snapshot_refs: [string]
   candidate_evidence: [object]
   direct_id_evidence: [object]
+  selected_snapshot_ref: string | null
+  resolution_source: AUTOMATIC | DIRECT_ID | ATHLETE_CONFIRMATION | null
   previous_discovery_result_ref: string | null
   discovery_confirmation_ref: string | null
   matching_confirmation_ref: string | null
@@ -201,18 +214,38 @@ completa è:
 |---|---|---|---|---|
 | `ZERO` | `CONFIRMATION_REQUIRED` | null | null | discovery-specific §6 |
 | `ZERO` | `NOT_EVALUABLE` (risposta non selettiva) | null | null | discovery-specific §6 |
+| `ZERO` | `MATCHED` | non-null | non-null | `SELECT_SNAPSHOT` same-scope §6 |
 | `SINGLE` | `MATCHED` | non-null | non-null | nessuna se automatico; existing MatchingResult confirmation se derivato |
 | `SINGLE` | `CONFIRMATION_REQUIRED` | **non-null** | null | existing `maintain_plan_confirmations` sul result |
 | `SINGLE` | `NOT_EVALUABLE` | non-null | null | risposta existing MatchingResult confirmation |
 | `MULTIPLE` | `CONFIRMATION_REQUIRED` | null | null | discovery-specific §6 |
 | `MULTIPLE` | `NOT_EVALUABLE` (risposta non selettiva) | null | null | discovery-specific §6 |
+| `MULTIPLE` | `MATCHED` | non-null | non-null | `DIRECT_ID` validato oppure `SELECT_SNAPSHOT` §6 |
 
-Ogni altra combinazione è vietata dai CHECK v8. Un discovery derivato da
+La kind descrive sempre la cardinalità dell'evidence inizialmente congelata,
+non il numero di snapshot scelti in seguito. `selected_snapshot_ref` e
+`resolution_source` sono non-null esattamente per
+`MATCHED`: la source è `AUTOMATIC` solo per `SINGLE`, mentre `DIRECT_ID` e
+`ATHLETE_CONFIRMATION` sono lecite per ogni kind. Per `MULTIPLE/MATCHED`, lo
+snapshot selezionato DEVE appartenere ai `candidate_snapshot_refs` congelati;
+per `ZERO/MATCHED` deve essere lo snapshot same-scope validato ammesso dal §6.
+Una source `DIRECT_ID` richiede inoltre
+direct evidence strict valida e same-subject che risolva proprio quello
+snapshot. Candidate refs/evidence di un `MULTIPLE` restano almeno due e non
+sono mai riscritti per simulare `SINGLE`. Ogni altra combinazione è vietata dai
+CHECK v8. Un discovery derivato da
 risposta ha `previous_discovery_result_ref` e precisamente uno tra
 `discovery_confirmation_ref` (solo origine `ZERO`/`MULTIPLE`) e
 `matching_confirmation_ref` (solo origine `SINGLE`); quello iniziale ha tutti
 e tre null. In particolare il result puro `CONFIRMATION_REQUIRED` di un
 `SINGLE` non viene mai scollegato dalla discovery.
+
+Con direct ID validato, una singola `BEGIN IMMEDIATE` rilegge sessione, target
+e intero candidate set congelato, precalcola gli ID, inserisce mapping prima del
+result per le FK immediate e infine la discovery terminale. Non nasce una
+confirmation né una sidecar; result, mapping e discovery citano la stessa
+direct evidence e selezione. Retry equivalente restituisce la catena esistente;
+una diversa risoluzione dello stesso ID o un mapping concorrente rollbacka.
 
 ## 5. Percorso prescription/window-driven: nessuna sessione catturata
 
@@ -294,8 +327,10 @@ una correzione manuale dell'assenza iniziale, non amplia lo scope. In entrambi i
 casi snapshot, sessione, discovery, confirmation e scope devono avere lo stesso
 `subject_ref`; mismatch o dangling ref causa rollback.
 
-`SELECT_SNAPSHOT` è conferma umana autorevole: crea un nuovo discovery
-`SINGLE`, ma **non** reinvoca il matcher automatico invariato. Nella stessa
+`SELECT_SNAPSHOT` è conferma umana autorevole: crea un nuovo discovery della
+**stessa kind e con lo stesso candidate set congelato** dell'origine
+(`MULTIPLE` resta `MULTIPLE`; `ZERO` resta `ZERO`), ma **non** reinvoca il
+matcher automatico invariato. Nella fase B
 transazione crea direttamente un nuovo `MatchingResult MATCHED` e un
 `PrescriptionMapping` con `resolution_method=ATHLETE_CONFIRMATION`; entrambi
 riferiscono la confirmation di risposta, actor e `occurred_at`. Il result
@@ -310,7 +345,14 @@ request è un conflitto, salvo retry byte-equivalente dello stesso ID.
 
 Un `SINGLE` non usa questa tabella. Se il matcher puro produce
 `CONFIRMATION_REQUIRED`, la discovery conserva quel `matching_result_ref` e
-apre la normale `maintain_plan_confirmations` già riferita a result e snapshot.
+apre la normale `maintain_plan_confirmations` con `status=REQUIRED`, già
+riferita a result e snapshot. Poiché la shape v1–v7 non ha `request_ref` e il
+record non può essere mutato append-only, v8 aggiunge
+`maintain_plan_matching_confirmation_answers(answer_id PRIMARY KEY,
+request_ref NOT NULL UNIQUE REFERENCES maintain_plan_confirmations,
+answer_type, selected_session_ref, actor, occurred_at, payload_schema_version,
+payload_json)` con CHECK equivalenti alla matrice v7 degli answer. La request
+resta `REQUIRED`; l'answer v8 separato ne costituisce la chiusura auditabile.
 La sessione `S` deve appartenere all'insieme dichiarato congelato del result;
 una conferma associativa valida usa l'answer esistente (`MANUAL_ASSOCIATION`,
 oppure `SELECT_CANDIDATE` quando `S` era offerta) come decisione umana
@@ -324,18 +366,32 @@ derivato `SINGLE`, entrambi collegati all'answer, senza mapping. Ownership,
 membership, append-only, retry equivalente e conflitto divergente sono gli
 stessi vincoli del flusso discovery-specific.
 
-Request, answer e discovery derivato sono inseriti nella stessa
-`BEGIN IMMEDIATE`. Gli ID di mapping e result sono sempre precalcolati. Per
-`SELECT_SNAPSHOT` l'ordine eseguibile è: **answer, mapping, result, sidecar
-confirmation-resolution, discovery derivato**; il medesimo ordine vale per
-una risposta associativa `SINGLE` sulla confirmation esistente. Per risposte
-non associative è answer, result `NOT_EVALUABLE` quando il flusso è `SINGLE`,
-poi discovery derivato; per `ZERO`/`MULTIPLE` è answer, discovery derivato.
-Le verifiche e la ricerca di mapping/sessione
-preesistente precedono gli insert. Payload e colonne duplicate devono
-coincidere. Trigger `BEFORE UPDATE` e `BEFORE DELETE` abortiscono sempre;
-foreign key sono attive, nessun cascade è ammesso. Non vi è lock durante
-l'interazione umana.
+Ogni meccanismo di confirmation, incluso quello snapshot-centric senza
+sessione e quello existing MatchingResult per `SINGLE`, usa **due transazioni
+committate distinte**. La fase A apre `BEGIN IMMEDIATE`, rilegge l'artefatto
+irrisolto, crea idempotentemente la sola `REQUEST`, committa, e soltanto dopo il
+commit la espone all'atleta. La connessione non conserva una transazione, un
+cursor o un lock SQLite durante l'interazione umana.
+
+La fase B inizia soltanto dopo aver ricevuto una risposta. Apre un nuovo
+`BEGIN IMMEDIATE`, rilegge dal database request e testa di catena pending già
+committate e ne rivalida kind, stato irrisolto, scope, subject, candidate
+congelate, ownership e assenza di risposta/mapping concorrente. Precalcola gli
+ID. Per `SELECT_SNAPSHOT` l'ordine FK-safe è **answer, mapping, result, sidecar
+confirmation-resolution, discovery derivato**; lo stesso vale per una risposta
+associativa `SINGLE`. Per risposte non associative è answer, result
+`NOT_EVALUABLE` quando il flusso è `SINGLE`, poi discovery derivato; per
+`ZERO`/`MULTIPLE` è answer, discovery derivato. Tutti gli artefatti della fase
+B sono atomici e il commit precede la loro esposizione.
+
+L'identità deterministica della request rende un retry di fase A equivalente
+un no-op verificato. In fase B `UNIQUE(request_ref)` decide la race: il primo
+answer valido committato vince; un retry con ID e bytes equivalenti rilegge
+l'intera catena e restituisce gli artefatti esistenti, mentre un answer diverso
+o artefatti derivati divergenti causano conflitto e rollback. Nessun record
+append-only viene aggiornato o cancellato. Payload e colonne duplicate devono
+coincidere; trigger `BEFORE UPDATE/DELETE` abortiscono sempre, FK sono attive e
+nessun cascade è ammesso.
 
 ## 7. Persistenza v8 e atomicità
 
@@ -355,9 +411,22 @@ v8 aggiunge, senza cambiare v1–v7:
 - `maintain_plan_matching_discoveries`, con colonne del §4 e FK a scope,
   sessione, discovery precedente, confirmation discovery, confirmation
   MatchingResult esistente, result e mapping. CHECK implementano esattamente
-  la matrice del §4 e rendono mutuamente esclusivi i due confirmation ref;
+  la matrice del §4 e rendono mutuamente esclusivi i due confirmation ref.
+  In particolare `kind` è vincolato alla cardinalità JSON congelata
+  (`ZERO=0`, `SINGLE=1`, `MULTIPLE>=2`) indipendentemente dalla resolution;
+  `MATCHED` richiede result, mapping, selected snapshot e source non-null;
+  gli altri stati richiedono selected snapshot/source null. `DIRECT_ID`
+  richiede direct evidence valida e permette `MULTIPLE/MATCHED` soltanto se la
+  selezione è membro delle candidate; `ATHLETE_CONFIRMATION` richiede uno dei
+  confirmation ref e applica membership `MULTIPLE` o regola same-scope
+  `ZERO`. Trigger applicativi abortiscono se JSON, colonne e righe referenziate
+  non soddisfano gli stessi predicati;
 - la tabella confirmation discovery del §6, indici per ogni FK e trigger
   append-only.
+- la tabella append-only `maintain_plan_matching_confirmation_answers` del §6,
+  con `UNIQUE(request_ref)`, FK immediate e indici; la request continua a usare
+  l'esistente `maintain_plan_confirmations` senza update. Trigger v8 vietano
+  inoltre update/delete delle request matching esistenti;
 - `maintain_plan_matching_confirmation_resolutions(matching_result_ref TEXT
   PRIMARY KEY, prescription_mapping_ref TEXT NOT NULL UNIQUE,
   discovery_result_ref TEXT NOT NULL, discovery_confirmation_ref TEXT UNIQUE,
@@ -368,7 +437,7 @@ v8 aggiunge, senza cambiare v1–v7:
   tre FK puntano rispettivamente a result `MATCHED`, mapping
   `ATHLETE_CONFIRMATION` e discovery originaria; l'unico confirmation ref punta
   a `ANSWER SELECT_SNAPSHOT` dedicata per `ZERO`/`MULTIPLE` oppure alla risposta
-  existing `maintain_plan_confirmations` per `SINGLE`;
+  v8 collegata alla request existing `maintain_plan_confirmations` per `SINGLE`;
   payload, subject, snapshot e sessione devono coincidere tra tutte le righe;
 - un indice univoco v8 su `maintain_plan_prescription_mappings
   (actual_session_ref)`, oltre ai trigger append-only esistenti, per rendere
@@ -380,7 +449,10 @@ confirmation punta subito a result e snapshot. Poiché non sono deferred e v8
 non cambia v1–v7, il mapping deve precedere il result dopo la precomputazione
 deterministica di entrambi gli ID.
 
-Ogni unit of work apre `BEGIN IMMEDIATE` **prima** delle riletture, verifica
+Ogni unit of work apre `BEGIN IMMEDIATE` **prima** delle proprie riletture,
+senza mai attraversare l'attesa umana; request e answer appartengono alle due
+unit of work distinte del §6. Ciascuna
+verifica
 payload, metadata, ownership, scope e retry, esegue il matcher puro e inserisce
 gli artefatti nell'ordine imposto dalle FK. Result, mapping e discovery
 `MATCHED` diventano visibili nello stesso commit. Errore, race divergente,
@@ -454,6 +526,19 @@ Namespace `maintain-plan:matching-result:v1:sha256:<hash>`. Il mapping mantiene
 la preimage esistente con confirmation, snapshot, sessione e resolution method;
 non esiste mapping nel caso zero sessioni.
 
+Un override direct-ID usa invece una forma distinta che lega esplicitamente
+la discovery completa (anche `MULTIPLE`) e non perde il candidate set:
+
+```json
+{"direct_evidence_ids":["<ordinati>"],"discovery_result_id":"<discovery completa>","matching_policy_id":"maintain-plan-matching","matching_policy_version":"1.0.0-draft","prescription_snapshot_id":"<id selezionato>","resolution_source":"DIRECT_ID","session_id":"<id>","subject_ref":"<ref>","sync_scope_id":"<id>"}
+```
+
+Result e mapping citano `discovery_result_id`, direct evidence e selected
+snapshot; la mapping aggiunge il `matching_result_id` e usa
+`resolution_method="DIRECT_ID"`. La discovery terminale conserva kind,
+candidate refs/evidence e direct evidence originali, imposta
+`selected_snapshot_ref`, `resolution_source=DIRECT_ID`, result e mapping.
+
 Matching result da risposta associativa (selezione discovery o confirmation
 MatchingResult di un `SINGLE`):
 
@@ -468,8 +553,8 @@ aggiunge alla stessa forma `matching_result_id` e
 parte dell'identità, non metadata sostituibili. Retry richiede equivalenza di
 preimage, evidence conservata e payload; altrimenti è conflitto.
 
-Per un `SINGLE`, `confirmation_id` nella preimage è l'ID della risposta
-`maintain_plan_confirmations`; `discovery_result_id` è la discovery `SINGLE`
+Per un `SINGLE`, `confirmation_id` nella preimage è l'ID della risposta v8
+`maintain_plan_matching_confirmation_answers`; `discovery_result_id` è la discovery `SINGLE`
 originaria. Questi input impediscono che una conferma sia riciclata su un'altra
 discovery e preservano actor, timestamp, snapshot e sessione nell'identità.
 
@@ -482,6 +567,17 @@ Confirmation discovery request:
 Answer: stessa preimage con `record_kind:"ANSWER"`, `request_id`, `answer_type`
 e `selected_snapshot_id` (null se non selettiva). Namespace
 `maintain-plan:matching-discovery-confirmation:v1:sha256:<hash>`.
+
+La request existing MatchingResult usa l'identità canonica già derivata da
+result e snapshot; la nuova answer append-only usa:
+
+```json
+{"actor":"<actor>","answer_type":"<type>","occurred_at":"<RFC3339>","request_id":"<confirmation REQUIRED>","selected_session_id":"<id|null>"}
+```
+
+Namespace `maintain-plan:matching-confirmation-answer:v1:sha256:<hash>`. Fase A
+e fase B usano dunque identità indipendenti; nessuna identità dipende dal tempo
+di commit o da un ordine di arrivo non persistito.
 
 Vettore normativo per il percorso zero-sessioni (`é` è U+00E9):
 
@@ -498,6 +594,14 @@ result preimage: {"actor":"athlete-é","confirmation_id":"answer-é","confirmed_
 result SHA-256: 8695891d6cfd60a9fbd12cbd4d8ae7494297f4d2c66cfcc825cce434fca25d09
 mapping preimage: {"actor":"athlete-é","confirmation_id":"answer-é","confirmed_at":"2026-09-18T10:15:00Z","discovery_result_id":"discovery-é","matching_policy_id":"maintain-plan-matching","matching_policy_version":"1.0.0-draft","matching_result_id":"maintain-plan:matching-result:v1:sha256:8695891d6cfd60a9fbd12cbd4d8ae7494297f4d2c66cfcc825cce434fca25d09","prescription_snapshot_id":"snapshot-é","resolution_method":"ATHLETE_CONFIRMATION","session_id":"session-é","subject_ref":"subject-é"}
 mapping SHA-256: 090e65a0386027a4f69fc4bc2327137ed9abc7651165d64070a87c982dc7f2b3
+```
+
+Vettore normativo direct-ID `MULTIPLE` (`é` è U+00E9):
+
+```text
+preimage: {"direct_evidence_ids":["direct-é"],"discovery_result_id":"discovery-é","matching_policy_id":"maintain-plan-matching","matching_policy_version":"1.0.0-draft","prescription_snapshot_id":"snapshot-é","resolution_source":"DIRECT_ID","session_id":"session-é","subject_ref":"subject-é","sync_scope_id":"sync-é"}
+SHA-256: 056882ca09d5d4dc0151dffc11119ae2efef2ba0027563234616897733000c21
+matching_result_id: maintain-plan:matching-result:v1:sha256:056882ca09d5d4dc0151dffc11119ae2efef2ba0027563234616897733000c21
 ```
 
 ## 10. Esempi normativi
@@ -529,9 +633,10 @@ stesso scope non duplica nulla.
 ### 10.4 Discovery MULTIPLE
 
 Una sessione e due snapshot rilevanti producono discovery `MULTIPLE` e una
-request nella tabella dedicata. La risposta seleziona uno dei due ID congelati;
-nella stessa transazione vengono verificati ownership e FK e nasce un nuovo
-discovery `SINGLE`. La vecchia discovery e la request non sono aggiornate.
+request nella tabella dedicata. La fase A committa la request; dopo la risposta,
+nella transazione di fase B vengono verificati ownership e FK e nasce un nuovo
+discovery `MULTIPLE/MATCHED` con lo stesso set congelato e uno
+`selected_snapshot_ref`. La vecchia discovery e la request non sono aggiornate.
 Il result e mapping nuovi citano risposta, actor e timestamp e mantengono
 l'evidence incompatibile originale; il matcher non viene rieseguito.
 
@@ -548,7 +653,9 @@ irrisolta. Dopo `SELECT_SNAPSHOT`, il solo mapping è quello confirmation-aware.
 
 Uno scope di tre giorni contiene una prescrizione lunedì e una mercoledì. La
 sessione di lunedì riceve il proprio set del §3.3, non l'unione multi-day: la
-prescrizione mercoledì non la trasforma artificialmente in `MULTIPLE`. Una
+finestra di lunedì contiene `S.start`, quindi non vengono neppure caricati i
+gruppi adiacenti e la prescrizione mercoledì non la trasforma artificialmente
+in `MULTIPLE`. Una
 finestra puntuale con `start == end == S.start` è valida, viene indicizzata e
 contiene inclusivamente `S.start`.
 
@@ -559,14 +666,28 @@ risposta associativa valida genera, nell'ordine answer, mapping, result,
 sidecar e discovery derivato, un `SINGLE/MATCHED`; result e mapping citano
 answer, actor e timestamp, mentre l'evidence fuori-finestra resta auditabile.
 
+### 10.7 Direct-ID override e lifecycle a due fasi
+
+Due finestre sovrapposte contengono `S.start`; il candidate set congelato ha
+quindi cardinalità due. Un direct ID strict, univoco e same-subject seleziona
+la seconda: la discovery resta `MULTIPLE`, diventa `MATCHED`, conserva entrambe
+le candidate e registra selected snapshot, source `DIRECT_ID`, result e
+mapping. Un ID dangling o ownership-mismatched rollbacka senza richiesta.
+
+Per una discovery `MULTIPLE` senza direct ID, la fase A committa la request e
+chiude la transazione prima di mostrarla. Minuti dopo, la fase B rilegge request
+e testa pending; una risposta valida inserisce atomicamente answer, mapping,
+result, sidecar e discovery `MULTIPLE/MATCHED`. Due risposte concorrenti non
+mutano la request: una sola può vincere `UNIQUE(request_ref)`.
+
 ## 11. Errori, upgrade e decisioni residue
 
 Sono errori tecnici: scope assente/non riuscito/incoerente; righe nel perimetro
 corrotte; ownership discordante; direct evidence malformata; timestamp naive;
-FK dangling; payload/colonne discordanti; risposta non appartenente al set o
+direct ID dichiarato ma vuoto, dangling, ambiguo o ownership-mismatched; FK dangling;
+payload/colonne discordanti; risposta non appartenente al set o
 allo scope; retry divergente. Sono esiti di dominio: zero/più snapshot,
-zero/più sessioni, fuori finestra, mismatch, direct ID ben formato ma
-irrisolto, e risposta non risolutiva.
+zero/più sessioni, fuori finestra, mismatch e risposta non risolutiva.
 
 DB v1–v7 non abilita questo boundary. La futura v8 è additiva e richiede tutte
 le tabelle, indici, trigger e checksum coerenti. “Nessun backfill storico” vale
@@ -588,7 +709,11 @@ sidecar→discovery; (7) retry equivalenti idempotenti e conflitti divergenti
 fail-closed; (8) un solo mapping per sessione tra entrambi i percorsi; (9) set
 per-sessione separati dall'unione synchronization-wide; (10) invariant v7
 `start <= end`, incluse finestre zero-length; (11) matrice completa dei ref e
-uso della confirmation MatchingResult esistente esclusivamente per `SINGLE`.
+uso della confirmation MatchingResult esistente esclusivamente per `SINGLE`;
+(12) request e answer sempre in due transazioni committate senza lock durante
+l'attesa; (13) cardinalità congelata distinta dalla resolution e stato
+`MULTIPLE/MATCHED` persistibile per direct ID o selezione umana; (14) priorità
+del set contenente sugli adiacenti, usati solo quando il primo è vuoto.
 
 **Non resta alcuna decisione normativa bloccante.** Restano lavoro
 implementativo: definire modelli/codec, migrazione v8, repository, adapter dello

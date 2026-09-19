@@ -563,8 +563,9 @@ quella session-driven e quella prescription/window-driven per finestre chiuse
 senza sessione catturata. Definisce inoltre un set synchronization-wide,
 riservato al percorso senza sessione, e un candidate set distinto per ogni
 sessione: direct target validato, finestre che ne contengono inclusivamente lo
-start ed esatti gruppi same-subject immediatamente precedente e successivo,
-inclusi tutti i pari merito di boundary. «Candidate» nelle sezioni 5.4–5.5
+start oppure, **solo quando nessuna finestra contiene lo start**, esatti gruppi
+same-subject immediatamente precedente e successivo, inclusi tutti i pari
+merito di boundary. «Candidate» nelle sezioni 5.4–5.5
 significa il pertinente insieme indicizzato e limitato; l'unione dell'intero
 sync non viene passata a ogni sessione e non si usa mai tutta la storia
 same-subject.
@@ -1594,8 +1595,9 @@ seduta anche se
 disciplina, durata, intensità o struttura differiscono: queste differenze sono
 scostamenti di esecuzione, non errori di matching.
 
-Un ID duplicato, incompleto, contraddittorio o privo di prescrizione
-corrispondente dovrà richiedere confirmation. Un ID Garmin o Strava che
+Un direct ID dichiarato ma duplicato, incompleto, contraddittorio, privo di
+prescrizione corrispondente o cross-subject è un errore tecnico fail-closed e
+non dovrà aprire una confirmation. Un ID Garmin o Strava che
 identificherà soltanto l'attività non dovrà equivalere automaticamente al
 prescription/workout ID.
 
@@ -1636,7 +1638,11 @@ conferma.
 Una selezione snapshot valida dell'atleta è essa stessa conferma autorevole:
 non riesegue il matcher automatico, crea result e mapping confirmation-aware
 con riferimento a confirmation discovery, actor e timestamp, e conserva
-l'evidence originale fuori-finestra/incompatibile. Finché una discovery che
+l'evidence originale fuori-finestra/incompatibile. La kind continua a
+rappresentare la cardinalità congelata: una selezione da `MULTIPLE` produce
+`MULTIPLE/MATCHED`, non un falso `SINGLE`. Analogamente un direct ID strict e
+same-subject può risolvere `MULTIPLE` conservando tutte le candidate e
+registrando selected snapshot e source `DIRECT_ID`. Finché una discovery che
 contiene la relazione snapshot/sessione è irrisolta, il percorso window-driven
 deve saltare quello snapshot e non può creare un mapping concorrente.
 
@@ -1647,6 +1653,13 @@ MatchingResult esistente, non lo storage discovery-specific riservato a `ZERO`
 e `MULTIPLE`. Una risposta associativa crea mapping e nuovo result
 confirmation-aware e una discovery `SINGLE` derivata, senza perdere result,
 evidence, answer, actor o timestamp originari.
+
+Ogni confirmation matching ha due transazioni: la prima crea e committa la
+request prima di esporla; nessun lock resta aperto durante l'attesa umana. La
+seconda parte solo dopo l'answer, rilegge e valida la request pending committata
+e persiste atomicamente answer e derivati in ordine FK-safe. Retry equivalenti
+sono no-op; risposte concorrenti divergenti falliscono senza update dei record
+append-only.
 
 Il `matching_result` dovrà mantenere `prescription_mapping: null` quando lo
 stato sarà `CONFIRMATION_REQUIRED` o `NOT_EVALUABLE`, oppure quando non vi sarà
