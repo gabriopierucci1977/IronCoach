@@ -302,8 +302,9 @@ sono eleggibili.
 Ordine runtime, candidate discovery e transazione del futuro collegamento sono
 definiti dal
 [contratto runtime matching](MAINTAIN_PLAN_RUNTIME_MATCHING_CONTRACT.md), che
-richiede un `SynchronizationCoverage` autorevole e limitato e ordina il
-percorso session-driven prima di quello prescription/window-driven, senza
+richiede un `SynchronizationCoverage` autorevole e limitato e ordina expiry
+pre-processing committato, percorso session-driven e poi
+prescription/window-driven, senza
 estendere il perimetro di cattura di questo documento. Per ciascuna sessione
 usa tutte le finestre contenenti; soltanto quando queste mancano usa i vicini
 indicizzati immediati attorno allo start. Questi vicini non entrano
@@ -314,8 +315,11 @@ e ogni confirmation committa la request prima dell'attesa umana. Prima di
 processare una sessione tardiva entrambi i percorsi cercano una precedente
 catena snapshot-centric zero-sessioni: se esiste, vietano il mapping automatico
 e creano la reconciliation confirmation con tuple sessione non vuote congelate.
+La relativa answer vive in una relazione append-only dedicata, valida membership
+della selezione e non muta mai la request `REQUIRED`.
 La request zero originaria resta vuota e non offre associazione manuale. Lo
-sweep expiry prescritto precede il processing della successiva prescrizione.
+sweep expiry prescritto precede entrambi i percorsi, anche quando la stessa sync
+importa una sessione della prescrizione successiva.
 
 ## 11. Criteri di accettazione
 

@@ -28,18 +28,26 @@ Dopo **ogni sincronizzazione attività completata con successo**, il boundary
 riceve il `SynchronizationCoverage` autorevole del §3 e, in quest'ordine:
 
 1. persiste tutte le nuove `ActualSession` e completa il relativo commit;
-2. esegue il percorso **session-driven** per ciascuna sessione coperta, ordinata
-   per `(start, session_id UTF-8)`;
-3. esegue il percorso **prescription/window-driven** per ciascuno snapshot
+2. dopo che input autorevoli e boundary dell'indice successor sono disponibili,
+   esegue e committa la fase obbligatoria di **synchronization pre-processing**:
+   scheduling dei boundary appena rivelati e sweep expiry di tutte le request
+   zero-sessioni pending same-subject il cui boundary deterministico è raggiunto;
+3. soltanto dopo quel commit esegue il percorso **session-driven** per ciascuna
+   sessione coperta, ordinata per `(start, session_id UTF-8)`;
+4. quindi esegue il percorso **prescription/window-driven** per ciascuno snapshot
    rilevante la cui finestra è ormai chiusa, ordinato per
    `(scheduled_window.end, prescription_snapshot_id UTF-8)`;
-4. committa gli artefatti di matching prima di qualsiasi consumer downstream.
+5. committa gli artefatti di matching prima di qualsiasi consumer downstream.
 
 Un sync fallito, parziale o best-effort degradato a warning non invoca nessuno
 dei due percorsi. Il secondo percorso non dipende dalla presenza di una nuova
 attività: è il trigger richiesto per una prescrizione scaduta senza sessione.
-L'ordine session-first consente al percorso window-driven di rileggere i
-risultati appena committati; non è un ranking né un tie-break.
+L'ordine globale è dunque **expiry pre-processing → session-driven →
+prescription/window-driven**. Il session-first tra i due percorsi consente al
+secondo di rileggere i risultati appena committati; non è un ranking né un
+tie-break. Se la stessa sincronizzazione rivela il successore B e importa una
+sessione di B, deve prima scadere e committare A: nessuna discovery, result o
+mapping di B può precedere quel commit.
 
 ## 3. Scope autorevole e limitato della sincronizzazione
 
@@ -318,16 +326,21 @@ sono null/vuoti e la request resta pending. Ogni sincronizzazione successiva
 che scopre il primo gruppo successore appende un record `EXPIRY_SCHEDULED` con
 gli stessi input canonici; non aggiorna request o result.
 
-Prima di enumerare, fare discovery o matching del primo snapshot di quel gruppo,
-il boundary prescription/window-driven esegue un **expiry sweep** same-subject.
-In una `BEGIN IMMEDIATE` rilegge request, result, catena e indice e valida che il
-gruppo sia ancora quello canonico. Se la request è ancora pending, appende
+Nella fase obbligatoria di synchronization pre-processing del §2, **prima di
+entrambi i percorsi**, il boundary identifica in ordine
+`(expiry_boundary_at, origin_request_ref UTF-8)` ogni request pending
+same-subject il cui gruppo successor è stato raggiunto. Per ciascuna, una
+`BEGIN IMMEDIATE` rilegge request, result, catena, boundary e indice e valida
+che il gruppo sia ancora quello canonico. Se la request è ancora pending,
+appende
 `MatchingResult NOT_EVALUABLE` terminale con warning ed evidence originali,
 `candidate_session_refs=[]`, `prescription_mapping_ref=null`, reason
 `UNANSWERED_BEFORE_NEXT_PRESCRIPTION`, e un evento `EXPIRED`; non crea answer,
 actor o mapping e non muta/cancella la request originaria. Solo dopo il commit
-può essere processato il successore. Se il successore diventa noto nella stessa
-sync, scheduling e sweep precedono la sua enumerazione.
+dell'intero sweep possono partire discovery o matching session-driven e poi
+window-driven del gruppo successor. Se il successore diventa noto nella stessa
+sync, scheduling e sweep precedono persino una sessione importata per quel
+gruppo.
 
 L'ID di scheduling deriva da `(request_id, expiry_boundary_at,
 expiry_successor_snapshot_refs)`; quello di expiry aggiunge il chain-head ID e
@@ -362,11 +375,16 @@ request collegati a result e request zero originari e alla testa precedente;
 non altera la tupla vuota né l'evidence originaria.
 
 Solo questa nuova request può offrire `MANUAL_ASSOCIATION`/`SELECT_CANDIDATE`.
-La selezione deve appartenere esattamente alla tupla congelata. Una risposta
-associativa crea, in ordine FK-safe answer → mapping → result → sidecar → testa,
+La risposta è persistita esclusivamente nella relazione dedicata
+`maintain_plan_late_session_reconciliation_answers` del §7, mai nella answer
+che referenzia `maintain_plan_confirmations`. La selezione associativa deve
+appartenere byte-per-byte alla tupla congelata. Una risposta associativa crea,
+in ordine FK-immediate-safe **answer → mapping → result → sidecar → evento testa**,
 un mapping `ATHLETE_CONFIRMATION` e conserva original result/request,
 reconciliation request, actor e timestamp. Rejection, expiry o risposta non
-associativa appende `NOT_EVALUABLE` senza mapping. Nessuna risposta produce un
+associativa usa **answer → result `NOT_EVALUABLE` → evento testa**, senza
+mapping; l'expiry automatica usa result → evento e non crea answer. Nessuna
+risposta produce un
 nuovo report visibile per una vecchia seduta già superata.
 
 Una catena pending, già expired/`NOT_EVALUABLE` o già risolta non viene
@@ -386,8 +404,9 @@ Matrice normativa della catena snapshot-centric:
 | zero request pending | answer non associativa | vuota originale | vietate | nessuno |
 | zero request pending / successor raggiunto | `EXPIRED` + result `NOT_EVALUABLE` | vuota originale | nessuna answer | nessuno |
 | zero pending o terminale / sessione tardiva | `LATE_SESSION_RECONCILIATION` pending | non vuota, canonica | solo membri congelati | nessuno prima dell'answer |
-| reconciliation pending / selezione valida | answer + result `MATCHED` | non vuota, invariata | membro selezionato | uno, `ATHLETE_CONFIRMATION` |
-| reconciliation pending / rifiuto, expiry o non-associativa | result `NOT_EVALUABLE` | non vuota, invariata | — | nessuno |
+| reconciliation pending / selezione valida | dedicated answer + result `MATCHED` | non vuota, invariata | membro selezionato nella request | uno, `ATHLETE_CONFIRMATION` |
+| reconciliation pending / rifiuto o non-associativa | dedicated answer + result `NOT_EVALUABLE` | non vuota, invariata | `selected_session_ref=null` | nessuno |
+| reconciliation pending / expiry automatica | result `NOT_EVALUABLE` + `EXPIRED` | non vuota, invariata | nessuna answer | nessuno |
 | qualunque testa / mapping già esistente | no-op verificato | invariata | — | mapping esistente |
 
 La catena conserva sempre warning/evidence zero originari. Un nuovo head cita
@@ -512,6 +531,15 @@ nessun cascade è ammesso.
 
 ## 7. Persistenza v8 e atomicità
 
+Inventario normativo request/answer v8: (a) discovery `ZERO/MULTIPLE` usa i
+record `REQUEST`/`ANSWER` della propria tabella dedicata; (b) confirmation
+`SINGLE` e zero-sessioni basata su `maintain_plan_confirmations` usa
+`maintain_plan_matching_confirmation_answers`; (c) late-session reconciliation
+usa esclusivamente `maintain_plan_late_session_reconciliation_answers`. Ogni FK
+di answer punta alla propria request shape; nessuna request type con risposta
+umana può restare priva della corrispondente relazione persistibile e nessuna
+answer può attraversare questi tre domini.
+
 v8 aggiunge, senza cambiare v1–v7:
 
 - `maintain_plan_sync_coverages`, con colonne del §3, FK ownership applicativa,
@@ -550,12 +578,14 @@ v8 aggiunge, senza cambiare v1–v7:
   event_kind TEXT NOT NULL CHECK(event_kind IN ('EXPIRY_SCHEDULED','EXPIRED',
   'LATE_SESSION_RECONCILIATION','ANSWERED')), expiry_boundary_at TEXT,
   expiry_successor_snapshot_refs_json TEXT NOT NULL,
-  reconciliation_request_ref TEXT, terminal_result_ref TEXT, occurred_at TEXT
-  NOT NULL, payload_json TEXT NOT NULL, UNIQUE(origin_request_ref,
+  reconciliation_request_ref TEXT, reconciliation_answer_ref TEXT,
+  terminal_result_ref TEXT, occurred_at TEXT NOT NULL, payload_json TEXT NOT
+  NULL, UNIQUE(origin_request_ref,
   previous_chain_head_ref), FOREIGN KEY ... ON DELETE NO ACTION)`. CHECK e
   trigger impongono: scheduling senza terminal result; expiry con result
   `NOT_EVALUABLE` e senza answer/mapping; reconciliation con request e tupla
-  candidata non vuota; answer con answer ref. Un indice
+  candidata non vuota; `ANSWERED` con FK alla dedicated reconciliation answer
+  e result terminale; `EXPIRED` senza answer ref. Un indice
   `(origin_request_ref,event_id)` e i link previous formano una sola catena
   append-only, senza fork;
 - `maintain_plan_late_session_reconciliations(reconciliation_request_id TEXT
@@ -569,19 +599,42 @@ v8 aggiunge, senza cambiare v1–v7:
   previous_chain_head_ref), FOREIGN KEY ... ON DELETE NO ACTION)`. CHECK e
   trigger richiedono tuple uguali, non vuote, ordinate e senza duplicati; ogni
   sessione deve essere same-subject, persisted, scope-eligible e unmapped;
-  update/delete sono vietati;
+  update/delete sono vietati. La request resta per sempre immutabile con
+  `status='REQUIRED'`: la chiusura logica esiste soltanto nella answer e nel
+  successivo evento di catena;
+- `maintain_plan_late_session_reconciliation_answers(answer_id TEXT PRIMARY KEY,
+  reconciliation_request_ref TEXT NOT NULL UNIQUE REFERENCES
+  maintain_plan_late_session_reconciliations(reconciliation_request_id) ON
+  DELETE NO ACTION, response_kind TEXT NOT NULL CHECK(response_kind IN
+  ('MANUAL_ASSOCIATION','SELECT_CANDIDATE','REJECT','NOT_PERFORMED',
+  'PERFORMED_NOT_SYNCHRONIZED','DONT_KNOW')), selected_session_ref TEXT,
+  actor TEXT NOT NULL CHECK(length(actor)>0), answered_at TEXT NOT NULL,
+  payload_schema_version TEXT NOT NULL CHECK(payload_schema_version='1'),
+  payload_json TEXT NOT NULL, audit_evidence_json TEXT NOT NULL,
+  FOREIGN KEY(selected_session_ref) REFERENCES maintain_plan_actual_sessions
+  (session_id) ON DELETE NO ACTION)`. CHECK e
+  trigger impongono `selected_session_ref IS NOT NULL` soltanto per
+  `MANUAL_ASSOCIATION|SELECT_CANDIDATE`, e in tal caso membership byte-esatta
+  nella `candidate_session_refs_json` congelata della request; per rejection e
+  ogni risposta non associativa deve essere null. Payload canonico e colonne
+  duplicano request, subject, snapshot, candidate tuple, actor, timestamp,
+  response e digest dell'evidence e devono coincidere. Indici su entrambe le FK,
+  `UNIQUE(reconciliation_request_ref)` e trigger append-only sono obbligatori;
+  questa relazione non può contenere answer di `maintain_plan_confirmations`;
 - `maintain_plan_matching_confirmation_resolutions(matching_result_ref TEXT
   PRIMARY KEY, prescription_mapping_ref TEXT NOT NULL UNIQUE,
   discovery_result_ref TEXT NOT NULL, discovery_confirmation_ref TEXT UNIQUE,
-  matching_confirmation_ref TEXT UNIQUE, actor TEXT NOT NULL
-  CHECK(length(actor)>0), confirmed_at TEXT NOT NULL, FOREIGN KEY ... ON DELETE
-  NO ACTION, CHECK((discovery_confirmation_ref IS NULL) <>
-  (matching_confirmation_ref IS NULL)))` come sidecar immutabile 1:1: le prime
-  tre FK puntano rispettivamente a result `MATCHED`, mapping
-  `ATHLETE_CONFIRMATION` e discovery originaria; l'unico confirmation ref punta
-  a `ANSWER SELECT_SNAPSHOT` dedicata per `ZERO`/`MULTIPLE` oppure alla risposta
-  v8 collegata alla request existing `maintain_plan_confirmations` per `SINGLE`;
-  payload, subject, snapshot e sessione devono coincidere tra tutte le righe;
+  matching_confirmation_ref TEXT UNIQUE, reconciliation_answer_ref TEXT UNIQUE,
+  actor TEXT NOT NULL CHECK(length(actor)>0), confirmed_at TEXT NOT NULL,
+  FOREIGN KEY ... ON DELETE NO ACTION, CHECK(((discovery_confirmation_ref IS NOT
+  NULL) + (matching_confirmation_ref IS NOT NULL) +
+  (reconciliation_answer_ref IS NOT NULL)) = 1))` come sidecar immutabile 1:1:
+  le prime tre FK puntano rispettivamente a result `MATCHED`, mapping
+  `ATHLETE_CONFIRMATION` e discovery/catena originaria; l'unico answer ref punta
+  a `ANSWER SELECT_SNAPSHOT` dedicata per `ZERO`/`MULTIPLE`, alla risposta v8
+  della confirmation existing per `SINGLE`, oppure alla dedicated answer della
+  reconciliation tardiva. Payload, subject, snapshot, sessione, actor e
+  timestamp devono coincidere tra tutte le righe;
 - un indice univoco v8 su `maintain_plan_prescription_mappings
   (actual_session_ref)`, oltre ai trigger append-only esistenti, per rendere
   fisica l'invariante di un solo mapping per sessione.
@@ -604,9 +657,15 @@ restituisce i record esistenti; nessun upsert distruttivo è ammesso.
 
 La creazione zero-sessioni inserisce result, request e, se già noto, scheduling
 expiry nello stesso commit. Sweep expiry, answer e reconciliation sono unit of
-work separate e concorrenti, sempre dopo rilettura della testa. Le guardie
-session-driven e window-driven precedono l'enumerazione/matcher, includono le
-due nuove tabelle e considerano gestita ogni relazione presente nella catena.
+work separate e concorrenti, sempre sotto `BEGIN IMMEDIATE` dopo rilettura della
+testa. Lo sweep globale, ordinato deterministicamente, committa prima di
+session-driven; session-driven committa prima di window-driven. Le guardie dei
+due percorsi precedono ogni matcher, includono request e answer reconciliation
+e considerano gestita ogni relazione presente nella catena. Il vincolo unico
+sul precedente head assicura un solo successor e, insieme a
+`UNIQUE(reconciliation_request_ref)` e all'indice mapping/sessione, una sola
+answer vincente e un solo mapping: retry byte-identici rileggono/no-op, answer
+divergenti o race perse falliscono chiuso senza record parziali.
 
 L'upgrade v7→v8 è una singola transazione `BEGIN IMMEDIATE`. Dopo aver creato
 le strutture, enumera in ordine byte UTF-8 di ID **ogni** snapshot v7 con
@@ -742,8 +801,13 @@ kind, subject e policy; `EXPIRED` include inoltre
 `maintain-plan:late-session-reconciliation:v1:sha256:<hash>` e include original
 result/request, previous head, snapshot, subject, scope e la tupla ordinata
 non vuota `candidate_session_ids`. La request di reconciliation deriva a sua
-volta dall'ID attempt e dalla stessa tupla; answer/result/mapping includono
-quell'ID request, actor e timestamp.
+volta dall'ID attempt e dalla stessa tupla. La dedicated answer usa namespace
+`maintain-plan:late-session-reconciliation-answer:v1:sha256:<hash>` e la
+preimage canonica contiene reconciliation request, response kind, selected
+session nullable, candidate tuple congelata, subject, actor, `answered_at`,
+versione payload e digest SHA-256 dell'audit evidence; result, mapping, sidecar
+e evento successor includono il suo `answer_id`. Nessuna identità dipende dallo
+stato mutabile della request.
 
 Vettori normativi aggiuntivi (`é` è U+00E9):
 
@@ -753,6 +817,9 @@ SHA-256: 6f688b8c61ceac7b3f0ac10e256b1672c25fb77ebd08e8609b83ff0e67788f04
 
 reconciliation preimage: {"candidate_session_ids":["session-late-é"],"matching_policy_id":"maintain-plan-matching","matching_policy_version":"1.0.0-draft","original_matching_result_id":"result-zero-é","original_request_id":"request-zero-é","previous_chain_head_id":"head-é","record_kind":"LATE_SESSION_RECONCILIATION","snapshot_id":"snapshot-é","subject_ref":"subject-é","sync_scope_id":"sync-late-é"}
 SHA-256: 29195d8db72c00728660ffbe84f0a628e24222d415da6f4c9ba8401bc0a401e4
+
+reconciliation answer preimage: {"actor":"athlete-é","answered_at":"2026-09-19T12:00:00Z","audit_evidence_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","candidate_session_ids":["session-late-é"],"payload_schema_version":"1","reconciliation_request_id":"reconciliation-é","response_kind":"MANUAL_ASSOCIATION","selected_session_id":"session-late-é","subject_ref":"subject-é"}
+SHA-256: 203dc37fe80846ca2a9a50342f705eb196f279ff95ca308296de875c629599ef
 ```
 
 Vettore normativo per il percorso zero-sessioni (`é` è U+00E9):
@@ -803,8 +870,9 @@ nessun lifecycle o grace period è inferito.
 ### 10.3 Finestra chiusa senza attività
 
 Dopo un sync riuscito che copre fino all'inizio del 19 settembre, una finestra
-terminata il 18 non ha sessioni coperte. Dopo il percorso session-driven, quello
-window-driven non chiama il matcher: costruisce il boundary outcome
+terminata il 18 non ha sessioni coperte. Dopo l'expiry pre-processing globale e
+il percorso session-driven, quello window-driven non chiama il matcher:
+costruisce il boundary outcome
 `CONFIRMATION_REQUIRED` e committa result e request esistente snapshot-centric.
 Lo stesso accade per prescrizioni `SINGLE`, `MULTISPORT` e `BRICK`; un retry
 dello stesso scope non duplica nulla.
@@ -873,11 +941,14 @@ mutano la request: una sola può vincere `UNIQUE(request_ref)`.
 
 Una request zero-sessioni per lo snapshot A non riceve risposta. Quando lo
 scope rende noto B, primo snapshot same-subject con inizio finestra successivo,
-viene congelato il gruppo di B. Prima di enumerare B, lo sweep rilegge la testa
+viene congelato il gruppo di B. Prima di qualunque processing session-driven o
+window-driven di B, lo sweep globale rilegge la testa
 e appende per A `NOT_EVALUABLE/UNANSWERED_BEFORE_NEXT_PRESCRIPTION`, senza
 answer né mapping e conservando warning/evidence. Soltanto il commit successivo
 consente il processing di B. Se B non era noto alla fase A di A, A restava
-legittimamente pending fino a questa sync. Un answer simultaneo e lo sweep
+legittimamente pending fino a questa sync. Anche se la sync importa una sessione
+per B, expiry A committa prima di discovery/result/mapping per B. Un answer
+simultaneo e lo sweep
 serializzano: il primo successore committato vince, il secondo rilegge e non
 crea una seconda testa.
 
@@ -888,9 +959,12 @@ associazione manuale. Una sync successiva persiste S; prima del percorso
 automatico, la guard trova la catena zero-sessioni (sia pending sia già
 expired/risolta), valida ownership e scope e congela `(S)` nella nuova
 reconciliation request. Solo questa request mostra `MANUAL_ASSOCIATION(S)`.
-L'accettazione crea un solo mapping `ATHLETE_CONFIRMATION` con link a result e
-request originali, request reconciliation, actor e timestamp; rifiuto o expiry
-chiudono `NOT_EVALUABLE`. Due sessioni tardive visibili nello stesso scope sono
+L'accettazione crea prima la dedicated reconciliation answer e poi un solo
+mapping `ATHLETE_CONFIRMATION`, result, sidecar ed evento successor con link a
+result e request originali, request/answer reconciliation, actor e timestamp;
+rifiuto o risposta non associativa persistono la answer con sessione null e
+chiudono `NOT_EVALUABLE` senza mapping, mentre expiry non crea answer. Due
+sessioni tardive visibili nello stesso scope sono
 ordinate e congelate insieme; una selezione fuori tupla fallisce chiusa. Le
 guardie session-driven e window-driven impediscono entrambe un mapping
 automatico concorrente.
@@ -913,8 +987,9 @@ indicizzati e ineleggibili.
 
 ### 11.1 Audit interno di coerenza
 
-L'audit normativo completo ha verificato: (1) ordine session-driven prima del
-window-driven e guardia sull'intera catena in ogni stato; (2) transizioni `ZERO`,
+L'audit normativo completo ha verificato: (1) ordine globale expiry
+pre-processing → session-driven → window-driven e guardia sull'intera catena in
+ogni stato; (2) transizioni `ZERO`,
 `SINGLE`, `MULTIPLE`, `MATCHED`, `CONFIRMATION_REQUIRED` e `NOT_EVALUABLE`;
 (3) confirmation snapshot-centric e discovery-specific senza riuso di shape
 incompatibili; (4) `SELECT_SNAPSHOT` confirmation-aware senza secondo giudizio
@@ -939,7 +1014,13 @@ del suo processing, incluso il caso successor non ancora noto; (19) request
 zero con tupla vuota priva di opzioni associative e reconciliation append-only
 con tupla non vuota e membership strict; (20) arrivo tardivo prima/dopo expiry,
 answer stale e race answer/reconciliation/expiry su una sola testa; (21) guard
-pre-matcher su entrambi i percorsi e indice one-mapping-per-session.
+pre-matcher su entrambi i percorsi e indice one-mapping-per-session; (22) ogni
+request v8 ha la propria answer compatibile, con FK immediate eseguibili e senza
+riuso cross-type; (23) membership exact/nullability delle answer reconciliation,
+request immutabile `REQUIRED`, closure append-only e ordine answer→mapping→
+result→sidecar→successor; (24) one-successor/one-winning-answer sotto
+`BEGIN IMMEDIATE`, inclusa la race expiry/answer/reconciliation e retry
+idempotenti.
 
 **Non resta alcuna decisione normativa bloccante.** Restano lavoro
 implementativo: definire modelli/codec, migrazione v8, repository, adapter dello

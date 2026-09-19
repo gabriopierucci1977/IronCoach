@@ -51,8 +51,11 @@ dangling, ambiguo o cross-subject fallisce chiuso. Quando è valido,
 `DIRECT_ID` resta source/evidence della discovery mentre il mapping usa l'enum
 esistente `AUTOMATIC`. Request e answer sono
 rivalidate in transazioni separate senza lock durante l'attesa; il
-presente documento non ne abilita il wiring. Expiry e reconciliation tardiva
-rivalidano inoltre ownership byte-per-byte di snapshot, subject, scope e ogni
+presente documento non ne abilita il wiring. La reconciliation tardiva usa una
+answer relation dedicata con FK alla propria request immutabile, membership
+same-subject esatta e closure append-only. L'expiry pre-processing committa
+prima di entrambi i percorsi; expiry e reconciliation tardiva rivalidano inoltre
+ownership byte-per-byte di snapshot, subject, scope e ogni
 sessione congelata sotto `BEGIN IMMEDIATE`; nessuna sessione cross-subject può
 essere offerta o selezionata e la guardia opera prima di entrambi i percorsi.
 

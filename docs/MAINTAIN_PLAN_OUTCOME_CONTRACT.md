@@ -558,7 +558,8 @@ ordine runtime, dry-run, transazioni e compatibilità legacy, è specificato nel
 regole di dominio di questa sezione restano normative e non sono sostituite da
 quel documento.
 
-In particolare, quel contratto definisce due invocazioni dopo un sync riuscito:
+In particolare, quel contratto definisce dopo un sync riuscito una fase
+obbligatoria di expiry pre-processing, committata prima delle due invocazioni:
 quella session-driven e quella prescription/window-driven per finestre chiuse
 senza sessione catturata. Definisce inoltre un set synchronization-wide,
 riservato al percorso senza sessione e composto **soltanto** da finestre
@@ -1701,8 +1702,13 @@ automatico. Dovranno appendere una reconciliation request con tupla candidata
 same-subject non vuota, canonica e congelata; solo questa nuova request potrà
 offrire associazione manuale e la scelta dovrà appartenere alla tupla. Una
 associazione accettata userà `ATHLETE_CONFIRMATION` e conserverà i link a
-result/request originali, reconciliation request, actor e timestamp. Rifiuto,
-expiry o risposta non associativa non produrranno mapping.
+result/request originali, reconciliation request, dedicated append-only answer,
+actor e timestamp. La request reconciliation resta immutabile `REQUIRED`; una
+relazione answer distinta, con FK alla request, congela response, sessione
+selezionata, actor, tempo, payload/versione ed evidence. La selezione deve essere
+membro esatto della tupla; rejection e risposte non associative richiedono
+sessione null. Rifiuto, expiry o risposta non associativa non produrranno
+mapping.
 
 Se mancherà una risposta prima della prescrizione successiva, il caso dovrà
 essere chiuso internamente come non valutabile, senza outcome definitivo e
@@ -1712,9 +1718,11 @@ ormai superata.
 
 La deadline è il primo inizio-finestra autorevole same-subject strettamente
 successivo alla fine della finestra originaria, includendo tutti i pari bordo.
-Se non è ancora noto, la request resta pending finché una sync lo scopre. Prima
-di enumerare o processare quel successore il percorso prescription/window-driven
-dovrà eseguire uno sweep che appende un result terminale `NOT_EVALUABLE`, senza
+Se non è ancora noto, la request resta pending finché una sync lo scopre. Dopo
+che il successor è noto ma prima sia del percorso session-driven sia di
+quello prescription/window-driven, il synchronization pre-processing dovrà
+eseguire e committare uno sweep che appende un result terminale
+`NOT_EVALUABLE`, senza
 answer né mapping, preservando warning ed evidence; request e result originari
 restano immutati. Answer, expiry e avvio reconciliation competeranno sotto
 `BEGIN IMMEDIATE` dopo rilettura della testa, così un solo successore sarà
