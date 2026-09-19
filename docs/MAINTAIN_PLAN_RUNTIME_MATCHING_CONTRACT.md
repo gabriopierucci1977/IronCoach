@@ -283,18 +283,44 @@ guardia precede sia candidate discovery sia qualunque chiamata al matcher.
 ## 5. Percorso prescription/window-driven: nessuna sessione catturata
 
 Per ogni snapshot del set synchronization-wide con
-`scheduled_window.end < coverage_end`, il
-boundary rilegge le sessioni same-subject dello **stesso scope** e già
-persistite, ordinate per `(start, session_id UTF-8)`. Non crea un
-`MatchingDiscoveryResult`: `ZERO` in discovery significa zero snapshot per
-una sessione esistente e non deve essere confuso con zero sessioni per uno
-snapshot. Dopo le guardie di catena definite sotto, se resta almeno una
-sessione persistita non gestita invoca una sola volta il matcher puro con lo
-snapshot e quella tupla non vuota. Se esistevano sessioni ma tutte le coppie
-sono già gestite, salta lo snapshot: non trasforma il filtro in un falso caso
-zero-sessioni.
+`scheduled_window.end < coverage_end`, il boundary apre `BEGIN IMMEDIATE`,
+rilegge lo snapshot e le sessioni same-subject dello **stesso scope** già
+persistite, ordinate per `(start, session_id UTF-8)`, e distingue due predicati
+che non sono intercambiabili:
 
-Se la tupla persistita originaria è vuota, il boundary **non invoca** il matcher di compatibilità.
+- **snapshot handled**: esiste già un artefatto autorevole che tratta proprio
+  quello snapshot oppure una sua relazione snapshot/sessione: mapping verso lo
+  snapshot, discovery originaria/derivata che contiene lo snapshot insieme alla
+  sessione, result/request zero-sessioni dello snapshot, reconciliation
+  collegata a quel result/request, o relativo artefatto terminale;
+- **session handled elsewhere**: la sessione ha mapping, discovery,
+  confirmation o reconciliation autorevole, ma nessuna di tali catene contiene
+  lo snapshot corrente. Questa sessione è esclusa dalla tupla dello snapshot,
+  però **non** rende lo snapshot handled.
+
+Il lookup snapshot-level avviene prima del filtro sessioni e nell'ordine fisso:
+(1) mapping per `prescription_snapshot_ref`; (2) discovery complete che
+contengono lo snapshot e la sessione; (3) result e request zero-sessioni per lo
+snapshot; (4) reconciliation e answer collegate; (5) eventi terminali delle
+relative catene. Entro ogni classe ordina per chiave primaria UTF-8 e ricalcola
+la testa unica della catena. Soltanto un artefatto trovato in questa ricerca,
+con ownership, FK, evidence e relazione esatta valide, consente di saltare lo
+snapshot o la coppia rappresentata. Un artefatto riferito soltanto a un'altra
+prescrizione non soddisfa mai il predicato snapshot-level.
+
+Se lo snapshot non è handled, il boundary costruisce la tupla **remaining**
+partendo dalle sessioni persistite dello scope ed escludendo quelle già gestite
+in modo autorevole da altre relazioni. Una sessione mappata o scoperta per
+un'altra prescrizione non viene reinterpretata come candidata dello snapshot
+corrente. Se `remaining` è non vuota, invoca una sola volta il matcher puro con
+lo snapshot e quella tupla. Se `remaining` è vuota e lo snapshot non è handled,
+entra invece obbligatoriamente nel boundary zero-sessioni sotto descritto,
+anche quando la tupla originaria conteneva sessioni tutte escluse. Non crea un
+`MatchingDiscoveryResult`: `ZERO` in discovery significa zero snapshot per una
+sessione esistente e non deve essere confuso con zero sessioni rimanenti per uno
+snapshot mai gestito.
+
+Se la tupla `remaining` è vuota, il boundary **non invoca** il matcher di compatibilità.
 Crea invece direttamente il deterministico outcome di assenza sessioni usando
 la rappresentazione `MatchingResult` snapshot-centric esistente, con
 `status=CONFIRMATION_REQUIRED`, `candidate_session_refs=[]`, candidate evidence
@@ -318,11 +344,29 @@ L'identità semantica del tentativo usa l'`evidence_fingerprint` del §9 e **non
 osservare la stessa evidence in uno scope sovrapposto restituisce gli stessi
 artefatti. Uno scope successivo può fissare l'expiry o avviare la reconciliation
 di una sessione tardiva secondo §§5.1–5.2, senza modificare né cancellare il
-precedente. Prima di creare il caso zero, il repository esegue la guard
-cross-scope del §4.1 e verifica globalmente che non esistano result con candidate
-session, mapping o catene che rendano lo snapshot già gestito. Questa verifica e
-l'insert sono atomici. Una risposta chiude la richiesta tramite un nuovo record
-append-only; non aggiorna il risultato.
+precedente. Prima di creare il caso zero, il repository applica la guard cross-scope
+del §4.1 alle sessioni ma decide lo skip esclusivamente con il predicato
+snapshot-level appena definito. Verifica globalmente che non esistano mapping,
+discovery, result/request zero-sessioni, reconciliation o artefatti terminali
+che trattino lo snapshot o una sua relazione; il fatto che tutte le sessioni
+siano gestite **altrove** non è uno skip. Lookup, filtro, ricalcolo di
+`remaining`, creazione deterministica di result/request e insert avvengono
+nella stessa `BEGIN IMMEDIATE`. Un writer concorrente viene quindi osservato al
+re-read: artefatto equivalente causa no-op, una relazione divergente fallisce
+chiusa. Una risposta chiude la richiesta tramite un nuovo record append-only;
+non aggiorna il risultato.
+
+Matrice normativa della decisione window-driven:
+
+| snapshot handled esatto | `remaining` dopo filtro | azione |
+|---|---:|---|
+| sì | qualunque | skip/restituisce la catena autorevole; nessun duplicato |
+| no | non vuota | matcher puro una volta sulla sola tupla `remaining` |
+| no | vuota, anche per filtro di sessioni gestite altrove | crea esattamente un result/request zero-sessioni |
+
+La matrice preserva sia la guard pre-matcher cross-scope sia l'invariante di un
+solo mapping per sessione: escludere una sessione già mappata evita di
+ricandidarla, ma non attribuisce il suo mapping a uno snapshot estraneo.
 
 Prima di processare ogni coppia snapshot/sessione, la stessa `BEGIN IMMEDIATE`
 ricerca deterministicamente **tutte** le catene discovery append-only della
@@ -610,6 +654,21 @@ v8 aggiunge, senza cambiare v1–v7:
   confirmation ref e applica membership `MULTIPLE` o regola same-scope
   `ZERO`. Trigger applicativi abortiscono se JSON, colonne e righe referenziate
   non soddisfano gli stessi predicati;
+- `maintain_plan_matching_discovery_memberships(discovery_result_ref TEXT
+  NOT NULL, prescription_snapshot_ref TEXT NOT NULL, actual_session_ref TEXT
+  NOT NULL, ordinal INTEGER NOT NULL CHECK(ordinal>=0), PRIMARY KEY
+  (discovery_result_ref,prescription_snapshot_ref,actual_session_ref), UNIQUE
+  (discovery_result_ref,ordinal), FOREIGN KEY ... ON DELETE NO ACTION)`,
+  append-only. Trigger verificano che righe e ordine ricostruiscano esattamente
+  `candidate_snapshot_refs` della discovery e la sua sessione. Sono obbligatori
+  gli indici `(prescription_snapshot_ref,actual_session_ref,
+  discovery_result_ref)` e `(actual_session_ref,prescription_snapshot_ref,
+  discovery_result_ref)`;
+- indici lookup window-driven `(prescription_snapshot_ref,matching_result_id)`
+  sui result, `(prescription_snapshot_ref,request_id)` sulle confirmation
+  snapshot-centric e quelli già definiti su mapping, reconciliation ed eventi.
+  Non è lecito scandire o interpretare parzialmente tuple JSON. Le query
+  seguono l'ordine §5 e poi PK UTF-8, senza filtro scope;
 - la tabella confirmation discovery del §6, indici per ogni FK e trigger
   append-only.
 - la tabella append-only `maintain_plan_matching_confirmation_answers` del §6,
@@ -778,7 +837,11 @@ ordinata di direct-evidence ID e relativi payload SHA-256. Campi null sono
 espliciti. Sono esclusi `sync_scope_ref`, tempo di discovery/commit e provenance.
 Il fingerprint congela quindi esattamente i dati che possono cambiare il giudizio,
 non il luogo in cui furono osservati. Per zero-sessioni usa session ID/digest null,
-`candidate_mode=ZERO_SESSION` e il solo snapshot indicizzato. Ogni identità
+`candidate_mode=ZERO_SESSION` e il solo snapshot indicizzato, sia quando nello
+scope non esiste alcuna sessione sia quando `remaining` diventa vuota dopo
+l'esclusione autorevole di sessioni gestite da altre relazioni. ID o digest di
+queste sessioni estranee non entrano nella preimage e non possono trasformare o
+duplicare l'identità snapshot-centric. Ogni identità
 iniziale di discovery/result/mapping incorpora questo fingerprint; un tentativo
 successivo incorpora anche `previous_terminal_head_ref`.
 
@@ -1054,7 +1117,24 @@ già il successore autorevole e il suo boundary è raggiunto, una sola
 `NOT_EVALUABLE/EXPIRED`; solo dopo quel commit il loop avanza a B e può creare la
 sua request. A non è mai osservabile pending mentre B viene processato.
 
-### 10.12 Origini della sidecar
+### 10.12 Multi-day con sessioni gestite altrove
+
+Uno scope multi-day contiene lo snapshot A, la cui finestra chiusa non ha
+attività, e sessioni già mappate o presenti in discovery per gli snapshot B e
+C. Il lookup snapshot-level non trova mapping, discovery, result/request
+zero-sessioni, reconciliation o terminale relativo ad A. Il filtro session-level
+esclude invece tutte le sessioni B/C, senza ricandidarle per A; `remaining=()`.
+Poiché A stesso non è handled, il boundary crea esattamente un `MatchingResult`
+zero-sessioni e una request per A. Retry dello stesso scope, scope sovrapposto o
+writer concorrente rileggono quell'identità e non ne creano una seconda.
+
+Nel caso complementare A possiede già il proprio result/request zero-sessioni,
+oppure una reconciliation o testa terminale raggiungibile dalla stessa catena.
+Il primo lookup marca A handled e lo salta, qualunque sia la presenza di
+sessioni B/C: non nasce un secondo result/request e nessuna sessione altrui
+viene reinterpretata.
+
+### 10.13 Origini della sidecar
 
 Una selezione discovery o una answer `SINGLE` crea una sidecar con
 `discovery_result_ref` non-null e il rispettivo unico confirmation ref. Una
@@ -1120,7 +1200,11 @@ fingerprint semantico indipendente dalla provenance; (26) creazione+expiry
 atomiche del predecessore appena creato prima di avanzare al successor; (27)
 sidecar con origini mutuamente esclusive e `discovery_result_ref` nullo soltanto
 per reconciliation; (28) tutti i valori confirmation verificati contro
-`models.py` e `schema.py`, incluso esclusivamente `NOT_SYNCHRONIZED`.
+`models.py` e `schema.py`, incluso esclusivamente `NOT_SYNCHRONIZED`;
+(29) predicati handled snapshot-level e session-level distinti, con empty tuple
+post-filtro che crea il caso zero per uno snapshot mai gestito, lookup
+indicizzato deterministico, idempotenza su scope sovrapposti e nessuna
+reinterpretazione delle sessioni legate ad altre prescrizioni.
 
 **Non resta alcuna decisione normativa bloccante.** Restano lavoro
 implementativo: definire modelli/codec, migrazione v8, repository, adapter dello

@@ -100,3 +100,8 @@ la request appena creata per A ha il successore B già noto e raggiunto, expiry 
 creazione di A committano nella stessa `BEGIN IMMEDIATE` prima di B. Una sidecar
 di late-session reconciliation richiede answer dedicata e discovery nulla;
 una sidecar discovery richiede discovery e vieta la reconciliation answer.
+Ownership uguale non rende intercambiabili relazioni diverse: una sessione
+same-subject già trattata per B viene esclusa dalla tupla di A, ma non prova che
+A sia gestito. Se A non possiede propri mapping/discovery, result/request
+zero-sessioni, reconciliation o terminali e la tupla residua è vuota, deve
+nascere l'unico outcome zero-sessioni di A.

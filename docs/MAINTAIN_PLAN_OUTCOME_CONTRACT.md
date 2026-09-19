@@ -1683,7 +1683,17 @@ zero candidate session, mapping nullo e `CONFIRMATION_REQUIRED`. Questo
 boundary outcome vale identicamente per prescrizioni `SINGLE`, `MULTISPORT` e
 `BRICK`; descrive assenza di attività e non introduce compatibilità o ranking.
 Il matcher puro sarà chiamato soltanto quando è fornita almeno una
-`ActualSession` persistita. Il testo obbligatorio dovrà essere:
+`ActualSession` persistita. La decisione deve distinguere lo snapshot già
+gestito dalla sessione gestita altrove. Per ogni snapshot si cercano prima
+mapping, discovery, result/request zero-sessioni, reconciliation e terminali che trattano quello snapshot o la sua
+specifica relazione. Soltanto questi artefatti consentono lo skip. Poi si
+escludono dalla tupla le sessioni già legate autorevolmente ad altre
+prescrizioni, senza reinterpretarle: se la tupla rimanente è vuota e lo snapshot
+non è mai stato gestito, il result/request zero-sessioni è comunque
+obbligatorio e unico. Scope sovrapposti e retry usano lo stesso lookup globale e
+la stessa identità snapshot-centric.
+
+Il testo obbligatorio dovrà essere:
 
 > Non ho trovato un'attività associabile alla seduta prevista
 
@@ -3468,3 +3478,8 @@ successore. Le resolution sidecar discovery richiedono la discovery; quelle da
 late-session reconciliation la vietano e usano esclusivamente la dedicated
 reconciliation answer, dalla quale rimane raggiungibile la catena originaria.
 Il solo spelling ammesso per la risposta esistente è `NOT_SYNCHRONIZED`.
+Nel percorso window-driven, una sessione già gestita per B non rende A gestito:
+se il filtro lascia `remaining=()` e A non ha un proprio mapping, discovery,
+zero-session result/request, reconciliation o terminale, A riceve esattamente
+un outcome zero-sessioni. Se una catena propria di A esiste già, A è invece
+saltato senza duplicazione.

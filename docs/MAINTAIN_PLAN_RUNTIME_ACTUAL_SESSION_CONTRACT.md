@@ -319,7 +319,12 @@ La relativa answer vive in una relazione append-only dedicata, valida membership
 della selezione e non muta mai la request `REQUIRED`.
 La request zero originaria resta vuota e non offre associazione manuale. Lo
 sweep expiry prescritto precede entrambi i percorsi, anche quando la stessa sync
-importa una sessione della prescrizione successiva.
+importa una sessione della prescrizione successiva. L'handled predicate di una
+`ActualSession` resta session-level: la esclude da nuove candidature se è già
+mappata o in una catena autorevole, ma non rende handled uno snapshot estraneo.
+Il percorso window-driven deve quindi creare il caso zero per uno snapshot mai
+gestito quando tutte le sessioni dello scope sono state escluse perché trattate
+da altre relazioni.
 
 ## 11. Criteri di accettazione
 
@@ -401,7 +406,8 @@ I test del futuro incremento DEVONO includere almeno:
 
 Prima di passare una `ActualSession` al matcher, il runtime v8 cerca senza filtro
 su synchronization scope mapping, discovery/confirmation e reconciliation che
-la contengono. Mapping o catena esistente rendono la relazione già gestita; una
+la contengono. Mapping o catena esistente rendono gestita la sessione o la sola relazione
+snapshot/sessione che rappresentano; non rendono gestiti snapshot estranei. Una
 request pending viene ripresa, una testa terminale con identica evidence non
 genera un nuovo tentativo. Soltanto evidence canonica realmente cambiata può
 creare un tentativo append-only collegato alla testa terminale precedente. Lo
