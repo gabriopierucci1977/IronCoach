@@ -310,7 +310,12 @@ indicizzati immediati attorno allo start. Questi vicini non entrano
 nell'enumerazione synchronization-wide, limitata alle finestre che intersecano
 la coverage. Il secondo percorso deve rispettare come già gestita ogni
 relazione presente in qualsiasi catena discovery, inclusa una testa terminale,
-e ogni confirmation committa la request prima dell'attesa umana.
+e ogni confirmation committa la request prima dell'attesa umana. Prima di
+processare una sessione tardiva entrambi i percorsi cercano una precedente
+catena snapshot-centric zero-sessioni: se esiste, vietano il mapping automatico
+e creano la reconciliation confirmation con tuple sessione non vuote congelate.
+La request zero originaria resta vuota e non offre associazione manuale. Lo
+sweep expiry prescritto precede il processing della successiva prescrizione.
 
 ## 11. Criteri di accettazione
 

@@ -1691,13 +1691,34 @@ svolta e dovrà chiedere se sia:
 
 - non svolta;
 - svolta ma non sincronizzata;
-- da associare manualmente.
+- non determinabile.
+
+La request iniziale congela una tupla sessioni vuota e non dovrà offrire
+associazione manuale. Se una sincronizzazione successiva persiste una o più
+sessioni eleggibili, entrambi i percorsi runtime dovranno intercettare la
+precedente catena zero-sessioni **prima** del matcher o di un mapping
+automatico. Dovranno appendere una reconciliation request con tupla candidata
+same-subject non vuota, canonica e congelata; solo questa nuova request potrà
+offrire associazione manuale e la scelta dovrà appartenere alla tupla. Una
+associazione accettata userà `ATHLETE_CONFIRMATION` e conserverà i link a
+result/request originali, reconciliation request, actor e timestamp. Rifiuto,
+expiry o risposta non associativa non produrranno mapping.
 
 Se mancherà una risposta prima della prescrizione successiva, il caso dovrà
 essere chiuso internamente come non valutabile, senza outcome definitivo e
 senza learning. Una sincronizzazione tardiva potrà aggiornare lo storico dopo
 conferma, ma non dovrà generare un nuovo report visibile sulla vecchia seduta
 ormai superata.
+
+La deadline è il primo inizio-finestra autorevole same-subject strettamente
+successivo alla fine della finestra originaria, includendo tutti i pari bordo.
+Se non è ancora noto, la request resta pending finché una sync lo scopre. Prima
+di enumerare o processare quel successore il percorso prescription/window-driven
+dovrà eseguire uno sweep che appende un result terminale `NOT_EVALUABLE`, senza
+answer né mapping, preservando warning ed evidence; request e result originari
+restano immutati. Answer, expiry e avvio reconciliation competeranno sotto
+`BEGIN IMMEDIATE` dopo rilettura della testa, così un solo successore sarà
+ammesso e retry/stale answer non potranno creare mapping duplicati.
 
 ### 5.6 Sessioni composte e consecutività
 
