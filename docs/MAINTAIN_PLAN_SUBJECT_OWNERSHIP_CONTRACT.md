@@ -40,6 +40,25 @@ Questo controllo non modifica il matcher puro, le sue finestre, i tie-break o
 gli stati. Non autorizza candidate discovery runtime né sintetizza
 `returned_prescription_id`.
 
+Il boundary che potrà usare questo binding per discovery e associazione è
+definito separatamente nel
+[contratto runtime matching](MAINTAIN_PLAN_RUNTIME_MATCHING_CONTRACT.md), che
+estende la stessa uguaglianza byte-per-byte allo scope di sincronizzazione e
+alle confirmation discovery e prescrive che v7→v8 indicizzi
+transazionalmente ogni snapshot ownership-bound valido, lasciando non
+indicizzati quelli legacy con ownership nulla. Un direct ID dichiarato ma
+dangling, ambiguo o cross-subject fallisce chiuso. Quando è valido,
+`DIRECT_ID` resta source/evidence della discovery mentre il mapping usa l'enum
+esistente `AUTOMATIC`. Request e answer sono
+rivalidate in transazioni separate senza lock durante l'attesa; il
+presente documento non ne abilita il wiring. La reconciliation tardiva usa una
+answer relation dedicata con FK alla propria request immutabile, membership
+same-subject esatta e closure append-only. L'expiry pre-processing committa
+prima di entrambi i percorsi; expiry e reconciliation tardiva rivalidano inoltre
+ownership byte-per-byte di snapshot, subject, scope e ogni
+sessione congelata sotto `BEGIN IMMEDIATE`; nessuna sessione cross-subject può
+essere offerta o selezionata e la guardia opera prima di entrambi i percorsi.
+
 ## 4. Persistenza, retry e idempotenza
 
 La migrazione v7 è append-only: aggiunge una colonna `subject_ref` nullable a
@@ -68,3 +87,21 @@ validazione fail-closed e wiring dell'identità autorevole nella cattura della
 prescrizione. Restano fuori scope: modifiche al matcher, candidate discovery,
 evaluation, reporting, learning, modifica del piano e Coach Engine.
 
+### Addendum normativo v8 — overlap, expiry e origine confirmation
+
+La verifica ownership v8 è globale rispetto agli scope sovrapposti: la guard
+pre-matcher usa `actual_session_ref` e le catene autorevoli, non
+`sync_scope_ref`, per stabilire se una relazione è già gestita. Il fingerprint
+semantico include subject, payload canonici, finestre, candidate e direct
+evidence, ma esclude la provenance dello scope.
+
+I gruppi same-subject sono processati cronologicamente e in ordine ID UTF-8; se
+la request appena creata per A ha il successore B già noto e raggiunto, expiry e
+creazione di A committano nella stessa `BEGIN IMMEDIATE` prima di B. Una sidecar
+di late-session reconciliation richiede answer dedicata e discovery nulla;
+una sidecar discovery richiede discovery e vieta la reconciliation answer.
+Ownership uguale non rende intercambiabili relazioni diverse: una sessione
+same-subject già trattata per B viene esclusa dalla tupla di A, ma non prova che
+A sia gestito. Se A non possiede propri mapping/discovery, result/request
+zero-sessioni, reconciliation o terminali e la tupla residua è vuota, deve
+nascere l'unico outcome zero-sessioni di A.

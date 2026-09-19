@@ -299,6 +299,33 @@ Qualunque mapping persistito DEVE ora superare il confronto esatto e
 fail-closed previsto dal contratto dedicato; i record legacy senza binding non
 sono eleggibili.
 
+Ordine runtime, candidate discovery e transazione del futuro collegamento sono
+definiti dal
+[contratto runtime matching](MAINTAIN_PLAN_RUNTIME_MATCHING_CONTRACT.md), che
+richiede un `SynchronizationCoverage` autorevole e limitato e ordina expiry
+pre-processing committato, percorso session-driven e poi
+prescription/window-driven, senza
+estendere il perimetro di cattura di questo documento. Per ciascuna sessione
+usa tutte le finestre contenenti; soltanto quando queste mancano usa i vicini
+indicizzati immediati attorno allo start. Questi vicini non entrano
+nell'enumerazione synchronization-wide, limitata alle finestre che intersecano
+la coverage. Il secondo percorso deve rispettare come già gestita ogni
+relazione presente in qualsiasi catena discovery, inclusa una testa terminale,
+e ogni confirmation committa la request prima dell'attesa umana. Prima di
+processare una sessione tardiva entrambi i percorsi cercano una precedente
+catena snapshot-centric zero-sessioni: se esiste, vietano il mapping automatico
+e creano la reconciliation confirmation con tuple sessione non vuote congelate.
+La relativa answer vive in una relazione append-only dedicata, valida membership
+della selezione e non muta mai la request `REQUIRED`.
+La request zero originaria resta vuota e non offre associazione manuale. Lo
+sweep expiry prescritto precede entrambi i percorsi, anche quando la stessa sync
+importa una sessione della prescrizione successiva. L'handled predicate di una
+`ActualSession` resta session-level: la esclude da nuove candidature se è già
+mappata o in una catena autorevole, ma non rende handled uno snapshot estraneo.
+Il percorso window-driven deve quindi creare il caso zero per uno snapshot mai
+gestito quando tutte le sessioni dello scope sono state escluse perché trattate
+da altre relazioni.
+
 ## 11. Criteri di accettazione
 
 Il futuro servizio P0 è conforme soltanto se:
@@ -374,3 +401,15 @@ I test del futuro incremento DEVONO includere almeno:
 - tentativi di usare qualunque ID come returned prescription ID o di creare
   matching/`PrescriptionMapping`: vietati;
 - deployment single-athlete: prova che non viene trattato come ownership.
+
+### Addendum normativo v8 — sessione già gestita
+
+Prima di passare una `ActualSession` al matcher, il runtime v8 cerca senza filtro
+su synchronization scope mapping, discovery/confirmation e reconciliation che
+la contengono. Mapping o catena esistente rendono gestita la sessione o la sola relazione
+snapshot/sessione che rappresentano; non rendono gestiti snapshot estranei. Una
+request pending viene ripresa, una testa terminale con identica evidence non
+genera un nuovo tentativo. Soltanto evidence canonica realmente cambiata può
+creare un tentativo append-only collegato alla testa terminale precedente. Lo
+scope resta provenance e l'indice univoco garantisce un solo mapping per
+sessione anche tra coverage sovrapposte.
