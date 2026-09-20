@@ -426,3 +426,12 @@ esatto di discipline o sostituzioni autorizzate, oltre alla finestra inclusiva.
 Un unico caso compatibile può creare il normale mapping automatico; mismatch o
 ambiguità richiedono conferma e struttura insufficiente è `NOT_EVALUABLE` con
 reason esplicita. Il feature resta disabilitato finché quel branch non esiste.
+
+### Addendum normativo v8 — aggregazione per snapshot
+
+Una `ActualSession` non viene più valutata mediante chiamate singleton per ogni
+snapshot. Il futuro boundary raccoglie i candidate snapshot di tutte le
+sessioni coperte, deduplica la worklist, e per ogni snapshot invoca una volta il
+matcher con la tupla completa same-subject ordinata. Prima di qualsiasi mapping
+rilegge sia la sessione sia lo snapshot: ciascun lato può partecipare ad al più
+un mapping; catene precedenti su qualunque lato vengono osservate o riprese.

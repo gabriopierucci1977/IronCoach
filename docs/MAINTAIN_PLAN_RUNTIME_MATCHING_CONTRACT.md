@@ -167,28 +167,62 @@ fuori-finestra, ma mantengono la cardinalità limitata; non sono tolleranza,
 ranking o scansione storica. Il set synchronization-wide resta disponibile al
 solo percorso senza sessione del §5 e non viene unito a questo set.
 
-## 4. Percorso session-driven e discovery
+## 4. Percorso session-driven e discovery snapshot-centric
 
-Per una sessione `S` coperta dallo scope, il repository rilegge `S`, verifica
-che `S.subject_ref == scope.subject_ref` byte-per-byte e carica **soltanto** il
-candidate set proprio di `S` dal §3.3. Senza direct ID risolto invoca il futuro
-matcher puro conforme al contratto composition-aware del §4.1 separatamente
-per ogni snapshot. Fino a quando
-`backend.maintain_plan.matching_service.match` non implementa quel contratto,
-il feature flag DEVE restare disabilitato: invocare oggi il matcher invariato
-su un `MULTISPORT` valido è esplicitamente vietato.
+Il percorso session-driven **non** è un ciclo che esegue
+`match(snapshot, (S,))` indipendentemente per ogni coppia. In una singola
+sincronizzazione costruisce prima, per tutte le sessioni coperte dello stesso
+soggetto, i candidate set del §3.3 e congela le discovery `ZERO`, `SINGLE` o
+`MULTIPLE` relative alla scelta dello snapshot. Una `MULTIPLE` snapshot-side
+non viene risolta scegliendo il primo snapshot: resta una discovery
+`CONFIRMATION_REQUIRED` e tutte le sue coppie sono handled fino alla risposta
+umana o direct-ID autorevole.
 
-- zero snapshot produce `MatchingDiscoveryResult.ZERO`, non un
+Dalle relazioni non già handled ricava poi una **worklist di snapshot**: unione
+deduplicata dei candidate snapshot, ordinata per
+`(scheduled_window.start, prescription_snapshot_id UTF-8)`. Ciascuno snapshot
+compare al massimo una volta per synchronization, anche se è candidato di più
+sessioni. Per ogni snapshot `P`, sotto `BEGIN IMMEDIATE`, il repository:
+
+1. applica le guardie simmetriche del §4.2 sia per `actual_session_ref` sia per
+   `prescription_snapshot_ref`;
+2. carica dal perimetro autorevole dello scope la tupla **completa** di tutte e
+   sole le sessioni same-subject eleggibili per `P` secondo le regole
+   scope/window/candidate dei §§3.1–3.3, senza perdere sessioni soltanto perché
+   incompatibili;
+3. deduplica per `session_id`, valida payload e ownership e ordina la tupla per
+   `(start, session_id UTF-8)`;
+4. invoca il futuro matcher puro **esattamente una volta** come
+   `match(P, tuple_completa)`. È vietato decomporla in chiamate singleton,
+   fermarsi alla prima sessione o riprovare lo stesso snapshot più avanti nel
+   medesimo sync.
+
+Il matcher valuta la compatibilità di ogni membro senza ranking. Zero sessioni
+post-filtro non viene deciso qui: si applica il predicato snapshot-level del §5
+e, soltanto se `P` è realmente non gestito, il caso viene deferito al percorso
+window-driven zero-sessioni. Con una sola sessione compatibile si crea il
+normale mapping automatico anche se altre sessioni della tupla sono
+incompatibili. Con almeno due compatibili si crea **un solo** `MatchingResult`
+`CONFIRMATION_REQUIRED` e una sola request, con l'intera tupla canonica
+congelata in `candidate_session_ids`/evidence; non nasce alcun mapping prima
+della selezione. L'athlete può in seguito selezionare esattamente un membro di
+quella tupla congelata: il percorso confirmation-aware crea un solo mapping
+verso quel membro, senza rieseguire il matcher. Zero compatibili conserva
+l'esito domain previsto dal matcher. Sono vietati ranking, fuzzy matching,
+tie-break impliciti e first-session-wins.
+
+La discovery snapshot-side conserva comunque la sua cardinalità reale:
+
+- zero snapshot per una sessione produce `MatchingDiscoveryResult.ZERO`, non un
   `MatchingResult`;
-- uno produce `SINGLE` e il `MatchingResult` puro;
-- almeno due produce `MULTIPLE`; gli esiti per-snapshot sono evidence
-  transitoria, non risultati pubblicati, e nessun mapping viene persistito.
+- uno produce `SINGLE` e rende la coppia disponibile alla worklist;
+- almeno due produce `MULTIPLE`; nessun risultato per-snapshot o mapping viene
+  pubblicato prima della risoluzione autorevole.
 
-`ZERO` e `MULTIPLE` hanno `CONFIRMATION_REQUIRED`. Nessun primo elemento,
-ranking, fuzzy match o tie-break è ammesso. Un direct ID esplicito, valido,
-same-subject e risolto univocamente seleziona lo snapshot indicato anche in un
-set multiplo. Tutti gli altri casi direct-ID falliscono chiusi secondo il
-§3.3: non è lecito degradarli a una scelta umana.
+Un direct ID valido conserva l'intera evidence e seleziona autorevolmente lo
+snapshot; quella relazione entra nella worklist dello snapshot selezionato. Un
+ID mancante, dangling, ambiguo, indecodificabile o cross-subject fallisce
+chiuso come nel §3.3.
 
 ```yaml
 matching_discovery_result:
@@ -213,48 +247,48 @@ matching_discovery_result:
   provenance: object
 ```
 
-Candidate ed evidence hanno uguale cardinalità e ordine. `ZERO` richiede
-entrambe vuote, `SINGLE` una, `MULTIPLE` almeno due. La matrice normativa
-completa è:
+Candidate ed evidence hanno uguale cardinalità e ordine. Per la scelta
+snapshot-side vale questa matrice; la kind conserva sempre la cardinalità
+congelata (`ZERO=0`, `SINGLE=1`, `MULTIPLE>=2`):
 
-| kind | resolution status | `matching_result_ref` | `prescription_mapping_ref` | mapping method | confirmation mechanism |
-|---|---|---|---|---|---|
-| `ZERO` | `CONFIRMATION_REQUIRED` | null | null | — | discovery-specific §6 |
-| `ZERO` | `NOT_EVALUABLE` (risposta non selettiva) | null | null | — | discovery-specific §6 |
-| `ZERO` | `MATCHED` | non-null | non-null | `ATHLETE_CONFIRMATION` | `SELECT_SNAPSHOT` same-scope §6 |
-| `SINGLE` | `MATCHED` automatico/direct ID | non-null | non-null | `AUTOMATIC` | nessuna |
-| `SINGLE` | `MATCHED` derivato | non-null | non-null | `ATHLETE_CONFIRMATION` | existing MatchingResult confirmation |
-| `SINGLE` | `CONFIRMATION_REQUIRED` | **non-null** | null | — | existing `maintain_plan_confirmations` sul result |
-| `SINGLE` | `NOT_EVALUABLE` | non-null | null | — | risposta existing MatchingResult confirmation |
-| `MULTIPLE` | `CONFIRMATION_REQUIRED` | null | null | — | discovery-specific §6 |
-| `MULTIPLE` | `NOT_EVALUABLE` (risposta non selettiva) | null | null | — | discovery-specific §6 |
-| `MULTIPLE` | `MATCHED` direct ID | non-null | non-null | `AUTOMATIC` | nessuna; `resolution_source=DIRECT_ID` |
-| `MULTIPLE` | `MATCHED` selezione umana | non-null | non-null | `ATHLETE_CONFIRMATION` | `SELECT_SNAPSHOT` §6 |
+| kind | resolution | result ref | mapping ref | meccanismo |
+|---|---|---|---|---|
+| `ZERO` | `CONFIRMATION_REQUIRED` | null | null | discovery confirmation |
+| `ZERO` | `NOT_EVALUABLE` | null | null | risposta non selettiva |
+| `ZERO` | `MATCHED` | non-null | non-null | `SELECT_SNAPSHOT` |
+| `SINGLE` | `MATCHED` | non-null | non-null | automatic/direct ID o confirmation |
+| `SINGLE` | `CONFIRMATION_REQUIRED` | non-null | null | existing result confirmation |
+| `SINGLE` | `NOT_EVALUABLE` | non-null | null | existing result confirmation |
+| `MULTIPLE` | `CONFIRMATION_REQUIRED` | null | null | discovery confirmation |
+| `MULTIPLE` | `NOT_EVALUABLE` | null | null | risposta non selettiva |
+| `MULTIPLE` | `MATCHED` | non-null | non-null | direct ID o `SELECT_SNAPSHOT` |
 
-La kind descrive sempre la cardinalità dell'evidence inizialmente congelata,
-non il numero di snapshot scelti in seguito. `selected_snapshot_ref` e
-`resolution_source` sono non-null esattamente per
-`MATCHED`: la source è `AUTOMATIC` solo per `SINGLE`, mentre `DIRECT_ID` e
-`ATHLETE_CONFIRMATION` sono lecite per ogni kind. Per `MULTIPLE/MATCHED`, lo
-snapshot selezionato DEVE appartenere ai `candidate_snapshot_refs` congelati;
-per `ZERO/MATCHED` deve essere lo snapshot same-scope validato ammesso dal §6.
-Una source `DIRECT_ID` richiede inoltre
-direct evidence strict valida e same-subject che risolva proprio quello
-snapshot. Candidate refs/evidence di un `MULTIPLE` restano almeno due e non
-sono mai riscritti per simulare `SINGLE`. Ogni altra combinazione è vietata dai
-CHECK v8. Un discovery derivato da
-risposta ha `previous_discovery_result_ref` e precisamente uno tra
-`discovery_confirmation_ref` (solo origine `ZERO`/`MULTIPLE`) e
-`matching_confirmation_ref` (solo origine `SINGLE`); quello iniziale ha tutti
-e tre null. In particolare il result puro `CONFIRMATION_REQUIRED` di un
-`SINGLE` non viene mai scollegato dalla discovery.
+`MATCHED` richiede `selected_snapshot_ref` e `resolution_source`; la selezione
+deve appartenere alla tupla congelata (salvo la regola same-scope già definita
+per `ZERO`). `DIRECT_ID` richiede evidence strict e usa mapping method
+`AUTOMATIC`; la selezione umana usa `ATHLETE_CONFIRMATION`. I ref confirmation
+restano mutuamente esclusivi e il result `CONFIRMATION_REQUIRED` di `SINGLE`
+resta collegato alla discovery.
 
-Con direct ID validato, una singola `BEGIN IMMEDIATE` rilegge sessione, target
-e intero candidate set congelato, precalcola gli ID, inserisce mapping prima del
-result per le FK immediate e infine la discovery terminale. Non nasce una
-confirmation né una sidecar; result, mapping e discovery citano la stessa
-direct evidence e selezione. Retry equivalente restituisce la catena esistente;
-una diversa risoluzione dello stesso ID o un mapping concorrente rollbacka.
+Per il risultato snapshot-centric session-side vale inoltre questa matrice
+normativa:
+
+| sessioni compatibili nella tupla completa | outcome | mapping prima della risposta | candidate tuple pubblicata |
+|---:|---|---|---|
+| 0 | `CONFIRMATION_REQUIRED` o `NOT_EVALUABLE` secondo il matcher | nessuno | intera tupla canonica |
+| 1 | `MATCHED` automatico | esattamente uno | intera tupla canonica |
+| >=2 | `CONFIRMATION_REQUIRED` | nessuno | intera tupla canonica |
+| >=2, selezione athlete valida | `MATCHED` confirmation-aware | esattamente uno verso il membro selezionato | tupla originaria immutata |
+
+La presenza di sessioni incompatibili non sopprime l'unica compatibile. Ogni
+result/mapping derivato cita lo snapshot, la tupla congelata e l'evidence
+fingerprint; una selezione fuori tupla o divergente fallisce chiusa.
+
+Con direct ID validato, una singola `BEGIN IMMEDIATE` rilegge entrambi i lati,
+l'intero candidate set e le guardie del §4.2, precalcola gli ID, inserisce il
+mapping prima del result per le FK immediate e infine la discovery terminale.
+Retry equivalente restituisce la stessa catena; una diversa risoluzione o un
+mapping concorrente su **uno qualunque dei due lati** rollbacka.
 
 ### 4.1 Contratto puro composition-aware
 
@@ -307,35 +341,46 @@ restano invece errori tecnici fail-closed e rollbackano: non vengono trasformati
 in outcome di dominio. Il direct-ID strict conserva il percorso autorevole del
 §4 e non altera queste regole per il caso senza direct ID.
 
-### 4.2 Guard pre-matcher cross-scope e identità semantica
+### 4.2 Guard pre-matcher simmetrica, cross-scope e identità semantica
 
-Prima di invocare il matcher per **ogni** `ActualSession`, una `BEGIN IMMEDIATE`
-rilegge artefatti autorevoli senza alcun filtro su `sync_scope_ref`. L'ordine di
-lookup è fisso: (1) mapping per `actual_session_ref`; (2) origini e teste di ogni
-catena discovery che contiene la sessione; (3) request/answer confirmation
-pending; (4) catene zero-sessioni e reconciliation tardive pending o terminali
-che contengono la coppia sessione/snapshot. Entro ciascun gruppo l'ordine è per
-ID UTF-8; FK, ownership, link, cardinalità e testa unica vengono rivalidati.
+Prima di inserire uno snapshot nella worklist e ancora sotto la
+`BEGIN IMMEDIATE` che precede il matcher, il repository esegue lookup
+**indipendenti su entrambi i lati**, senza filtro su `sync_scope_ref`:
 
-Se esiste un mapping, la sessione è gestita: si restituisce quel mapping e non si
-invoca il matcher né si tenta un secondo mapping. Se esiste una catena
-irrisolta, si riprende o si espone **quella** request/testa, senza creare una
-confirmation parallela. Una reconciliation pending o terminale rende gestita la
-relazione anche se nacque in un altro scope. Se la testa terminale non ha
-mapping e il fingerprint congelato coincide con quello corrente, il tentativo è
-un no-op. `sync_scope_ref` viene conservato come provenienza dell'osservazione,
-ma non rende nuova una relazione semanticamente già gestita.
+1. mapping per `actual_session_ref` e mapping per
+   `prescription_snapshot_ref`;
+2. discovery membership per sessione e per snapshot;
+3. sidecar result-snapshot, confirmation pending/answered e catene
+   zero-sessioni o reconciliation per ciascun lato;
+4. teste terminali e precedenti evidence fingerprint.
 
-Un nuovo tentativo append-only è lecito soltanto dopo una testa terminale senza
-mapping e quando l'evidence autorevole produce un fingerprint diverso. Il nuovo
-record deve citare `previous_terminal_head_ref`, il fingerprint precedente e
-quello nuovo; non riapre o muta la catena. Un fingerprint uguale con payload
-divergente, catene multiple, fork, mapping discordanti o più request pending
-falliscono chiusi. Il vincolo univoco su `(actual_session_ref,
-previous_terminal_head_ref, evidence_fingerprint)` e quello one-mapping-per-
-session decidono le race: sotto `BEGIN IMMEDIATE` il primo commit vince, un
-retry equivalente rilegge/no-op e un concorrente divergente rollbacka. Questa
-guardia precede sia candidate discovery sia qualunque chiamata al matcher.
+Ogni lookup usa l'indice relazionale v8, poi ID UTF-8; tutte le FK, ownership,
+membership, tuple congelate e teste uniche sono rivalidate. Se la sessione è
+già mappata, si osserva quel mapping e non la si valuta per un altro snapshot.
+Se lo snapshot è già mappato, si osserva quel mapping e non lo si valuta per
+un'altra sessione. Se uno dei due lati ha discovery, result, confirmation,
+catena zero-sessioni o reconciliation pending/terminale, si riprende o osserva
+quella catena: non se ne crea una parallela. Una relazione rappresentata resta
+handled anche in scope sovrapposti successivi.
+
+Un mapping trovato da un lato deve essere ritrovato identico dall'altro. Due
+mapping discordanti per la stessa sessione o snapshot, una catena forked, una
+membership incoerente o una request parallela sono corruzione fail-closed. Una
+testa terminale non mappata con lo stesso fingerprint rende il tentativo no-op;
+un nuovo tentativo append-only è lecito soltanto per evidence autorevole
+realmente diversa e cita il precedente head. `sync_scope_ref` è sola
+provenienza e non cambia l'identità semantica.
+
+Subito prima di inserire qualunque `PrescriptionMapping`, la medesima
+`BEGIN IMMEDIATE` rilegge nuovamente **sia** `actual_session_ref` **sia**
+`prescription_snapshot_ref`. Se nessuno è occupato, l'insert può procedere. Se
+esiste la stessa mapping canonica (stesso ID, sessione, snapshot, subject,
+metodo ed evidence), il retry la riusa idempotentemente. Se uno dei due lati è
+già associato diversamente, rollbacka senza result/discovery parziali. Gli
+indici univoci sui due riferimenti decidono anche la race: un solo concorrente
+vince; il perdente equivalente rilegge/restituisce, quello confliggente fallisce
+chiuso. Queste guardie precedono ogni discovery, chiamata al matcher, risposta
+umana e percorso window-driven.
 
 ## 5. Percorso prescription/window-driven: nessuna sessione catturata
 
@@ -954,9 +999,11 @@ v8 aggiunge, senza cambiare v1–v7:
   raggiungibile e validato tramite answer → reconciliation request → original
   result/request; non viene fabbricata una discovery. Payload, subject,
   snapshot, sessione, actor e timestamp devono coincidere tra tutte le righe;
-- un indice univoco v8 su `maintain_plan_prescription_mappings
-  (actual_session_ref)`, oltre ai trigger append-only esistenti, per rendere
-  fisica l'invariante di un solo mapping per sessione.
+- due indici univoci v8 su `maintain_plan_prescription_mappings`: uno su
+  `(actual_session_ref)` e uno, simmetrico, su
+  `(prescription_snapshot_ref)`. Rendono fisica la relazione uno-a-uno: una
+  sessione non può riferire più snapshot e uno snapshot non può riferire più
+  sessioni. Entrambi sono verificati insieme ai trigger append-only.
 
 Le FK immediate già presenti in `schema.py` sono state auditate: mapping punta
 subito a snapshot e sessione, mentre result `MATCHED` punta subito al mapping;
@@ -1002,7 +1049,7 @@ session-driven; session-driven committa prima di window-driven. Le guardie dei
 due percorsi precedono ogni matcher, includono request e answer reconciliation
 e considerano gestita ogni relazione presente nella catena. Il vincolo unico
 sul precedente head assicura un solo successor e, insieme a
-`UNIQUE(reconciliation_request_ref)` e all'indice mapping/sessione, una sola
+`UNIQUE(reconciliation_request_ref)` e agli indici mapping/sessione e mapping/snapshot, una sola
 answer vincente e un solo mapping: retry byte-identici rileggono/no-op, answer
 divergenti o race perse falliscono chiuso senza record parziali.
 
@@ -1075,9 +1122,14 @@ canonico strict già persistito, non del JSON ricevuto dal client. Duplicate-ID,
 digest mismatch e ownership mismatch sono pertanto conflitti distinti e
 deterministici, non occasioni per sostituire la riga.
 
-Nella stessa validazione, eventuali mapping v7 duplicati per sessione o
-resolution metadata contraddittori abortiscono l'upgrade prima di creare
-l'indice univoco. La sidecar confirmation nasce vuota: popolare l'indice
+Nella stessa validazione, **prima** di creare gli indici univoci, la migrazione
+raggruppa i mapping v7 prima per `actual_session_ref` e poi per
+`prescription_snapshot_ref`, in ordine byte UTF-8, e richiede cardinalità al
+massimo uno in entrambe le direzioni. Duplicati per sessione, duplicati per
+snapshot, coppie discordanti, ownership o resolution metadata contraddittori
+abortiscono e rollbackano l'intero upgrade v7→v8; non è ammesso scegliere o
+cancellare una riga legacy. Solo dopo questa validazione crea entrambi gli
+indici univoci e ripete i conteggi/`foreign_key_check` prima di impostare v8. La sidecar confirmation nasce vuota: popolare l'indice
 finestre è struttura obbligatoria, mentre sintetizzare conferme storiche è
 vietato.
 
@@ -1090,8 +1142,9 @@ produce un nuovo risultato `MATCHED` e mapping con
 Una risoluzione direct-ID produce invece un mapping
 `resolution_method=AUTOMATIC`; la provenienza `DIRECT_ID` rimane distinta nella
 discovery, nel result e nell'evidence, senza estendere l'enum o i CHECK v1–v7.
-Un indice univoco sul mapping per `actual_session_ref` e la verifica preventiva
-nella transazione impediscono un secondo mapping. Retry identico restituisce la
+Gli indici univoci sui mapping per `actual_session_ref` e per
+`prescription_snapshot_ref`, insieme alla rilettura preventiva di entrambi i
+lati nella transazione, impediscono un secondo mapping in qualunque direzione. Retry identico restituisce la
 coppia esistente; contenuto divergente rollbacka.
 «Non svolta», «non sincronizzata» e «non lo so» non producono mapping.
 
@@ -1528,6 +1581,51 @@ ID con digest diverso fallisce; due writer concorrenti non possono committare
 un result orfano. Guard e discovery trovano `R` mediante la sidecar, senza
 estrarre `prescription_snapshot_ref` dal JSON.
 
+
+### 10.20 Due sessioni compatibili per uno snapshot
+
+Lo snapshot P è candidato per S1 e S2 nello stesso scope; entrambe sono
+same-subject, in finestra e compatibili. La worklist contiene P una sola volta e
+il matcher riceve `(S1,S2)` in ordine `(start, session_id UTF-8)`. Pubblica un
+solo result/request `CONFIRMATION_REQUIRED` con la tupla completa e nessun
+mapping. Soltanto una selezione athlete valida può creare un mapping verso S1
+o S2; l'altra sessione e P restano protetti dalla catena.
+
+### 10.21 Una sessione compatibile e una incompatibile
+
+Per P la tupla completa è `(S1,S2)`: S1 soddisfa tutti i predicati e S2 no. Il
+matcher viene chiamato una volta, non due, e produce il mapping automatico
+univoco `P↔S1`; S2 non sopprime il match e non può acquisire P in seguito.
+
+### 10.22 Snapshot già mappato in scope sovrapposti
+
+Lo scope X ha committato `P↔S1`. Lo scope Y sovrapposto include P e S2. La
+guardia per `prescription_snapshot_ref` trova il mapping prima della worklist,
+lo rilegge anche dal lato sessione e osserva/riusa la relazione: P non viene
+valutato né mappato a S2 e non nasce una catena parallela.
+
+### 10.23 Due selezioni concorrenti sullo stesso snapshot
+
+Due transazioni tentano contemporaneamente `P↔S1` e `P↔S2`. Ciascuna apre
+`BEGIN IMMEDIATE` e rilegge entrambi i lati. Una sola inserisce; l'indice unico
+su `prescription_snapshot_ref` rende l'altra confliggente e questa rollbacka
+senza result o sidecar parziali. Non esiste first-session-wins applicativo: il
+solo vincitore possibile deriva dalla risposta/autorizzazione già validata.
+
+### 10.24 Retry della stessa mapping canonica
+
+Un retry di `P↔S1` trova lo stesso mapping ID e gli stessi subject, metodo,
+evidence e riferimenti sui due lookup. Rilegge e restituisce quel record senza
+insert. Una variazione di sessione, snapshot, metodo o digest è conflitto
+fail-closed, non un retry.
+
+### 10.25 Upgrade con mapping legacy duplicate per snapshot
+
+In v7 esistono `P↔S1` e `P↔S2`. La validazione raggruppata per
+`prescription_snapshot_ref` rileva cardinalità due prima di creare gli indici;
+l'intera migrazione v7→v8 rollbacka e `user_version` resta invariato. Nessuna
+riga viene scelta, cancellata o riscritta.
+
 ## 11. Errori, upgrade e decisioni residue
 
 Sono errori tecnici: scope assente/non riuscito/incoerente; righe nel perimetro
@@ -1555,7 +1653,7 @@ incompatibili; (4) `SELECT_SNAPSHOT` confirmation-aware senza secondo giudizio
 automatico; (5) upgrade v7→v8 tutto-o-niente con popolazione e conteggi esatti;
 (6) FK immediate effettive di `schema.py` e ordine answer→mapping→result→
 sidecar→discovery; (7) retry equivalenti idempotenti e conflitti divergenti
-fail-closed; (8) un solo mapping per sessione tra entrambi i percorsi; (9) set
+fail-closed; (8) un solo mapping in entrambe le direzioni — sessione→snapshot e snapshot→sessione — tra entrambi i percorsi; (9) set
 per-sessione separati dall'unione synchronization-wide; (10) invariant v7
 `start <= end`, incluse finestre zero-length; (11) matrice completa dei ref e
 uso della confirmation MatchingResult esistente esclusivamente per `SINGLE`;
@@ -1573,7 +1671,7 @@ del suo processing, incluso il caso successor non ancora noto; (19) request
 zero con tupla vuota priva di opzioni associative e reconciliation append-only
 con tupla non vuota e membership strict; (20) arrivo tardivo prima/dopo expiry,
 answer stale e race answer/reconciliation/expiry su una sola testa; (21) guard
-pre-matcher su entrambi i percorsi e indice one-mapping-per-session; (22) ogni
+pre-matcher su entrambi i percorsi e indici one-to-one mapping/sessione e mapping/snapshot; (22) ogni
 request v8 ha la propria answer compatibile, con FK immediate eseguibili e senza
 riuso cross-type; (23) membership exact/nullability delle answer reconciliation,
 request immutabile `REQUIRED`, closure append-only e ordine answer→mapping→
@@ -1615,7 +1713,7 @@ casi automatico, incompatibile, ambiguo e strutturalmente incompleto seguono la
 matrice del §4.1; (41) l'inventario v8 non dichiara indici su colonne result
 inesistenti; (42) backfill result-sidecar, write atomiche post-upgrade,
 completezza 1:1, rollback, retry e concorrenza sono eseguibili con FK immediate
-nell'ordine mapping → result → sidecar.
+nell'ordine mapping → result → sidecar; (43) la worklist snapshot-centric è deduplicata, passa al matcher una sola volta la tupla completa ordinata e non usa chiamate singleton; (44) guardie e lookup mapping sono simmetrici sui due riferimenti; (45) ogni percorso capace di creare mapping — automatico, direct ID, `SELECT_SNAPSHOT`, confirmation `SINGLE` e reconciliation tardiva — rilegge entrambi i lati sotto `BEGIN IMMEDIATE`; (46) i due indici univoci, il controllo duplicati v7→v8 e le sei prove §§10.20–10.25 dimostrano `actual_session_ref →` al massimo uno snapshot e `prescription_snapshot_ref →` al massimo una sessione.
 
 **Non resta alcuna decisione normativa bloccante.** Restano lavoro
 implementativo: definire modelli/codec, migrazione v8, repository, adapter dello

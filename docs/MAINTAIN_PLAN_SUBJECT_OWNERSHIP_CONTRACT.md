@@ -118,3 +118,12 @@ cross-subject, digest divergenti e cardinalità diversa da 1:1 rollbackano.
 Lookup e guard usano la relazione e il suo indice
 `(prescription_snapshot_ref,matching_result_ref)`, non estrazione JSON né una
 colonna inesistente sulla tabella result.
+
+### Addendum normativo v8 — ownership e unicità bidirezionale
+
+La tupla sessioni consegnata al matcher per uno snapshot contiene soltanto
+record con `subject_ref` byte-identico e viene validata interamente prima della
+chiamata unica. La futura v8 impone `UNIQUE(actual_session_ref)` e
+`UNIQUE(prescription_snapshot_ref)` sui mapping; la migrazione rifiuta e
+rollbacka duplicati legacy in entrambe le direzioni. Nessun binding ownership
+consente di scegliere implicitamente tra più sessioni compatibili.

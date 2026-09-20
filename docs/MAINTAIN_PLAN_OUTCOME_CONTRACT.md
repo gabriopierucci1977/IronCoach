@@ -3505,3 +3505,13 @@ se il filtro lascia `remaining=()` e A non ha un proprio mapping, discovery,
 zero-session result/request, reconciliation o terminale, A riceve esattamente
 un outcome zero-sessioni. Se una catena propria di A esiste già, A è invece
 saltato senza duplicazione.
+
+### Addendum normativo v8 — matching snapshot-centric uno-a-uno
+
+Il percorso session-driven costruisce una worklist deduplicata di snapshot su
+tutte le sessioni same-subject coperte. Per ogni snapshot passa una sola volta
+al matcher l'intera tupla eleggibile ordinata per `(start, session_id UTF-8)`.
+Una compatibile produce mapping automatico anche in presenza di incompatibili;
+più compatibili producono una sola confirmation con tupla congelata e nessun
+mapping fino alla selezione. Guardie, retry e persistenza sono simmetrici:
+`actual_session_ref` e `prescription_snapshot_ref` sono entrambi univoci.
