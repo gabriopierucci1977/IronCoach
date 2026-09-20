@@ -136,3 +136,12 @@ eventuale. Solo `SELECTED_MATCH` ammette il mapping e richiede che esso punti
 alla sessione della resolution; tutte le disposition non selezionate impongono
 mapping null. L'ownership comune non autorizza mai una discovery non selezionata
 a riferire il mapping di un'altra sessione.
+
+### Addendum normativo v8 — fan-out mista e confirmation senza deadline
+
+Una fan-out snapshot-centric può contenere membership da discovery `SINGLE` e
+la selected membership autorevole di una discovery `MULTIPLE`; tutte richiedono
+lo stesso `subject_ref`, mentre soltanto `SELECTED_MATCH` può portare il mapping.
+Le candidate non selezionate restano guarded. Le confirmation full-tuple
+ordinarie non hanno expiry; gli sweep automatici restano limitati a
+zero-sessioni e late-session reconciliation.

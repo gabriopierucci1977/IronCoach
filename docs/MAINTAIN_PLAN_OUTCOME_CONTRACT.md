@@ -3526,3 +3526,20 @@ e chiusure non associative citano il result condiviso ma impongono mapping
 null. Un outcome terminale non è pubblicabile finché la fan-out completa non è
 committata atomicamente; durante `CONFIRMATION_REQUIRED` tutte le discovery
 rappresentate restano invece pending in modo coerente.
+
+### Addendum normativo v8 — indici MULTISPORT, metadata e lifecycle confirmation
+
+Il branch futuro `MULTISPORT` confronta componenti soltanto dopo aver validato
+unicità/comparabilità e richiede uguaglianza byte-esatta dei `component_index`
+ordinati sui due lati; non rinumera sequenze non contigue. Mismatch valido è
+incompatibile/`CONFIRMATION_REQUIRED`; struttura malformata è `NOT_EVALUABLE`.
+Per sostituzioni, metadata observed `environment`/`mode` optional mancanti
+rendono soltanto quella dimensione unknown e non impediscono da soli il match;
+un valore presente confliggente resta incompatibile.
+
+Una confirmation ordinaria per più sessioni compatibili non scade
+automaticamente e resta pending fino a risposta valida. Le sole expiry sono
+quelle già definite per zero-sessioni e late-session reconciliation. Una
+risoluzione direct-ID `MULTIPLE/MATCHED` conserva l'intero candidate set e può
+partecipare alla fan-out mista con discovery `SINGLE`; soltanto la selected
+membership possiede il mapping.

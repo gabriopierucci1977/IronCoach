@@ -313,6 +313,25 @@ mapping prima del result per le FK immediate e infine la discovery terminale.
 Retry equivalente restituisce la stessa catena; una diversa risoluzione o un
 mapping concorrente su **uno qualunque dei due lati** rollbacka.
 
+#### Direct ID con discovery `MULTIPLE` nella fan-out
+
+Un direct ID valido può risolvere autorevolmente la discovery frozen `MULTIPLE`
+della sessione diretta senza inventare una discovery `SINGLE`. Lo snapshot
+selezionato entra nella evaluation full-tuple e ogni relazione rappresentata
+può originare da (a) una discovery `SINGLE` che contiene quello snapshot oppure
+(b) la sola relazione `selected_snapshot_ref` di una discovery
+`MULTIPLE/MATCHED` con `resolution_source=DIRECT_ID`, purché lo snapshot appartenga
+al candidate set congelato. Il `MULTIPLE` conserva candidate set completo,
+direct-ID evidence e stato `MATCHED`; soltanto la relazione selezionata può
+portare il mapping. Tutti gli altri snapshot del suo candidate set restano
+guardati dalla catena terminale e non possono produrre mapping successivi.
+
+La fan-out chiude ogni membership rappresentata: la relazione direct-ID riceve
+`SELECTED_MATCH`; ogni altra sessione candidata allo snapshot selezionato riceve
+`INCOMPATIBLE` o `COMPATIBLE_NOT_SELECTED`, senza borrowed mapping. Discovery
+kind miste `MULTIPLE`/`SINGLE` sono legali nella stessa fan-out; cardinalità e
+selection membership vengono rivalidate prima del commit.
+
 ### 4.1 Fan-out terminale delle discovery per-sessione
 
 La resolution additiva, separata dalla discovery immutabile, ha questa shape:
@@ -346,7 +365,7 @@ per una chiusura non associativa. Le disposition sono mutuamente esclusive:
 | `SELECTED_MATCH` | uguale a `selected_session_ref` | required | required | unica sessione associata |
 | `INCOMPATIBLE` | decisione incompatibile | required | **null** | candidata valutata ma incompatibile |
 | `COMPATIBLE_NOT_SELECTED` | compatibile, diversa dalla selezionata | required | **null** | confirmation ha scelto un'altra candidata |
-| `NON_ASSOCIATIVE_CLOSURE` | qualunque membro ancora rappresentato | required | **null** | rejection, expiry, risposta non associativa o result `NOT_EVALUABLE` |
+| `NON_ASSOCIATIVE_CLOSURE` | qualunque membro ancora rappresentato | required | **null** | rejection, risposta non associativa o result `NOT_EVALUABLE`; expiry solo per catene zero-session/reconciliation |
 
 Mapping presence è legale **solo** per `SELECTED_MATCH`. Quella riga richiede
 `mapping.actual_session_ref = resolution.actual_session_ref =
@@ -366,7 +385,7 @@ Lifecycle normativo:
   `MATCHED`, un mapping, `SELECTED_MATCH` per la scelta,
   `COMPATIBLE_NOT_SELECTED` per le altre compatibili e `INCOMPATIBLE` per le
   incompatibili;
-* rejection, risposta non associativa, expiry o `NOT_EVALUABLE` crea/conserva
+* rejection, risposta non associativa o `NOT_EVALUABLE` crea/conserva
   un result snapshot-level senza mapping e terminalizza tutti i membri come
   `NON_ASSOCIATIVE_CLOSURE` (le decisioni individuali rimangono evidence);
 * direct ID e ogni altro outcome snapshot-level non ambiguo applicano la stessa
@@ -403,15 +422,30 @@ sessioni uniche, è invece esattamente:
    transition-gap o brick policy. Una brick policy presente è input invalido,
    non un modo per entrare nel branch `BRICK`.
 
-Per `MULTISPORT` senza direct ID la compatibilità riusa **esattamente** gli
-input e la semantica non-BRICK già espressi da `_component_checks`, senza
-fallback: (a) `scheduled_window.start <= S.start <= scheduled_window.end`;
-(b) `S.composition is MULTISPORT`; (c) uguale cardinalità di componenti
-planned/observed; (d) indici observed contigui, cioè ogni indice successivo è
-il precedente più uno; (e) dopo ordinamento per `component_index`, ogni
-disciplina coincide oppure la disciplina observed è una
-`allowed_substitution` della componente planned e i suoi eventuali vincoli
-`environment`/`mode` coincidono. Ownership byte-esatta, persistenza canonica,
+Per `MULTISPORT` senza direct ID la compatibilità usa un branch futuro
+esplicito; **non** può riusare `_component_checks` invariato. Il predicato
+completo, senza fallback, è: (a) `scheduled_window.start <= S.start <=
+scheduled_window.end`; (b) `S.composition is MULTISPORT`; (c) uguale cardinalità
+di componenti planned/observed; (d) dopo aver validato su entrambi i lati che
+ogni `component_index` sia un intero comparabile e unico, ordinare separatamente
+planned e observed per indice e richiedere per ogni posizione
+`planned.component_index == observed.component_index`; (e) solo dopo tale
+uguaglianza, confrontare discipline e sostituzioni della coppia con quell'indice.
+Non si rinumera, compatta o normalizza alcuna sequenza: `(0,2)` contro `(0,1)` e
+due sequenze traslate ma disuguali sono mismatch esatti; `(0,2)` contro `(0,2)`
+può essere valido. Duplicati, tipi malformati o indici non comparabili producono
+`NOT_EVALUABLE` con evidence strutturale esplicita; un indice valido ma diverso
+produce `CONFIRMATION_REQUIRED` incompatibile e non può mappare automaticamente.
+Cardinalità, uguaglianza indici, disciplina e sostituzione sono valutate insieme:
+nessun pairing per posizione può saltare l'uguaglianza dell'indice.
+
+Per una `allowed_substitution`, un vincolo planned `environment`/`mode` assente
+non vincola quella dimensione; se il vincolo esiste e il valore observed è
+presente deve essere identico; se il valore optional observed manca, **solo**
+quella dimensione è `UNKNOWN/NOT_EVALUABLE` nell'evidence e non rende da sola la
+sessione incompatibile né forza confirmation. Un valore presente e confliggente
+è incompatibile. Il matcher futuro deve quindi aggregare le dimensioni note e
+non può riusare l'helper corrente se tratta `None` come mismatch. Ownership byte-esatta, persistenza canonica,
 validazione `validate_prescription`/`validate_actual_session`, finestra e
 candidate tuple restano quelli dei §§3–4. Non si aggiungono similarità,
 ranking, distanza, tolleranza, inferenza di transizioni o tie-break.
@@ -867,8 +901,11 @@ B sono atomici e il commit precede la loro esposizione. Quando il result
 snapshot-level rappresenta più discovery `SINGLE`, “discovery derivato” indica
 la **fan-out completa** del §4.1, non la sola discovery selezionata: le righe
 non selezionate sono inserite prima del successor event con mapping null.
-Rejection, risposta non associativa ed expiry usano analogamente
-`NON_ASSOCIATIVE_CLOSURE` per ogni membro. Un errore su una sola riga annulla
+Rejection e risposta non associativa usano analogamente
+`NON_ASSOCIATIVE_CLOSURE` per ogni membro. Una confirmation full-tuple ordinaria
+non ha deadline né expiry automatica: resta pending fino a una answer athlete
+valida. Gli eventi/sweep di expiry zero-sessioni e reconciliation non sono
+riutilizzabili per questo request type. Un errore su una sola riga annulla
 answer, mapping, result, sidecar e tutte le resolution.
 
 L'identità deterministica della request rende un retry di fase A equivalente
@@ -978,12 +1015,13 @@ v8 aggiunge, senza cambiare v1–v7:
   `(matching_result_ref,actual_session_ref)` e
   `(prescription_snapshot_ref,actual_session_ref)`, rendono la fan-out
   verificabile senza JSON. Trigger validano membership della discovery
-  `SINGLE`, uguaglianza byte-esatta di snapshot/sessione/subject, tupla completa
+  `SINGLE` **oppure** la sola relazione authoritative-selected di una discovery
+  `MULTIPLE/MATCHED` con source `DIRECT_ID` o `ATHLETE_CONFIRMATION`, uguaglianza byte-esatta di snapshot/sessione/subject, tupla completa
   e decisioni con il result sidecar, e per la riga selezionata uguaglianza di
   entrambi i ref del mapping. Per ogni riga non selezionata vietano il mapping
   anche nel payload. Prima del commit il repository verifica che il numero di
-  resolution inserite sia esattamente il numero delle discovery `SINGLE`
-  rappresentate nel result terminale; errore causa rollback della unit of work;
+  resolution inserite sia esattamente il numero delle relazioni discovery rappresentate (`SINGLE` più le sole
+  selected membership legali di `MULTIPLE`) nel result terminale; errore causa rollback della unit of work;
 - `maintain_plan_matching_result_snapshot_index(matching_result_ref TEXT
   PRIMARY KEY REFERENCES maintain_plan_matching_results(matching_result_id),
   prescription_snapshot_ref TEXT NOT NULL REFERENCES
@@ -997,9 +1035,12 @@ v8 aggiunge, senza cambiare v1–v7:
   `(prescription_snapshot_ref,matching_result_ref)`. Non viene dichiarato alcun
   indice su `maintain_plan_matching_results.prescription_snapshot_ref`, perché
   tale colonna non esiste in v1–v7;
-- indici lookup window-driven sulla sidecar precedente,
-  `(prescription_snapshot_ref,request_id)` sulle confirmation snapshot-centric
-  e quelli già definiti su mapping, reconciliation ed eventi.
+- indici lookup window-driven sulla sidecar precedente. Sulla tabella v1–v7
+  `maintain_plan_confirmations`, che possiede `confirmation_id` e non possiede
+  `request_id`, v8 crea esattamente
+  `CREATE INDEX idx_mp_confirmations_snapshot_confirmation ON
+  maintain_plan_confirmations(prescription_snapshot_ref, confirmation_id)`.
+  Gli altri indici sono quelli già definiti su mapping, reconciliation ed eventi.
   Non è lecito scandire o interpretare parzialmente tuple JSON. Le query
   seguono l'ordine §5 e poi PK UTF-8, senza filtro scope;
 - la tabella confirmation discovery del §6, indici per ogni FK e trigger
@@ -1276,7 +1317,7 @@ vietato.
 ## 8. Lifecycle degli output
 
 Un `MatchingResult` `MATCHED` richiede un mapping e la fan-out completa delle
-resolution per tutte le discovery `SINGLE` rappresentate. `CONFIRMATION_REQUIRED` e
+resolution per tutte le relazioni discovery rappresentate (`SINGLE` e selected membership legali di `MULTIPLE`). `CONFIRMATION_REQUIRED` e
 `NOT_EVALUABLE` richiedono mapping null. Soltanto una risposta umana valida
 produce un nuovo risultato `MATCHED` e mapping con
 `resolution_method=ATHLETE_CONFIRMATION`, actor, timestamp e confirmation ref.
@@ -1293,8 +1334,9 @@ Un result terminale senza mapping richiede comunque una resolution
 `NON_ASSOCIATIVE_CLOSURE` per ogni discovery rappresentata; un result pending
 non ne richiede alcuna e vieta fan-out parziali. Un result terminale con mapping
 richiede esattamente una `SELECTED_MATCH` e zero o più resolution non selezionate
-con mapping null. Questi vincoli valgono anche per direct ID, reconciliation ed
-expiry.
+con mapping null. Questi vincoli valgono anche per direct ID e reconciliation. L’expiry ordinaria
+full-tuple non esiste; soltanto zero-sessioni e reconciliation possono chiudere
+per expiry secondo i rispettivi chain contract.
 
 Gli artefatti precedenti rimangono immutabili. Evaluation e consumer possono
 partire soltanto da un mapping persistito univoco. Un direct ID risolto prova
@@ -1809,19 +1851,20 @@ chiusura terminale senza mapping e non può essere scambiata per P↔S1.
 
 ### 10.28 Chiusura non associativa della tupla completa
 
-Una rejection, `DONT_KNOW`, expiry o outcome `NOT_EVALUABLE` per
+Una rejection, `DONT_KNOW` o outcome `NOT_EVALUABLE` per
 `(P,(S1,S2))` crea/usa un result terminale senza mapping e, nello stesso
 commit, due resolution `NON_ASSOCIATIVE_CLOSURE`. Nessuna discovery della
 tupla può rimanere pending o prendere un mapping da un'altra catena.
 
-### 10.29 Race answer/expiry e due selezioni
+### 10.29 Race fra due selezioni (nessuna expiry ordinaria)
 
-Answer, expiry e due selezioni concorrenti aprono `BEGIN IMMEDIATE`, rileggono
+Due selezioni concorrenti aprono `BEGIN IMMEDIATE`, rileggono
 request/head e D1/D2. Il primo successore valido inserisce **l'intera** fan-out;
 gli altri rileggono e fanno no-op solo se byte-equivalenti, altrimenti falliscono
 chiusi. Non può esistere una seconda `SELECTED_MATCH` per R né un secondo
-mapping. Un expiry vincente produce due `NON_ASSOCIATIVE_CLOSURE` e rende stale
-entrambe le selezioni.
+mapping. Non esiste un concorrente expiry per questa confirmation ordinaria: senza answer
+la request e D1/D2 rimangono pending. Solo le catene zero-sessioni e
+reconciliation dei §§5.1–5.2 hanno sweep ed eventi di expiry.
 
 ### 10.30 Retry e rollback della fan-out
 
@@ -1831,6 +1874,30 @@ non può essere risolta (FK, uniqueness, membership o evidence discordante),
 l'insert di D1, result, mapping e sidecar rollbackano insieme: non rimangono né
 mapping né result terminale né una discovery orfana pending accanto a una
 fan-out parziale.
+
+### 10.31 Vettori normativi dei cinque finding
+
+* Planned indexes `(0,2)` e observed `(0,1)` hanno cardinalità uguale ma index
+  mismatch: `CONFIRMATION_REQUIRED`, mai mapping. `(0,2)` e `(0,2)` preservano
+  i buchi e possono proseguire ai controlli disciplina/sostituzione. Un duplicato
+  o indice non comparabile è `NOT_EVALUABLE` con evidence strutturale.
+* Se una sostituzione vincola `environment=OUTDOOR` e observed omette
+  environment, la dimensione è unknown ma non rende incompatibile l'intera
+  sessione; observed `INDOOR` è invece conflitto incompatibile. Identico vale
+  per `mode`.
+* La discovery `D0=MULTIPLE(P1,P2)` di S0 risolta via direct ID su P1 e la
+  discovery `D1=SINGLE(P1)` di S1 alimentano una sola evaluation di P1. Se S0 è
+  selezionata, la fan-out atomica produce `D0→SELECTED_MATCH` e D1
+  `INCOMPATIBLE` o `COMPATIBLE_NOT_SELECTED`, con esattamente un mapping; P2
+  resta protetto dalla catena D0. Retry identico riusa la fan-out; selezione o
+  mapping concorrente divergente rollbacka integralmente.
+* Il lookup confirmation schema-valid è
+  `maintain_plan_confirmations(prescription_snapshot_ref, confirmation_id)`;
+  `request_id` non è una colonna di quella tabella e non compare in alcun DDL.
+* Una confirmation ordinaria full-tuple con più compatibili non ha deadline:
+  resta pending fino a answer valida. Le expiry zero-sessioni (prima del gruppo
+  successore) e reconciliation (al proprio boundary) restano invariate e sono
+  gli unici due request type soggetti a sweep automatico.
 
 ## 11. Errori, upgrade e decisioni residue
 
@@ -1929,9 +1996,21 @@ ha zero mapping oppure esattamente una `SELECTED_MATCH`; (49) CHECK, FK e indice
 unico parziale rendono impossibile collegare una non selezionata al mapping di
 un'altra sessione; (50) conteggio pre-commit e rollback totale impediscono a un
 result snapshot-level terminale di lasciare una discovery pending; (51) un
-result `CONFIRMATION_REQUIRED` lascia invece tutte le discovery coerentemente
-pending fino a una sola answer/expiry vincente; (52) i casi §§10.26–10.30
+result `CONFIRMATION_REQUIRED` full-tuple lascia invece tutte le discovery
+coerentemente pending fino a una sola answer vincente; (52) i casi §§10.26–10.30
 coprono fan-out completa, race, retry e failure intermedia.
+
+L'audit finale dei cinque finding ha inoltre verificato: (53) tutti i predicati
+MULTISPORT confrontano gli indici esatti prima del pairing e classificano
+malformed/non-comparable come `NOT_EVALUABLE`; (54) metadata optional mancanti
+sono evidence unknown non eliminatoria, mentre conflitti presenti sono
+incompatibili; (55) ogni combinazione terminale `SINGLE` e authoritative
+`MULTIPLE` è rappresentabile nella fan-out, conserva frozen candidates e vieta
+borrowed mapping; (56) ogni lookup v8 cita colonne esistenti o additive e quello
+confirmation usa `confirmation_id`; (57) solo zero-sessioni e reconciliation
+hanno expiry, mentre la confirmation full-tuple ordinaria resta pending; (58)
+fan-out completa, retry, rollback e conflitti concorrenti sono serializzati e
+atomici.
 
 **Non resta alcuna decisione normativa bloccante.** Restano lavoro
 implementativo: definire modelli/codec, migrazione v8, repository, adapter dello

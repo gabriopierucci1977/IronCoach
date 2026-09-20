@@ -445,3 +445,11 @@ selezionata può avere `SELECTED_MATCH` e un mapping con
 `mapping.actual_session_ref` uguale al proprio ID; ogni sessione non selezionata
 deve avere mapping null. La fan-out atomica impedisce sia discovery pending
 orfane sia il falso collegamento di una sessione al mapping di un'altra.
+
+### Addendum normativo v8 — component identity e metadata optional
+
+Per `MULTISPORT`, gli indici observed non vengono compattati: devono essere
+unici, comparabili e identici agli indici planned corrispondenti dopo
+ordinamento. Metadata optional `environment`/`mode` assenti restano missing e
+rendono unknown soltanto la dimensione vincolata; non sono convertiti in un
+mismatch. Valori presenti in conflitto restano incompatibili.
