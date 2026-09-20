@@ -184,7 +184,7 @@ deduplicata dei candidate snapshot, ordinata per
 compare al massimo una volta per synchronization, anche se è candidato di più
 sessioni. Per ogni snapshot `P`, sotto `BEGIN IMMEDIATE`, il repository:
 
-1. applica le guardie simmetriche del §4.2 sia per `actual_session_ref` sia per
+1. applica le guardie simmetriche del §4.3 sia per `actual_session_ref` sia per
    `prescription_snapshot_ref`;
 2. carica dal perimetro autorevole dello scope la tupla **completa** di tutte e
    sole le sessioni same-subject eleggibili per `P` secondo le regole
@@ -211,6 +211,15 @@ verso quel membro, senza rieseguire il matcher. Zero compatibili conserva
 l'esito domain previsto dal matcher. Sono vietati ranking, fuzzy matching,
 tie-break impliciti e first-session-wins.
 
+Il `MatchingResult` prodotto da questa chiamata appartiene all'**evaluation di
+P contro l'intera tupla congelata**, non alla sola sessione selezionata. Per
+ogni `S` rappresentata dalla tupla deve già esistere la propria discovery
+snapshot-side `SINGLE`; il result condiviso viene quindi distribuito tramite
+una resolution terminale 1:1 per discovery (§4.1). Il mapping, se esiste,
+appartiene soltanto alla resolution della sessione selezionata. Una resolution
+di una sessione non selezionata può citare il result condiviso, ma non può
+citare, incorporare o far intendere il mapping della sessione selezionata.
+
 La discovery snapshot-side conserva comunque la sua cardinalità reale:
 
 - zero snapshot per una sessione produce `MatchingDiscoveryResult.ZERO`, non un
@@ -230,7 +239,7 @@ matching_discovery_result:
   artifact_version: "1"
   sync_scope_ref: string
   status: ZERO | SINGLE | MULTIPLE
-  resolution_status: MATCHED | CONFIRMATION_REQUIRED | NOT_EVALUABLE
+  resolution_status: PENDING | MATCHED | CONFIRMATION_REQUIRED | NOT_EVALUABLE
   actual_session_ref: string
   subject_ref: string
   candidate_snapshot_refs: [string]
@@ -247,21 +256,33 @@ matching_discovery_result:
   provenance: object
 ```
 
-Candidate ed evidence hanno uguale cardinalità e ordine. Per la scelta
-snapshot-side vale questa matrice; la kind conserva sempre la cardinalità
-congelata (`ZERO=0`, `SINGLE=1`, `MULTIPLE>=2`):
+Candidate ed evidence hanno uguale cardinalità e ordine. Questa matrice descrive
+la scelta snapshot-side e non basta, da sola, a dichiarare terminali le
+discovery per-sessione: per ogni `SINGLE` rappresentato la terminalità e la
+presenza legale del mapping sono definite esclusivamente dalla resolution
+1:1 del §4.1. La kind conserva sempre la cardinalità congelata (`ZERO=0`,
+`SINGLE=1`, `MULTIPLE>=2`):
 
 | kind | resolution | result ref | mapping ref | meccanismo |
 |---|---|---|---|---|
 | `ZERO` | `CONFIRMATION_REQUIRED` | null | null | discovery confirmation |
 | `ZERO` | `NOT_EVALUABLE` | null | null | risposta non selettiva |
 | `ZERO` | `MATCHED` | non-null | non-null | `SELECT_SNAPSHOT` |
+| `SINGLE` | `PENDING` | null | null | attende evaluation/fan-out snapshot-level |
 | `SINGLE` | `MATCHED` | non-null | non-null | automatic/direct ID o confirmation |
 | `SINGLE` | `CONFIRMATION_REQUIRED` | non-null | null | existing result confirmation |
 | `SINGLE` | `NOT_EVALUABLE` | non-null | null | existing result confirmation |
 | `MULTIPLE` | `CONFIRMATION_REQUIRED` | null | null | discovery confirmation |
 | `MULTIPLE` | `NOT_EVALUABLE` | null | null | risposta non selettiva |
 | `MULTIPLE` | `MATCHED` | non-null | non-null | direct ID o `SELECT_SNAPSHOT` |
+
+Nel percorso full-tuple, ogni discovery `SINGLE` nasce immutabile come
+`PENDING`; non viene riscritta né trasformata in una falsa discovery `MATCHED`.
+La sua resolution 1:1 ne costituisce la terminalità. Le righe `SINGLE` legacy
+della matrice restano le shape per evaluation veramente singleton e per le
+catene derivate già descritte, ma anch'esse devono avere la resolution
+terminale coerente; la colonna mapping della discovery può essere valorizzata
+solo se la sua resolution è `SELECTED_MATCH`.
 
 `MATCHED` richiede `selected_snapshot_ref` e `resolution_source`; la selezione
 deve appartenere alla tupla congelata (salvo la regola same-scope già definita
@@ -282,15 +303,88 @@ normativa:
 
 La presenza di sessioni incompatibili non sopprime l'unica compatibile. Ogni
 result/mapping derivato cita lo snapshot, la tupla congelata e l'evidence
-fingerprint; una selezione fuori tupla o divergente fallisce chiusa.
+fingerprint; una selezione fuori tupla o divergente fallisce chiusa. Ogni
+discovery `SINGLE` rappresentata resta pending finché l'evaluation è pending e
+termina poi esattamente una volta secondo la fan-out del §4.1.
 
 Con direct ID validato, una singola `BEGIN IMMEDIATE` rilegge entrambi i lati,
-l'intero candidate set e le guardie del §4.2, precalcola gli ID, inserisce il
+l'intero candidate set e le guardie del §4.3, precalcola gli ID, inserisce il
 mapping prima del result per le FK immediate e infine la discovery terminale.
 Retry equivalente restituisce la stessa catena; una diversa risoluzione o un
 mapping concorrente su **uno qualunque dei due lati** rollbacka.
 
-### 4.1 Contratto puro composition-aware
+### 4.1 Fan-out terminale delle discovery per-sessione
+
+La resolution additiva, separata dalla discovery immutabile, ha questa shape:
+
+```yaml
+matching_discovery_resolution:
+  discovery_resolution_id: string
+  discovery_result_ref: string
+  matching_result_ref: string
+  prescription_snapshot_ref: string
+  actual_session_ref: string
+  disposition: SELECTED_MATCH | INCOMPATIBLE | COMPATIBLE_NOT_SELECTED | NON_ASSOCIATIVE_CLOSURE
+  prescription_mapping_ref: string | null
+  selected_session_ref: string | null
+  frozen_session_refs: [string]
+  compatibility_decision: object
+  evidence_fingerprint: string
+  previous_chain_head_ref: string | null
+  resolved_at: datetime
+```
+
+`matching_result_ref` identifica sempre il result snapshot-level condiviso;
+`frozen_session_refs` ripete integralmente la tupla canonica e
+`compatibility_decision` contiene la decisione per **ogni** membro, snapshot,
+policy/version e reason evidence. Se una sessione è stata scelta,
+`selected_session_ref` è identico in tutte le resolution della fan-out; è null
+per una chiusura non associativa. Le disposition sono mutuamente esclusive:
+
+| disposition | sessione della riga | result | mapping | significato |
+|---|---|---|---|---|
+| `SELECTED_MATCH` | uguale a `selected_session_ref` | required | required | unica sessione associata |
+| `INCOMPATIBLE` | decisione incompatibile | required | **null** | candidata valutata ma incompatibile |
+| `COMPATIBLE_NOT_SELECTED` | compatibile, diversa dalla selezionata | required | **null** | confirmation ha scelto un'altra candidata |
+| `NON_ASSOCIATIVE_CLOSURE` | qualunque membro ancora rappresentato | required | **null** | rejection, expiry, risposta non associativa o result `NOT_EVALUABLE` |
+
+Mapping presence è legale **solo** per `SELECTED_MATCH`. Quella riga richiede
+`mapping.actual_session_ref = resolution.actual_session_ref =
+selected_session_ref` e `mapping.prescription_snapshot_ref =
+result.prescription_snapshot_ref = resolution.prescription_snapshot_ref`.
+Tutte le altre righe impongono `prescription_mapping_ref IS NULL`; in
+particolare non possono prendere in prestito il mapping selezionato.
+
+Lifecycle normativo:
+
+* una compatibile e le altre incompatibili: un result snapshot-level
+  `MATCHED`, un mapping, `SELECTED_MATCH` per la compatibile e `INCOMPATIBLE`
+  per tutte le altre;
+* più compatibili: un result `CONFIRMATION_REQUIRED` e la request; **nessuna**
+  resolution terminale viene inserita e tutte le discovery restano pending.
+  Dopo una selezione valida si crea un nuovo result confirmation-aware
+  `MATCHED`, un mapping, `SELECTED_MATCH` per la scelta,
+  `COMPATIBLE_NOT_SELECTED` per le altre compatibili e `INCOMPATIBLE` per le
+  incompatibili;
+* rejection, risposta non associativa, expiry o `NOT_EVALUABLE` crea/conserva
+  un result snapshot-level senza mapping e terminalizza tutti i membri come
+  `NON_ASSOCIATIVE_CLOSURE` (le decisioni individuali rimangono evidence);
+* direct ID e ogni altro outcome snapshot-level non ambiguo applicano la stessa
+  fan-out selected/non-selected, senza scorciatoie per-sessione.
+
+La fan-out completa è una singola unit of work. Per automatic matching gli ID
+di result e mapping sono precalcolati; a causa della FK immediata v1–v7 da
+result `MATCHED` a mapping, l'ordine SQL eseguibile è **mapping → result →
+result-snapshot sidecar → tutte le resolution** (ordine logico evaluation →
+mapping, ma mai insert result prima della FK). Per athlete selection è
+**answer → mapping → result → result-snapshot sidecar/confirmation sidecar →
+tutte le resolution → successor event**. Prima delle write si rileggono
+confirmation/head e le teste di tutte le discovery. Qualunque resolution non
+inseribile, fan-out parziale, seconda selezione o mapping concorrente rollbacka
+l'intera transazione. Nessun result snapshot-level terminale può committare se
+una discovery rappresentata resta pending.
+
+### 4.2 Contratto puro composition-aware
 
 L'implementazione futura DEVE correggere l'ordine oggi presente in
 `matching_service.match`: l'early return che tratta ogni composition diversa
@@ -341,7 +435,7 @@ restano invece errori tecnici fail-closed e rollbackano: non vengono trasformati
 in outcome di dominio. Il direct-ID strict conserva il percorso autorevole del
 §4 e non altera queste regole per il caso senza direct ID.
 
-### 4.2 Guard pre-matcher simmetrica, cross-scope e identità semantica
+### 4.3 Guard pre-matcher simmetrica, cross-scope e identità semantica
 
 Prima di inserire uno snapshot nella worklist e ancora sotto la
 `BEGIN IMMEDIATE` che precede il matcher, il repository esegue lookup
@@ -769,7 +863,13 @@ confirmation-resolution, discovery derivato**; lo stesso vale per una risposta
 associativa `SINGLE`. Per risposte non associative è answer, result
 `NOT_EVALUABLE` quando il flusso è `SINGLE`, poi discovery derivato; per
 `ZERO`/`MULTIPLE` è answer, discovery derivato. Tutti gli artefatti della fase
-B sono atomici e il commit precede la loro esposizione.
+B sono atomici e il commit precede la loro esposizione. Quando il result
+snapshot-level rappresenta più discovery `SINGLE`, “discovery derivato” indica
+la **fan-out completa** del §4.1, non la sola discovery selezionata: le righe
+non selezionate sono inserite prima del successor event con mapping null.
+Rejection, risposta non associativa ed expiry usano analogamente
+`NON_ASSOCIATIVE_CLOSURE` per ogni membro. Un errore su una sola riga annulla
+answer, mapping, result, sidecar e tutte le resolution.
 
 L'identità deterministica della request rende un retry di fase A equivalente
 un no-op verificato. In fase B `UNIQUE(request_ref)` decide la race: il primo
@@ -834,7 +934,9 @@ v8 aggiunge, senza cambiare v1–v7:
   la matrice del §4 e rendono mutuamente esclusivi i due confirmation ref.
   In particolare `kind` è vincolato alla cardinalità JSON congelata
   (`ZERO=0`, `SINGLE=1`, `MULTIPLE>=2`) indipendentemente dalla resolution;
-  `MATCHED` richiede result, mapping, selected snapshot e source non-null;
+  `PENDING` è legale soltanto per `SINGLE` e richiede result, mapping,
+  selected snapshot/source e confirmation ref tutti null; `MATCHED` richiede
+  result, mapping, selected snapshot e source non-null;
   gli altri stati richiedono selected snapshot/source null. `DIRECT_ID`
   richiede direct evidence valida e permette `MULTIPLE/MATCHED` soltanto se la
   selezione è membro delle candidate; il mapping collegato usa obbligatoriamente
@@ -852,6 +954,36 @@ v8 aggiunge, senza cambiare v1–v7:
   gli indici `(prescription_snapshot_ref,actual_session_ref,
   discovery_result_ref)` e `(actual_session_ref,prescription_snapshot_ref,
   discovery_result_ref)`;
+- `maintain_plan_matching_discovery_resolutions(discovery_resolution_id TEXT
+  PRIMARY KEY, discovery_result_ref TEXT NOT NULL UNIQUE REFERENCES
+  maintain_plan_matching_discoveries(discovery_result_id), matching_result_ref
+  TEXT NOT NULL REFERENCES maintain_plan_matching_results(matching_result_id),
+  prescription_snapshot_ref TEXT NOT NULL REFERENCES
+  maintain_plan_prescription_snapshots(prescription_snapshot_id),
+  actual_session_ref TEXT NOT NULL REFERENCES
+  maintain_plan_actual_sessions(session_id), disposition TEXT NOT NULL CHECK
+  (disposition IN ('SELECTED_MATCH','INCOMPATIBLE',
+  'COMPATIBLE_NOT_SELECTED','NON_ASSOCIATIVE_CLOSURE')),
+  prescription_mapping_ref TEXT REFERENCES
+  maintain_plan_prescription_mappings(mapping_id), selected_session_ref TEXT,
+  frozen_session_refs_json TEXT NOT NULL, compatibility_decision_json TEXT NOT
+  NULL, evidence_fingerprint TEXT NOT NULL, previous_chain_head_ref TEXT,
+  resolved_at TEXT NOT NULL, payload_json TEXT NOT NULL, FOREIGN KEY ... ON
+  DELETE NO ACTION)`, append-only. `UNIQUE(discovery_result_ref)` impone una
+  sola resolution terminale per discovery. CHECK/trigger immediati impongono la
+  matrice §4.1: mapping non-null se e solo se `SELECTED_MATCH`, al massimo una
+  `SELECTED_MATCH` per `matching_result_ref`, e per ogni altra disposition
+  mapping null. Un indice unico parziale
+  `(matching_result_ref) WHERE disposition='SELECTED_MATCH'`, più gli indici
+  `(matching_result_ref,actual_session_ref)` e
+  `(prescription_snapshot_ref,actual_session_ref)`, rendono la fan-out
+  verificabile senza JSON. Trigger validano membership della discovery
+  `SINGLE`, uguaglianza byte-esatta di snapshot/sessione/subject, tupla completa
+  e decisioni con il result sidecar, e per la riga selezionata uguaglianza di
+  entrambi i ref del mapping. Per ogni riga non selezionata vietano il mapping
+  anche nel payload. Prima del commit il repository verifica che il numero di
+  resolution inserite sia esattamente il numero delle discovery `SINGLE`
+  rappresentate nel result terminale; errore causa rollback della unit of work;
 - `maintain_plan_matching_result_snapshot_index(matching_result_ref TEXT
   PRIMARY KEY REFERENCES maintain_plan_matching_results(matching_result_id),
   prescription_snapshot_ref TEXT NOT NULL REFERENCES
@@ -1005,6 +1137,14 @@ v8 aggiunge, senza cambiare v1–v7:
   sessione non può riferire più snapshot e uno snapshot non può riferire più
   sessioni. Entrambi sono verificati insieme ai trigger append-only.
 
+L'ordine additivo v8 è vincolante: snapshot-window index e backfill;
+result-snapshot sidecar e backfill; discovery e membership; confirmation e
+answer; `maintain_plan_matching_discovery_resolutions`; catene zero-sessioni e
+reconciliation; validazione mapping legacy; indici univoci mapping; infine
+trigger e conteggi di completezza. Nessuna resolution storica viene inventata:
+la tabella nasce vuota e ogni result terminale prodotto dopo l'abilitazione v8
+deve committare la fan-out completa nella propria unit of work.
+
 Le FK immediate già presenti in `schema.py` sono state auditate: mapping punta
 subito a snapshot e sessione, mentre result `MATCHED` punta subito al mapping;
 confirmation punta subito a result e snapshot. Poiché non sono deferred e v8
@@ -1135,7 +1275,8 @@ vietato.
 
 ## 8. Lifecycle degli output
 
-Un `MatchingResult` `MATCHED` richiede un mapping. `CONFIRMATION_REQUIRED` e
+Un `MatchingResult` `MATCHED` richiede un mapping e la fan-out completa delle
+resolution per tutte le discovery `SINGLE` rappresentate. `CONFIRMATION_REQUIRED` e
 `NOT_EVALUABLE` richiedono mapping null. Soltanto una risposta umana valida
 produce un nuovo risultato `MATCHED` e mapping con
 `resolution_method=ATHLETE_CONFIRMATION`, actor, timestamp e confirmation ref.
@@ -1148,6 +1289,13 @@ lati nella transazione, impediscono un secondo mapping in qualunque direzione. R
 coppia esistente; contenuto divergente rollbacka.
 «Non svolta», «non sincronizzata» e «non lo so» non producono mapping.
 
+Un result terminale senza mapping richiede comunque una resolution
+`NON_ASSOCIATIVE_CLOSURE` per ogni discovery rappresentata; un result pending
+non ne richiede alcuna e vieta fan-out parziali. Un result terminale con mapping
+richiede esattamente una `SELECTED_MATCH` e zero o più resolution non selezionate
+con mapping null. Questi vincoli valgono anche per direct ID, reconciliation ed
+expiry.
+
 Gli artefatti precedenti rimangono immutabili. Evaluation e consumer possono
 partire soltanto da un mapping persistito univoco. Un direct ID risolto prova
 la relazione; differenze di finestra o composizione restano future differenze
@@ -1158,6 +1306,22 @@ di aderenza.
 Ogni preimage usa JSON con `ensure_ascii=False`, `sort_keys=True`, separatori
 `(',', ':')`, UTF-8 strict senza BOM e nessuna normalizzazione Unicode. Liste
 ordinate usano byte UTF-8 degli ID. SHA-256 è hex lowercase.
+
+L'identità della resolution terminale è
+`maintain-plan:matching-discovery-resolution:v1:sha256:<hash>` sulla preimage
+canonica composta da discovery, result condiviso, snapshot, sessione della
+riga, disposition, mapping nullable, selected session nullable, decisione di
+compatibilità, evidence fingerprint e policy ID/version. `sync_scope_ref` è
+sola provenance ed è escluso. Esempio normativo non selezionato:
+
+```text
+preimage: {"actual_session_ref":"S2","compatibility_decision":"INCOMPATIBLE","discovery_result_ref":"D-S2","disposition":"INCOMPATIBLE","evidence_fingerprint":"evidence-v1","matching_policy_id":"maintain-plan-matching","matching_policy_version":"1.0.0-draft","matching_result_ref":"R-P-tuple","prescription_mapping_ref":null,"prescription_snapshot_ref":"P","selected_session_ref":"S1"}
+sha256: 858f3e2229c23eead65883254913dcd9398f69406c0202132bf24d93af675933
+```
+
+Cambiare disposition, selected session o mapping cambia l'identità; un retry
+byte-identico riusa la riga canonica. La preimage `SELECTED_MATCH` include il
+solo mapping canonico, mentre ogni altra preimage deve contenerlo come null.
 
 L'`evidence_fingerprint` deterministico è SHA-256 della seguente preimage
 canonica: `artifact_version`, policy ID/version, `subject_ref`,
@@ -1554,7 +1718,7 @@ l'indice e vede la finestra zero-length perché `start == end` è valido.
 
 Snapshot `M` e sessione `S` sono ownership-bound allo stesso subject, entrambi
 `MULTISPORT`, in finestra, con due componenti ordinate e discipline esatte:
-il branch §4.1 produce `MATCHED` automatico e lo stesso mapping posizionale di
+il branch §4.2 produce `MATCHED` automatico e lo stesso mapping posizionale di
 un caso `SINGLE` non ambiguo, senza brick policy. Se `S.start` è fuori finestra
 oppure una disciplina/cardinalità/ordine/composition non coincide, produce
 `CONFIRMATION_REQUIRED`, mapping nullo e le reason keys esatte dei predicati
@@ -1625,6 +1789,48 @@ In v7 esistono `P↔S1` e `P↔S2`. La validazione raggruppata per
 `prescription_snapshot_ref` rileva cardinalità due prima di creare gli indici;
 l'intera migrazione v7→v8 rollbacka e `user_version` resta invariato. Nessuna
 riga viene scelta, cancellata o riscritta.
+
+### 10.26 Fan-out terminale: compatibile e incompatibile
+
+P ha discovery `D1=SINGLE(P,S1)` e `D2=SINGLE(P,S2)`; S1 è compatibile e S2
+incompatibile. Una sola evaluation di `(P,(S1,S2))` crea result `R=MATCHED` e
+mapping `M=P↔S1`. Nello stesso commit inserisce
+`D1→SELECTED_MATCH(R,M,S1)` e `D2→INCOMPATIBLE(R,null,S1)`. D2 è terminale ma
+non cita M: il suo `prescription_mapping_ref` è obbligatoriamente null.
+
+### 10.27 Due compatibili, prima e dopo la scelta
+
+P, S1 e S2 producono `R0=CONFIRMATION_REQUIRED`; D1 e D2 restano entrambe
+pending e non esiste mapping né resolution terminale. La selezione valida di
+S1 inserisce atomicamente answer, `M=P↔S1`, `R1=MATCHED`, sidecar,
+`D1→SELECTED_MATCH(R1,M,S1)` e
+`D2→COMPATIBLE_NOT_SELECTED(R1,null,S1)`. La riga di S2 prova quindi una
+chiusura terminale senza mapping e non può essere scambiata per P↔S1.
+
+### 10.28 Chiusura non associativa della tupla completa
+
+Una rejection, `DONT_KNOW`, expiry o outcome `NOT_EVALUABLE` per
+`(P,(S1,S2))` crea/usa un result terminale senza mapping e, nello stesso
+commit, due resolution `NON_ASSOCIATIVE_CLOSURE`. Nessuna discovery della
+tupla può rimanere pending o prendere un mapping da un'altra catena.
+
+### 10.29 Race answer/expiry e due selezioni
+
+Answer, expiry e due selezioni concorrenti aprono `BEGIN IMMEDIATE`, rileggono
+request/head e D1/D2. Il primo successore valido inserisce **l'intera** fan-out;
+gli altri rileggono e fanno no-op solo se byte-equivalenti, altrimenti falliscono
+chiusi. Non può esistere una seconda `SELECTED_MATCH` per R né un secondo
+mapping. Un expiry vincente produce due `NON_ASSOCIATIVE_CLOSURE` e rende stale
+entrambe le selezioni.
+
+### 10.30 Retry e rollback della fan-out
+
+Dopo il commit completo, un retry di P/S1/S2 ritrova result, mapping e le due
+resolution canoniche e non inserisce nulla. Se durante il primo tentativo D2
+non può essere risolta (FK, uniqueness, membership o evidence discordante),
+l'insert di D1, result, mapping e sidecar rollbackano insieme: non rimangono né
+mapping né result terminale né una discovery orfana pending accanto a una
+fan-out parziale.
 
 ## 11. Errori, upgrade e decisioni residue
 
@@ -1710,10 +1916,22 @@ L'audit aggiuntivo ha confrontato direttamente l'ordine degli early return di
 `SINGLE` e `BRICK` mantengono i branch esistenti, mentre `MULTISPORT` richiede
 il branch futuro senza brick policy e il feature resta disabilitato; (40) i
 casi automatico, incompatibile, ambiguo e strutturalmente incompleto seguono la
-matrice del §4.1; (41) l'inventario v8 non dichiara indici su colonne result
+matrice del §4.2; (41) l'inventario v8 non dichiara indici su colonne result
 inesistenti; (42) backfill result-sidecar, write atomiche post-upgrade,
 completezza 1:1, rollback, retry e concorrenza sono eseguibili con FK immediate
 nell'ordine mapping → result → sidecar; (43) la worklist snapshot-centric è deduplicata, passa al matcher una sola volta la tupla completa ordinata e non usa chiamate singleton; (44) guardie e lookup mapping sono simmetrici sui due riferimenti; (45) ogni percorso capace di creare mapping — automatico, direct ID, `SELECT_SNAPSHOT`, confirmation `SINGLE` e reconciliation tardiva — rilegge entrambi i lati sotto `BEGIN IMMEDIATE`; (46) i due indici univoci, il controllo duplicati v7→v8 e le sei prove §§10.20–10.25 dimostrano `actual_session_ref →` al massimo uno snapshot e `prescription_snapshot_ref →` al massimo una sessione.
+
+L'audit terminal-discovery ha inoltre enumerato automatico, direct ID,
+selection confirmation, confirmation `SINGLE`, reconciliation, rejection,
+expiry e `NOT_EVALUABLE`: (47) ogni discovery `SINGLE` rappresentata termina
+esattamente una volta tramite `UNIQUE(discovery_result_ref)`; (48) ogni fan-out
+ha zero mapping oppure esattamente una `SELECTED_MATCH`; (49) CHECK, FK e indice
+unico parziale rendono impossibile collegare una non selezionata al mapping di
+un'altra sessione; (50) conteggio pre-commit e rollback totale impediscono a un
+result snapshot-level terminale di lasciare una discovery pending; (51) un
+result `CONFIRMATION_REQUIRED` lascia invece tutte le discovery coerentemente
+pending fino a una sola answer/expiry vincente; (52) i casi §§10.26–10.30
+coprono fan-out completa, race, retry e failure intermedia.
 
 **Non resta alcuna decisione normativa bloccante.** Restano lavoro
 implementativo: definire modelli/codec, migrazione v8, repository, adapter dello

@@ -3515,3 +3515,14 @@ Una compatibile produce mapping automatico anche in presenza di incompatibili;
 più compatibili producono una sola confirmation con tupla congelata e nessun
 mapping fino alla selezione. Guardie, retry e persistenza sono simmetrici:
 `actual_session_ref` e `prescription_snapshot_ref` sono entrambi univoci.
+
+### Addendum normativo v8 — terminalità per-sessione
+
+Il `MatchingResult` snapshot-level appartiene alla valutazione dello snapshot
+contro l'intera tupla congelata. Ogni discovery `SINGLE` della tupla deve avere
+esattamente una resolution terminale: la sola sessione scelta è
+`SELECTED_MATCH` e può citare il mapping; incompatibili, compatibili non scelte
+e chiusure non associative citano il result condiviso ma impongono mapping
+null. Un outcome terminale non è pubblicabile finché la fan-out completa non è
+committata atomicamente; durante `CONFIRMATION_REQUIRED` tutte le discovery
+rappresentate restano invece pending in modo coerente.

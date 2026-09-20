@@ -435,3 +435,13 @@ sessioni coperte, deduplica la worklist, e per ogni snapshot invoca una volta il
 matcher con la tupla completa same-subject ordinata. Prima di qualsiasi mapping
 rilegge sia la sessione sia lo snapshot: ciascun lato può partecipare ad al più
 un mapping; catene precedenti su qualunque lato vengono osservate o riprese.
+
+### Addendum normativo v8 — terminalità discovery per sessione
+
+Ogni sessione della tupla conserva la propria discovery `SINGLE`. Alla
+terminalizzazione snapshot-level riceve esattamente una resolution che cita il
+result condiviso e la decisione di compatibilità. Soltanto la sessione
+selezionata può avere `SELECTED_MATCH` e un mapping con
+`mapping.actual_session_ref` uguale al proprio ID; ogni sessione non selezionata
+deve avere mapping null. La fan-out atomica impedisce sia discovery pending
+orfane sia il falso collegamento di una sessione al mapping di un'altra.

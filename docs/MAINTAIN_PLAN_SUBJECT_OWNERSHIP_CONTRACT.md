@@ -127,3 +127,12 @@ chiamata unica. La futura v8 impone `UNIQUE(actual_session_ref)` e
 `UNIQUE(prescription_snapshot_ref)` sui mapping; la migrazione rifiuta e
 rollbacka duplicati legacy in entrambe le direzioni. Nessun binding ownership
 consente di scegliere implicitamente tra più sessioni compatibili.
+
+### Addendum normativo v8 — ownership della fan-out terminale
+
+La fan-out terminale conserva lo stesso `subject_ref` byte-per-byte su
+snapshot, result condiviso, discovery, resolution, sessione e mapping
+eventuale. Solo `SELECTED_MATCH` ammette il mapping e richiede che esso punti
+alla sessione della resolution; tutte le disposition non selezionate impongono
+mapping null. L'ownership comune non autorizza mai una discovery non selezionata
+a riferire il mapping di un'altra sessione.
