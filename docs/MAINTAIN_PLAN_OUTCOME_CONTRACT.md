@@ -1572,15 +1572,20 @@ insufficiente quando questa determina l'assenza di risultati definitivi.
 ### 5.3 Identificativo diretto
 
 Un ID della prescrizione inviato al dispositivo e restituito dall'attività
-dovrà provare l'associazione quando sarà valido e univoco. Dovrà collegare la
-seduta anche se
-disciplina, durata, intensità o struttura differiscono: queste differenze sono
-scostamenti di esecuzione, non errori di matching.
+dovrà provare l'associazione quando sarà valido, univoco e same-subject. Ha
+priorità assoluta anche quando un'altra sessione è strutturalmente compatibile e
+dovrà collegare la seduta anche se finestra, disciplina, durata, intensità,
+composition, componenti, consecutività o timing differiscono: queste differenze
+sono scostamenti di esecuzione, non errori di matching.
 
-Un ID duplicato, incompleto, contraddittorio o privo di prescrizione
-corrispondente dovrà richiedere confirmation. Un ID Garmin o Strava che
-identificherà soltanto l'attività non dovrà equivalere automaticamente al
-prescription/workout ID.
+Un returned prescription ID duplicato/ambiguo, incompleto o malformato, oppure
+privo di prescrizione corrispondente, dovrà produrre l'esito non automatico
+`CONFIRMATION_REQUIRED`, senza mapping e senza fallire l'intera sincronizzazione.
+Un ID Garmin o Strava che identifica soltanto l'attività non equivale al
+prescription/workout ID. Un riferimento cross-subject resta invece una
+violazione di ownership fail-closed; un payload persistito realmente corrotto
+resta un errore tecnico. Questo contratto non definisce persistenza o lifecycle
+della conferma.
 
 ### 5.4 Matching deterministico senza direct ID
 
@@ -1589,9 +1594,13 @@ Policy draft: `maintain-plan-matching/1.0.0-draft`.
 Enumerazione, ownership, dispatch composition-aware e cardinalità deterministica
 `ZERO`/`ONE`/`MULTIPLE` sono definiti dal
 [contratto runtime matching](MAINTAIN_PLAN_RUNTIME_MATCHING_CONTRACT.md).
-L’associazione automatica è ammessa soltanto per un unico candidato compatibile;
-zero o più candidati non producono un tie-break o un mapping automatico. Durata,
-distanza, nome, carico e somiglianza non sono spareggi.
+Senza direct ID autorevole, `SINGLE`, `BRICK` e `MULTISPORT` richiedono tutti
+che lo start appartenga alla `scheduled_window`; la discovery di predecessori o
+successori non deroga a tale requisito. Discipline e componenti devono
+coincidere, salvo `allowed_substitutions` esplicito del componente. Soltanto un
+unico candidato compatibile consente l’associazione automatica; zero o più
+candidati non producono tie-break o mapping. Durata, distanza, nome, carico e
+somiglianza non sono spareggi.
 
 Una decisione ambigua o non automatica richiede futura conferma a livello di
 outcome. PR #46 non definisce né rende eseguibile la persistenza della conferma,
@@ -1621,12 +1630,17 @@ Una Brick:
 - ammette al massimo 15 minuti fra la fine di un componente e l'inizio del
   successivo;
 - può sostituire il limite generale di 15 minuti con una regola esplicita
-  della prescrizione.
+  della prescrizione;
+- richiede ordine temporale, nessun overlap invalido, nessuna attività estranea
+  interposta e timestamp sufficienti a verificare il limite;
+- ammette fra componenti soltanto transizioni esplicitamente riconosciute dalla
+  normalizzazione e consentite dalla policy versionata.
 
-L'ordine non determina se la sessione sia una Brick. Se differisce dalla
-prescrizione, la sessione resta Brick e lo scostamento è valutato nella
-struttura. Oltre 15 minuti la combinazione non è classificata automaticamente
-come Brick. La conferma può collegare attività alla stessa prescrizione, ma non
+L'ordine non determina se la sessione osservata sia classificabile come Brick,
+ma senza direct ID deve coincidere con l'ordine prescritto per il matching
+automatico. Se differisce, la sessione resta Brick e lo scostamento è valutato
+nella struttura soltanto dopo un'associazione autorevole. Oltre 15 minuti la
+combinazione non è classificata automaticamente come Brick. La conferma può collegare attività alla stessa prescrizione, ma non
 certifica la consecutività e non rende rispettata la struttura.
 
 Un singolo file multisport conserva componenti, ordine e tempi di transizione;
@@ -1635,8 +1649,13 @@ sovrapposizione, nessuna attività estranea interposta e gap entro la policy;
 altrimenti richiedono conferma.
 
 Se la prescrizione dichiara `brick`, componenti compatibili e consecutivi sono
-valutati come candidata Brick. Se dichiara `multisport`, questa classificazione
-è mantenuta e sono valutati componenti, ordine e transizioni. La classificazione
+valutati come candidata Brick. Un overlap invalido, un gap eccessivo o timing
+non verificabile impedisce il matching automatico. Se dichiara `multisport`,
+questa classificazione è mantenuta e sono valutati componenti, ordine e
+transizioni. Per entrambe le composition, una disciplina osservata è
+compatibile anche quando è elencata nell'`allowed_substitutions` esplicito del
+componente corrispondente; una sostituzione non dichiarata non è compatibilità
+strutturale automatica. La classificazione
 multisport del dispositivo è evidence utile, ma non sostituisce la
 prescrizione. Classificazione mancante o interpretabile in più modi richiede
 conferma con provenance conservata.

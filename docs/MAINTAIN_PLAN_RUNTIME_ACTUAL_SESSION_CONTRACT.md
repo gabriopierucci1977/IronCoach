@@ -381,7 +381,17 @@ Un'`ActualSession` persistita può essere input del futuro
 [contratto runtime matching](MAINTAIN_PLAN_RUNTIME_MATCHING_CONTRACT.md) solo
 con payload strict, timestamp autorevole e `subject_ref` byte-equal allo
 snapshot e alla coverage. L'intera tupla eleggibile deve essere preservata e
-ordinata canonicamente; il suo ordine non è ranking.
+ordinata canonicamente; il suo ordine non è ranking. Un returned prescription
+ID valido, univoco e same-subject è evidence autorevole anche con deviazioni di
+esecuzione; un valore malformato, dangling o ambiguo richiede un esito non
+automatico, mentre cross-subject e corruzione persistita falliscono chiuso.
+
+Senza direct ID, lo start deve appartenere alla finestra per ogni composition.
+`BRICK` richiede inoltre tempi sufficienti a verificare overlap, transizioni e
+gap della policy versionata; le sostituzioni sono compatibili soltanto se
+esplicitamente consentite per il componente. Poiché il normalizer P0 corrente
+non produce `BRICK` o `MULTISPORT`, quei rami restano disabilitati finché input
+e runtime conformi non esistono.
 
 PR #46 non abilita matching né aggiunge persistenza di conferme, risposte o
 lifecycle successivi. Restano necessari schema, repository, runtime e test

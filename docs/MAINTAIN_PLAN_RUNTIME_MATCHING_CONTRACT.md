@@ -22,7 +22,7 @@ proibisce ogni scrittura.
 
 Evaluation, report, learning, ripianificazione, Decision Memory e Coach Engine
 restano fuori perimetro. Non si può inferire da questo documento che i flussi
-deferiti del §10 siano eseguibili.
+deferiti del §11 siano eseguibili.
 
 ## 2. Input autorevoli
 
@@ -73,11 +73,19 @@ Se tale set è vuoto, contiene invece l'intero gruppo predecessore con massimo
 `window.start > S.start`; tutti gli ex aequo sono inclusi. Una point window
 `start == end` contiene `S` solo quando coincide con `S.start`.
 
-Un direct ID presente sulla sessione viene validato prima della decisione. Deve
-essere sintatticamente valido, risolversi univocamente a uno snapshot persistito
-e same-subject. È evidence autorevole e viene unito al set senza eliminare gli
-altri candidati. Direct ID dangling, ambiguo, corrotto o cross-subject è errore,
-non assenza e non richiesta di conferma sostitutiva.
+Un returned prescription/workout ID presente sulla sessione viene risolto prima
+del matching strutturale. Se è sintatticamente valido e risolve univocamente uno
+snapshot persistito same-subject, è evidence autorevole: seleziona quello
+snapshot per quella sessione ed esclude qualsiasi alternativa meramente
+strutturale, anche quando l'alternativa sarebbe altrimenti compatibile. Non è un
+tie-break, ma una prova d'identità con priorità assoluta.
+
+Un returned ID malformato, dangling o ambiguo non è un errore tecnico dell'intero
+scope: produce una decisione non automatica che richiede futura conferma e nessun
+mapping. Un riferimento cross-subject è invece una violazione di ownership e
+fallisce chiuso; anche un record persistito realmente corrotto o indecodificabile
+resta un errore tecnico. Questa distinzione non introduce storage o lifecycle di
+conferma.
 
 Per ogni snapshot della worklist, il matcher riceve la tupla completa delle
 sessioni autorevolmente catturate ed eleggibili. È vietato decomporre la tupla
@@ -138,7 +146,7 @@ window-driven. Prima di decidere, l'implementazione futura deve interrogare le
 tre guardie nel loro scope esatto e rileggere gli artefatti autorevoli.
 
 Questo PR non definisce la persistenza di decisioni pendenti né come chiuderne
-le relazioni: tali lifecycle appartengono al §10 e restano disabilitati.
+le relazioni: tali lifecycle appartengono al §11 e restano disabilitati.
 
 ## 6. Dispatch puro e compatibilità
 
@@ -146,37 +154,68 @@ Il matcher puro applica un dispatch esplicito sulla composition dello snapshot.
 Input sconosciuto o malformato produce errore/`NOT_EVALUABLE`, mai fallback a
 un altro ramo.
 
-### 6.1 `SINGLE`
+### 6.1 Regola comune senza direct ID
 
-Una prescrizione `SINGLE` è compatibile con una sessione solo se:
+Senza direct ID autorevole, ogni ramo `SINGLE`, `BRICK` o `MULTISPORT` richiede
+prima di tutto:
 
-1. la sessione ha una sola attività/segmento normalizzato utile;
-2. sport/discipline canonicali coincidono esattamente;
-3. `S.start` appartiene alla finestra inclusiva dello snapshot; oppure un direct
-   ID valido costituisce evidence esplicita per quella stessa coppia.
+```text
+scheduled_window.start <= S.start AND S.start <= scheduled_window.end
+```
 
-Il direct ID seleziona la coppia indicata ma non rende compatibile una struttura
-o ownership invalida e non elimina evidence concorrente dalla decisione.
+La discovery di gruppi predecessore/successore rende disponibili evidence, ma
+non rende compatibile una sessione fuori finestra e non può produrre un mapping
+automatico strutturale. Per ogni componente, la disciplina osservata è
+compatibile se coincide esattamente con quella prescritta **oppure** compare
+nell'`allowed_substitutions` esplicito di quel componente. Non esistono
+equivalenze implicite o sostituzioni ereditate da altri componenti.
 
-### 6.2 `BRICK`
+Un direct ID valido e same-subject è l'unica eccezione: seleziona la coppia anche
+fuori finestra e non applica composition, numero/ordine/discipline dei
+componenti, consecutività, timing o altri filtri di esecuzione. Queste differenze
+sono scostamenti da valutare dopo il matching e non invalidano l'associazione.
+Ownership invalida o dati persistiti corrotti non sono scostamenti e falliscono
+chiuso.
 
-Una prescrizione `BRICK` richiede una singola sessione composita normalizzata
-con almeno due segmenti utili. Numero, ordine e discipline dei segmenti devono
-coincidere esattamente con la prescrizione. Segmenti mancanti, extra,
-riordinati o sport non coincidenti sono incompatibili. Non si assemblano
-sessioni indipendenti per simulare un brick.
+### 6.2 `SINGLE`
 
-### 6.3 `MULTISPORT`
+Soddisfatta la regola comune, una prescrizione `SINGLE` è strutturalmente
+compatibile solo se la sessione ha una sola attività o un solo segmento
+normalizzato utile e la disciplina coincide o è una sostituzione esplicitamente
+autorizzata per quel componente.
 
-Una prescrizione `MULTISPORT` richiede una singola sessione multisport
-normalizzata. Numero, ordine e discipline delle fasi utili devono coincidere
-esattamente. Le transizioni possono essere ignorate solo se il contratto di
-normalizzazione le marca esplicitamente come transizioni; non possono essere
-reinterpretate come fasi. Non si assemblano attività separate.
+### 6.3 `BRICK`
+
+Soddisfatta la regola comune, una prescrizione `BRICK` richiede una singola
+sessione composita normalizzata con almeno due componenti utili e almeno due
+discipline. Numero e ordine devono coincidere con la prescrizione; ogni
+disciplina deve coincidere o essere autorizzata da `allowed_substitutions` nella
+posizione corrispondente. Non si assemblano sessioni indipendenti.
+
+La compatibilità include integralmente la policy versionata
+`maintain-plan-brick-consecutivity`: componenti temporalmente ordinati, nessun
+overlap invalido, nessuna attività estranea interposta e gap fra componenti non
+superiore al limite esplicito della prescrizione oppure, se assente, a 15 minuti.
+Le sole transizioni esplicitamente riconosciute dalla normalizzazione e ammesse
+dalla policy possono interporsi; devono conservare ordine e vincoli temporali e
+non diventano componenti sportivi. Dati temporali mancanti o non confrontabili,
+overlap invalido o gap eccessivo rendono la coppia incompatibile per il matching
+automatico. Una Brick solo strutturalmente simile ma non consecutiva non produce
+`ONE`.
+
+### 6.4 `MULTISPORT`
+
+Soddisfatta la regola comune, una prescrizione `MULTISPORT` richiede una singola
+sessione multisport normalizzata. Numero e ordine delle fasi utili devono
+coincidere; ogni disciplina deve coincidere o essere una sostituzione
+esplicitamente autorizzata per la fase corrispondente. Le transizioni possono
+essere ignorate solo se la normalizzazione le marca esplicitamente come tali;
+non possono essere reinterpretate come fasi né usate per assemblare attività
+indipendenti.
 
 `BRICK` e `MULTISPORT` sono rami distinti: nessun fallback reciproco è
-consentito. Dove il matcher corrente non può soddisfare questi predicati, il
-matching resta disabilitato.
+consentito. Dove il matcher corrente non può rappresentare composition,
+componenti, sostituzioni o tempi richiesti, il matching resta disabilitato.
 
 ## 7. Decisioni deterministiche
 
@@ -186,17 +225,20 @@ decisione:
 | cardinalità compatibile | decisione | mapping automatico |
 |---:|---|---|
 | 0 | `ZERO` | no |
-| 1 | `ONE` | sì, salvo ambiguità direct-ID/evidence |
+| 1 | `ONE` | sì |
 | >= 2 | `MULTIPLE` | no |
 
 `ZERO` conserva le reason key deterministiche dei predicati falliti. Se la
 tupla input è vuota, la decisione è una semplice osservazione zero-sessioni,
 ammessa soltanto dal predicato di copertura completa del §4.2.
 
-`ONE` identifica esattamente snapshot e sessione. Un direct ID valido verso
-l'unico candidato compatibile è selezione autorevole. Se evidence diretta e
-compatibilità strutturale indicano alternative diverse, non è permessa una
-scelta implicita: la decisione richiede futura conferma.
+`ONE` identifica esattamente snapshot e sessione. Un direct ID valido, univoco e
+same-subject produce `ONE` per la coppia referenziata anche se un'altra sessione
+è strutturalmente compatibile: l'evidence strutturale concorrente non può
+sostituire la selezione diretta. Un returned ID malformato, dangling o ambiguo
+produce invece l'esito non automatico `CONFIRMATION_REQUIRED`, senza mapping e
+senza fallire l'intera sincronizzazione. Questo è soltanto un outcome; la sua
+persistenza resta differita.
 
 `MULTIPLE` conserva l'intera tupla compatibile ordinata. Nessun elemento viene
 selezionato per posizione. Le decisioni ambigue o non automatiche richiedono
@@ -204,7 +246,28 @@ futura conferma dell'atleta a livello di outcome, ma questo PR non definisce
 schema di conferma, answer storage, fan-out o lifecycle e non afferma che la
 persistenza corrente possa eseguirli.
 
-## 8. Invarianti minime di persistenza futura
+## 8. Esempi normativi focalizzati
+
+1. **Direct ID contro candidato strutturale.** `S1` restituisce un ID valido per
+   `P`; `S2` è strutturalmente compatibile con `P`. Il risultato seleziona
+   `P→S1`; `S2` non crea ambiguità e non può sottrarre `P`.
+2. **Direct ID con deviazioni.** `S1` identifica validamente `P` ma è fuori
+   finestra, ha disciplina sostituita senza autorizzazione, componenti diversi e
+   timing non conforme. `P→S1` resta l'associazione; tutte le differenze sono
+   deviazioni di esecuzione successive al matching.
+3. **Direct ID invalido.** Un returned ID malformato, dangling o ambiguo produce
+   `CONFIRMATION_REQUIRED`, nessun mapping e nessun errore tecnico di scope.
+4. **Composte fuori finestra.** Una `BRICK` o `MULTISPORT` strutturalmente
+   perfetta con start esterno alla finestra è incompatibile senza direct ID,
+   anche se proviene dal gruppo predecessore/successore.
+5. **Consecutività Brick.** Componenti sovrapposti in modo invalido o separati
+   da 16 minuti con limite generale di 15 non producono `ONE`; un limite
+   esplicito diverso si applica letteralmente.
+6. **Sostituzione autorizzata.** Una fase prescritta `RUN` con
+   `allowed_substitutions: [BIKE]` accetta `BIKE` nella stessa posizione per
+   `SINGLE`, `BRICK` o `MULTISPORT`, ferme finestra e altre regole del ramo.
+
+## 9. Invarianti minime di persistenza futura
 
 Questo contratto non propone DDL v8. Un'implementazione futura deve essere
 compatibile con lo schema esistente e introdurre separatamente, previa
@@ -230,16 +293,18 @@ produce retry idempotente oppure conflitto, senza overwrite.
 
 Le identità future devono derivare da input canonici versionati, mai da ordine
 di query, clock implicito o stato parziale. Le identità e la migrazione concreta
-sono volutamente differite al §10; nessuna nuova relazione di persistenza è
+sono volutamente differite al §11; nessuna nuova relazione di persistenza è
 specificata qui.
 
-## 9. Matrice operativa minima
+## 10. Matrice operativa minima
 
 | precondizione | azione consentita |
 |---|---|
 | flag falso, assente o invalido | nessuna enumerazione o scrittura |
 | sync fallita/parziale | nessuna decisione di assenza |
-| input corrotto o cross-subject | errore e rollback |
+| persisted input corrotto o riferimento cross-subject | errore e rollback |
+| returned direct ID malformato, dangling o ambiguo | `CONFIRMATION_REQUIRED`; nessun mapping, scope non fallito |
+| direct ID valido, univoco e same-subject | selezione autorevole anche con mismatch di esecuzione o alternative strutturali |
 | coverage interseca ma non contiene l'intera finestra | valutare solo sessioni osservate; non inferire zero-sessioni |
 | coverage completa, snapshot non gestito, nessuna sessione attiva/eleggibile | decisione pura `ZERO`; lifecycle differito |
 | un candidato compatibile senza conflitto | decisione `ONE`; mapping futuro atomico |
@@ -248,7 +313,7 @@ specificata qui.
 | uno dei lati è già mappato diversamente | conflitto fail-closed |
 | retry identico | restituzione deterministica dell'esito esistente |
 
-## 10. Deferred follow-up contracts (non normativo)
+## 11. Deferred follow-up contracts (non normativo)
 
 I seguenti temi **non fanno parte di PR #46** e non devono essere inferiti dal
 nucleo normativo precedente:
@@ -265,7 +330,7 @@ di follow-up separato e approvato, più schema, migrazione, repository, runtime 
 test prima dell'abilitazione. In particolare questo PR non contiene una
 transazione eseguibile per conferme, risposte, scadenze o riconciliazioni.
 
-## 11. Criteri di abilitazione futura
+## 12. Criteri di abilitazione futura
 
 Il flag può diventare vero soltanto dopo che test di implementazione dimostrano:
 
@@ -276,7 +341,7 @@ Il flag può diventare vero soltanto dopo che test di implementazione dimostrano
 5. nessun ranking o tie-break implicito;
 6. unicità bidirezionale dei mapping, revalidation `BEGIN IMMEDIATE`, rollback,
    retry idempotente e conflitti fail-closed;
-7. assenza di dipendenze dai lifecycle differiti del §10.
+7. assenza di dipendenze dai lifecycle differiti del §11.
 
 Fino ad allora il solo comportamento conforme è mantenere
 `IRONCOACH_MAINTAIN_PLAN_MATCHING_ENABLED=false`.

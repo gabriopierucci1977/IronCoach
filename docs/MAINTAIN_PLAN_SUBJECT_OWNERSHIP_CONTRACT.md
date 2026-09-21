@@ -73,8 +73,11 @@ evaluation, reporting, learning, modifica del piano e Coach Engine.
 
 Il [contratto runtime matching](MAINTAIN_PLAN_RUNTIME_MATCHING_CONTRACT.md)
 riusa senza modificarlo questo binding: snapshot, sessione, coverage e mapping
-devono avere `subject_ref` valido e byte-equal. Un candidato cross-subject è un
-errore fail-closed e non partecipa alla cardinalità.
+devono avere `subject_ref` valido e byte-equal. Un direct ID valido può essere
+autorevole soltanto entro questo binding. Un riferimento direct-ID
+cross-subject è una violazione di ownership fail-closed e non un normale ID
+invalido da inviare al boundary non automatico; nessuna deviazione di esecuzione
+può derogare a questa regola.
 
 PR #46 documenta decisioni pure e invarianti minime di mapping, ma non abilita
 il matcher e non introduce nuovo schema. Persistenza delle conferme, risposte e
