@@ -1668,7 +1668,12 @@ la guard globale dello snapshot. Una candidata respinta resta quindi eleggibile
 per una diversa sessione. La resolution respinta può citare il result della
 selected Q: la relation snapshot P resta distinta dal decision snapshot Q; solo
 questa disposition consente la differenza, richiede entrambi nella frozen
-`MULTIPLE` e vieta mapping.
+`MULTIPLE` e vieta mapping. Quando un mapping consuma uno snapshot, la stessa
+transazione chiude con `CANDIDATE_SNAPSHOT_CONSUMED_BY_OTHER_MAPPING` ogni sua
+relation pending in altre discovery. Il frozen set resta immutabile; answer e
+zero-session usano l'effective set, che sottrae tutte le relation terminali. Un
+set svuotato chiude `NOT_EVALUABLE` senza answer; un membro residuo resta
+selezionabile.
 
 Quando esiste un solo snapshot ma il matcher puro richiede conferma, la
 discovery `SINGLE` conserva obbligatoriamente il riferimento a quel
@@ -1710,11 +1715,14 @@ restano valutabili. Il matcher puro sarà chiamato soltanto quando è fornita
 almeno una `ActualSession` persistita. La decisione deve distinguere lo snapshot già
 gestito dalla sessione gestita altrove. Per ogni snapshot si cercano prima
 mapping, discovery, result/request zero-sessioni, reconciliation e terminali che trattano quello snapshot o la sua
-specifica relazione. Soltanto questi artefatti consentono lo skip. Poi si
+specifica relazione. Inoltre una membership `SINGLE|MULTIPLE` pending o una
+confirmation che offre ancora lo snapshot impone defer/observe: una tupla vuota
+perché la sessione catturata è già rappresentata non prova assenza. Soltanto in
+assenza di tali relation attive si prosegue. Poi si
 escludono dalla tupla le sessioni già legate autorevolmente ad altre
-prescrizioni, senza reinterpretarle: se la tupla rimanente è vuota e lo snapshot
-non è mai stato gestito, il result/request zero-sessioni è comunque
-obbligatorio e unico. Scope sovrapposti e retry usano lo stesso lookup globale e
+prescrizioni, senza reinterpretarle: se la tupla rimanente è vuota, lo snapshot
+non è mai stato globalmente gestito **e non esiste pending offer**, il
+result/request zero-sessioni è obbligatorio e unico. Scope sovrapposti e retry usano lo stesso lookup globale e
 la stessa identità snapshot-centric.
 
 Il testo obbligatorio dovrà essere:

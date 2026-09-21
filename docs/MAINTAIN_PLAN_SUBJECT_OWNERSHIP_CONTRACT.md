@@ -106,9 +106,10 @@ di late-session reconciliation richiede answer dedicata e discovery nulla;
 una sidecar discovery richiede discovery e vieta la reconciliation answer.
 Ownership uguale non rende intercambiabili relazioni diverse: una sessione
 same-subject già trattata per B viene esclusa dalla tupla di A, ma non prova che
-A sia gestito. Se A non possiede propri mapping/discovery, result/request
-zero-sessioni, reconciliation o terminali e la tupla residua è vuota, deve
-nascere l'unico outcome zero-sessioni di A.
+A sia gestito. Se A non possiede mapping o terminali propri, la tupla residua è
+vuota **e non esiste alcuna relation/confirmation pending che offra A**, deve
+nascere l'unico outcome zero-sessioni di A; una relation pending impone invece
+defer/observe.
 
 La futura v8 aggiunge inoltre una sidecar result/snapshot 1:1 con FK immediate a
 entrambi gli artefatti e `subject_ref` canonico. L'upgrade deve popolarla
@@ -161,3 +162,9 @@ non selected e mapping null. Tutte le altre disposition mantengono uguaglianza
 stretta. I terminal result zero-sessioni hanno identità distinta dall'origine e
 includono subject e snapshot insieme alla causa canonica, impedendo riuso
 cross-subject o cross-snapshot.
+Il mapping P→S1 deve inoltre chiudere nella stessa transazione ogni membership
+pending same-subject di P per sessioni diverse, con mapping null e consuming
+result autorevole. L'effective selectable set sottrae queste relation senza
+mutare il frozen set. Una pending relation same-subject blocca sempre
+l'inferenza zero-sessioni per P, anche quando il filtro rende `remaining`
+vuoto.

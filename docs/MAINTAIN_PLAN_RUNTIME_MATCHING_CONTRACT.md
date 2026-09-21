@@ -364,7 +364,7 @@ matching_discovery_resolution:
   prescription_snapshot_ref: string  # relation snapshot
   decision_snapshot_ref: string      # snapshot del result sidecar
   actual_session_ref: string
-  disposition: SELECTED_MATCH | INCOMPATIBLE | COMPATIBLE_NOT_SELECTED | CANDIDATE_SNAPSHOT_NOT_SELECTED | NON_ASSOCIATIVE_CLOSURE
+  disposition: SELECTED_MATCH | INCOMPATIBLE | COMPATIBLE_NOT_SELECTED | CANDIDATE_SNAPSHOT_NOT_SELECTED | CANDIDATE_SNAPSHOT_CONSUMED_BY_OTHER_MAPPING | NON_ASSOCIATIVE_CLOSURE
   prescription_mapping_ref: string | null
   selected_session_ref: string | null
   frozen_session_refs: [string]
@@ -387,6 +387,7 @@ per una chiusura non associativa. Le disposition sono mutuamente esclusive:
 | `INCOMPATIBLE` | decisione incompatibile | required | **null** | candidata valutata ma incompatibile |
 | `COMPATIBLE_NOT_SELECTED` | compatibile, diversa dalla sessione selezionata per lo stesso snapshot | required | **null** | confirmation ha scelto un'altra sessione |
 | `CANDIDATE_SNAPSHOT_NOT_SELECTED` | sessione originaria, snapshot diverso da quello selezionato | required | **null** | `MULTIPLE` ha scelto un'altra prescrizione; chiude solo questa relation |
+| `CANDIDATE_SNAPSHOT_CONSUMED_BY_OTHER_MAPPING` | sessione diversa da quella mappata, stesso snapshot consumato | consuming result required | **null** | mapping autorevole dello snapshot ha chiuso questa relation pending |
 | `NON_ASSOCIATIVE_CLOSURE` | qualunque membro ancora rappresentato | required | **null** | rejection, risposta non associativa o result `NOT_EVALUABLE`; expiry solo per catene zero-session/reconciliation |
 
 Mapping presence è legale **solo** per `SELECTED_MATCH`. Quella riga richiede
@@ -425,6 +426,49 @@ Lifecycle normativo:
   `CANDIDATE_SNAPSHOT_NOT_SELECTED` per ciascun altro snapshot congelato nella
   `MULTIPLE` originaria. Queste resolution chiudono tutte le relation della
   sessione, ma non consumano globalmente gli snapshot respinti.
+
+#### Consumo cross-discovery di uno snapshot selezionato
+
+Prima di committare un mapping P→S1, la stessa `BEGIN IMMEDIATE` cerca, in
+ordine `(discovery_result_id UTF-8, actual_session_ref UTF-8)`, **ogni**
+membership pending `SINGLE` o `MULTIPLE` di P appartenente allo stesso subject.
+Per ciascuna sessione diversa da S1 inserisce una resolution
+`CANDIDATE_SNAPSHOT_CONSUMED_BY_OTHER_MAPPING`: chiude soltanto `(Sx,P)`, usa
+mapping null e cita il result snapshot-level autorevole che contiene la
+`SELECTED_MATCH` P→S1. Frozen candidate set e request non vengono mutate. Il
+trigger prova membership esatta, subject/snapshot identici e una
+`SELECTED_MATCH` committenda o committata sul consuming result, con mapping P a
+una sessione diversa.
+
+L'**effective selectable set** di una request è il frozen candidate set meno
+ogni relation già chiusa da `CANDIDATE_SNAPSHOT_NOT_SELECTED`,
+`CANDIDATE_SNAPSHOT_CONSUMED_BY_OTHER_MAPPING` o altra resolution terminale.
+Ogni answer rilegge request, head, mapping e resolution sotto `BEGIN IMMEDIATE`:
+può selezionare solo un membro dell'effective set. Se P è stato consumato,
+un'answer successiva per P è stale e segue la regola fail-closed/no-op
+esistente; se R resta attivo, `MULTIPLE(P,R)` resta pending e può scegliere R.
+Se l'effective set diventa vuoto, la transazione appende senza answer né mapping
+un result/discovery terminale `NOT_EVALUABLE` con cause
+`CANDIDATE_SET_EXHAUSTED_BY_OTHER_MAPPING`.
+
+L'ID indipendente del **consumption batch** è SHA-256 versionato di consuming
+result, mapping, snapshot P, subject e lista ordinata delle pending relation da
+chiudere. Il terminal result di exhaustion usa namespace
+`maintain-plan:candidate-consumption-terminal-result:v1`, previous discovery
+head, frozen/effective-set digest, cause kind e `terminal_cause_ref` uguale al
+consumption-batch ID; il successor discovery/event include poi il terminal
+result ID. Nessuna identità è circolare. Stessa testa e batch riproducono gli
+stessi ID; una membership o testa diversa produce ID diversi.
+
+Tutti gli ID sono precalcolati. Dopo la rilettura del request/head selezionato e
+di entrambi i lati univoci del mapping, l'ordine SQL eseguibile è **mapping →
+selected result → result sidecar → `SELECTED_MATCH` → tutte le consumed-relation
+resolution → result/sidecar e derived discovery/event per ogni effective set ora
+vuoto → tutti i successor event**. Il commit avviene soltanto se la fan-out
+cross-discovery è completa. Membership mancante, answer concorrente, mapping
+confliggente o insert parziale rollbacka tutto. Due selezioni concorrenti di P
+serializzano: una vince; l'altra rilegge mapping e propria resolution consumata
+e tratta l'answer come stale senza violare l'unicità dello snapshot.
 
 La fan-out completa è una singola unit of work. Per automatic matching gli ID
 di result e mapping sono precalcolati; a causa della FK immediata v1–v7 da
@@ -597,19 +641,23 @@ snapshot o la coppia rappresentata. Un artefatto riferito soltanto a un'altra
 prescrizione non soddisfa mai il predicato snapshot-level.
 
 Se lo snapshot non è handled, il boundary costruisce la tupla **remaining**
-partendo dalle sessioni persistite dello scope ed escludendo quelle già gestite
-in modo autorevole da altre relazioni. Una sessione mappata o scoperta per
-un'altra prescrizione non viene reinterpretata come candidata dello snapshot
-corrente. Se `remaining` è non vuota, invoca una sola volta il matcher puro con
-lo snapshot e quella tupla. Se `remaining` è vuota e lo snapshot non è handled,
-entra invece obbligatoriamente nel boundary zero-sessioni sotto descritto,
-anche quando la tupla originaria conteneva sessioni tutte escluse. Non crea un
+partendo dalle sessioni persistite dello scope. Classifica separatamente: (a)
+nessuna relation candidata catturata; (b) sessioni definitivamente gestite da
+altre relazioni; (c) relation attive già rappresentate in discovery/confirmation
+pending. Una sessione mappata per un'altra prescrizione non viene reinterpretata
+come candidata; una sessione rimossa perché `(S,P)` è pending non prova invece
+assenza. Se `remaining` è non vuota, invoca una sola volta il matcher puro. Se è
+vuota, crea zero-sessioni **soltanto** quando coverage è completa, P non è
+globalmente handled, non resta sessione unprocessed, non esiste membership
+pending `SINGLE|MULTIPLE` con relation attiva a P e nessuna confirmation pending
+offre P nel proprio effective selectable set. Qualunque relation pending causa
+`defer/observe`: la catena esistente viene ripresa, mai convertita in assenza. Non crea un
 `MatchingDiscoveryResult`: `ZERO` in discovery significa zero snapshot per una
 sessione esistente e non deve essere confuso con zero sessioni rimanenti per uno
 snapshot mai gestito.
 
-Se la tupla `remaining` è vuota, il boundary **non invoca** il matcher di compatibilità.
-Crea invece direttamente il deterministico outcome di assenza sessioni usando
+Se la tupla `remaining` è vuota **e tutti i cinque guard del paragrafo
+precedente sono veri**, il boundary non invoca il matcher di compatibilità e crea direttamente il deterministico outcome di assenza sessioni usando
 la rappresentazione `MatchingResult` snapshot-centric esistente, con
 `status=CONFIRMATION_REQUIRED`, `candidate_session_refs=[]`, candidate evidence
 vuota, mapping null e warning normativo:
@@ -636,8 +684,11 @@ precedente. Prima di creare il caso zero, il repository applica la guard cross-s
 del §4.1 alle sessioni ma decide lo skip esclusivamente con il predicato
 snapshot-level appena definito. Verifica globalmente che non esistano mapping o result/chain snapshot-owning,
 result/request zero-sessioni, reconciliation o artefatti terminali che
-consumino lo snapshot; una discovery che lo cita soltanto come candidato non
-selezionato chiude la coppia originaria ma non supera questa guard globale; il fatto che tutte le sessioni
+consumino lo snapshot. Una discovery terminale che lo cita soltanto come
+candidato non selezionato chiude la coppia originaria ma non supera la guard
+globale; una discovery/confirmation **pending con relation attiva**, pur non
+consumando P globalmente, supera invece il guard pending-relation e impone
+defer/observe. Il fatto che tutte le sessioni
 siano gestite **altrove** non è uno skip. Lookup, filtro, ricalcolo di
 `remaining`, creazione deterministica di result/request e insert avvengono
 nella stessa `BEGIN IMMEDIATE`. Un writer concorrente viene quindi osservato al
@@ -647,11 +698,13 @@ non aggiorna il risultato.
 
 Matrice normativa della decisione window-driven:
 
-| snapshot handled esatto | `remaining` dopo filtro | azione |
-|---|---:|---|
-| sì | qualunque | skip/restituisce la catena autorevole; nessun duplicato |
-| no | non vuota | matcher puro una volta sulla sola tupla `remaining` |
-| no | vuota, anche per filtro di sessioni gestite altrove | crea esattamente un result/request zero-sessioni |
+| snapshot handled globale | relation pending/effective offer | `remaining` | azione |
+|---|---|---:|---|
+| sì | qualunque | qualunque | skip/restituisce catena autorevole |
+| no | qualunque | non vuota | matcher puro una volta su `remaining` |
+| no | sì | vuota | **defer/observe** pending chain; zero-sessioni vietato |
+| no | no | vuota per sole sessioni terminalmente gestite altrove o nessuna catturata | zero-sessioni, ma solo con full coverage e nessun unprocessed |
+| no | no | vuota ma coverage incompleta | defer fino a coverage completa |
 
 La matrice preserva sia la guard pre-matcher cross-scope sia l'invariante di un
 solo mapping per sessione: escludere una sessione già mappata evita di
@@ -1066,6 +1119,7 @@ v8 aggiunge, senza cambiare v1–v7:
   disposition TEXT NOT NULL CHECK
   (disposition IN ('SELECTED_MATCH','INCOMPATIBLE',
   'COMPATIBLE_NOT_SELECTED','CANDIDATE_SNAPSHOT_NOT_SELECTED',
+  'CANDIDATE_SNAPSHOT_CONSUMED_BY_OTHER_MAPPING',
   'NON_ASSOCIATIVE_CLOSURE')),
   prescription_mapping_ref TEXT REFERENCES
   maintain_plan_prescription_mappings(mapping_id), selected_session_ref TEXT,
@@ -1094,11 +1148,20 @@ v8 aggiunge, senza cambiare v1–v7:
   autorevole, membership frozen di P e Q, Q selected e uguale a
   `decision_snapshot_ref`/result sidecar, P diverso, sessione e subject identici,
   mapping null. Per la riga selezionata validano inoltre entrambi i ref del
-  mapping. Per ogni riga non selezionata vietano il mapping
-  anche nel payload. Prima del commit il repository verifica che il numero di
-  resolution inserite sia esattamente il numero delle relazioni discovery
-  rappresentate (`SINGLE` più tutte le membership congelate di `MULTIPLE`) nel
-  result terminale; errore causa rollback della unit of work;
+  mapping. `CANDIDATE_SNAPSHOT_CONSUMED_BY_OTHER_MAPPING` è ammessa anche per
+  discovery pending `SINGLE|MULTIPLE`, impone relation snapshot uguale al
+  consuming result sidecar, mapping null, sessione diversa dalla
+  `SELECTED_MATCH` dello stesso result e membership/subject esatti. Per ogni
+  riga non selezionata vietano il mapping anche nel payload. Sono inoltre
+  obbligatori gli indici
+  `(prescription_snapshot_ref,disposition,discovery_result_ref)` e
+  `(matching_result_ref,disposition,actual_session_ref)` per enumerare consumo e
+  provarne il result autorevole senza JSON. Prima del commit il repository
+  verifica separatamente: (a) fan-out completa delle relation rappresentate dal
+  result terminale selezionato; (b) una e una sola consumed-resolution per ogni
+  altra membership pending dello snapshot; (c) terminal closure per ogni
+  effective set svuotato. Qualunque conteggio incompleto causa rollback
+  dell'intera unit of work;
 - `maintain_plan_matching_result_snapshot_index(matching_result_ref TEXT
   PRIMARY KEY REFERENCES maintain_plan_matching_results(matching_result_id),
   prescription_snapshot_ref TEXT NOT NULL REFERENCES
@@ -1437,11 +1500,14 @@ discovery, nel result e nell'evidence, senza estendere l'enum o i CHECK v1–v7.
 Gli indici univoci sui mapping per `actual_session_ref` e per
 `prescription_snapshot_ref`, insieme alla rilettura preventiva di entrambi i
 lati nella transazione, impediscono un secondo mapping in qualunque direzione. Retry identico restituisce la
-coppia esistente; contenuto divergente rollbacka.
-«Non svolta», «non sincronizzata» e «non lo so» non producono mapping.
+coppia esistente; contenuto divergente rollbacka. Automatico, direct ID,
+`SELECT_SNAPSHOT`, confirmation `SINGLE` e late reconciliation applicano tutti,
+senza eccezioni, la fan-out cross-discovery del §4.1 prima del commit del
+mapping. «Non svolta», «non sincronizzata» e «non lo so» non producono mapping.
 
-Un result terminale senza mapping richiede comunque una resolution
-`NON_ASSOCIATIVE_CLOSURE` per ogni discovery rappresentata; un result pending
+Un result terminale senza mapping richiede comunque una resolution terminale
+per ogni relation rappresentata: `NON_ASSOCIATIVE_CLOSURE` oppure la già
+presente `CANDIDATE_SNAPSHOT_CONSUMED_BY_OTHER_MAPPING` nel caso di exhaustion; un result pending
 non ne richiede alcuna e vieta fan-out parziali. Un result terminale con mapping
 richiede esattamente una `SELECTED_MATCH` e zero o più resolution non selezionate
 con mapping null. Questi vincoli valgono anche per direct ID e reconciliation. L’expiry ordinaria
@@ -1478,6 +1544,16 @@ sha256: 2798d79162184502f4f3fe6cb26994b79c091ce9d5777096c21cbb1f3090bf6f
 Cambiare disposition, selected session o mapping cambia l'identità; un retry
 byte-identico riusa la riga canonica. La preimage `SELECTED_MATCH` include il
 solo mapping canonico, mentre ogni altra preimage deve contenerlo come null.
+
+Il consumption-batch usa namespace
+`maintain-plan:candidate-consumption-batch:v1:sha256:<hash>` e preimage con
+domain/version, consuming result, consuming mapping, subject, snapshot e lista
+ordinata delle relation `(discovery,session,snapshot)` da chiudere. Il terminal
+result per effective set vuoto usa
+`maintain-plan:candidate-consumption-terminal-result:v1:sha256:<hash>` e include
+previous discovery head, batch ref, frozen candidate refs, effective candidate
+refs vuota, subject, cause/status e policy version. L'event/discovery successore
+include il terminal result, mai il contrario.
 
 L'`evidence_fingerprint` deterministico è SHA-256 della seguente preimage
 canonica: `artifact_version`, policy ID/version, `subject_ref`,
@@ -1634,6 +1710,16 @@ zero iniziale include inoltre `origin_request_id`, `previous_chain_head_id`,
 include request e answer reconciliation. Un evento answerless include entrambi
 gli ID come null. Questa discriminazione fa parte della preimage e impedisce a
 due tipi di answer con lo stesso testo di condividere identità.
+
+Vettori normativi del consumo cross-discovery (`é` è U+00E9):
+
+```text
+consumption batch preimage: {"closed_relation_refs":["D-S2|S2|P"],"consuming_mapping_ref":"M-P-S1","consuming_result_ref":"R-P-S1","domain":"maintain-plan.candidate-consumption-batch","identity_version":"1","prescription_snapshot_ref":"P","subject_ref":"subject-é"}
+SHA-256: fec52d9e2e9d40b4365b9c84532a8c445ed0ddab7daee2e5f93a46b768008957
+
+candidate exhaustion result preimage: {"consumption_batch_ref":"batch-é","domain":"maintain-plan.candidate-consumption-terminal-result","effective_candidate_refs":[],"frozen_candidate_refs":["P"],"identity_version":"1","matching_policy_version":"1.0.0-draft","previous_discovery_head_ref":"D-S2","subject_ref":"subject-é","terminal_cause_kind":"CANDIDATE_SET_EXHAUSTED_BY_OTHER_MAPPING","terminal_status":"NOT_EVALUABLE"}
+SHA-256: 2ec1bcdc36056a090a74f3914c542b15e51b331a2424ebd520bc1180d4f3c109
+```
 
 Vettore normativo del result terminale zero-sessioni (`é` è U+00E9):
 
@@ -2126,6 +2212,43 @@ eseguibile verificato è ID precompute e head re-read → answer eventuale → r
 terminale → result/snapshot sidecar → fan-out → event; nessuna FK differita o
 identità circolare è richiesta.
 
+### 10.35 Consumo atomico fra discovery sovrapposte
+
+S1 congela `MULTIPLE(P,Q)` e S2 congela `MULTIPLE(P,R)`; entrambe le request
+sono pending. S1 seleziona P. La stessa `BEGIN IMMEDIATE` crea P→S1 e
+`SELECTED_MATCH`, enumera D2 in ordine UTF-8 e aggiunge
+`(S2,P)=CANDIDATE_SNAPSHOT_CONSUMED_BY_OTHER_MAPPING` con mapping null e
+consuming result P. D2 conserva frozen `(P,R)`, ma effective set diventa `(R)`:
+un answer P è stale, mentre R resta selezionabile. Un retry rilegge mapping,
+batch e resolution canoniche e non duplica nulla.
+
+Se S3 possiede `SINGLE(P)`, lo stesso batch chiude la sua unica relation; il set
+effettivo vuoto produce result/discovery `NOT_EVALUABLE` con causa
+`CANDIDATE_SET_EXHAUSTED_BY_OTHER_MAPPING`, senza answer né mapping. Due
+selezioni concorrenti di P serializzano: un solo mapping vince e l'altra request
+osserva la consumed-resolution. Se una required resolution non può essere
+inserita, mapping, selected result e ogni fan-out vengono rollbackati insieme.
+
+### 10.36 Pending relation vieta zero-sessioni
+
+Con S pending in `MULTIPLE(P,Q)`, l'enumerazione window-driven può filtrare S da
+`remaining` per evitare un secondo matcher, ma registra separatamente le due
+relation attive. Per P e Q la matrice restituisce `defer/observe`, non crea
+result/request zero-sessioni anche con full coverage. La confirmation esistente
+può poi risolversi validamente; soltanto dopo una chiusura terminale delle
+relation e in assenza di mapping, pending offer, sessioni unprocessed e altri
+guard può una futura invocazione rivalutare l'eligibility zero-sessioni. Scope
+overlapping e retry osservano la stessa testa e non duplicano catene.
+
+La simulazione SQLite temporanea e non versionata è stata estesa con D1/D2
+sovrapposte, consumo P, effective set residuo R, exhaustion di una `SINGLE(P)`,
+writer concorrenti, failure iniettata nella seconda consumed-resolution,
+window-driven defer per P/Q e retry della fan-out. Ogni scenario riuscito ha
+eseguito `PRAGMA foreign_key_check` (zero righe) e `PRAGMA integrity_check`
+(`ok`). Il DDL temporaneo ha usato gli stessi enum, FK, UNIQUE, indici membership/
+resolution e trigger di membership/selected-result/effective-answer descritti
+nel §7; script e database non sono committati.
+
 ## 11. Errori, upgrade e decisioni residue
 
 Sono errori tecnici: scope assente/non riuscito/incoerente; righe nel perimetro
@@ -2244,7 +2367,12 @@ verificato; (64) la validazione conditional P→Q è limitata a
 `CANDIDATE_SNAPSHOT_NOT_SELECTED`, mentre ogni disposition ordinaria mantiene
 snapshot equality; (65) la simulazione SQLite temporanea ha esercitato FK,
 CHECK, trigger, retry, race, release e rollback e ha superato
-`foreign_key_check`/`integrity_check`. (59) ogni uso di handled distingue guard relation, session e snapshot:
+`foreign_key_check`/`integrity_check`. (66) ogni mapping enumera e chiude atomicamente
+le membership pending dello snapshot; (67) effective selectable set sottrae
+relation terminali senza mutare frozen evidence; (68) exhaustion usa causa e
+identità non circolari; (69) ogni `remaining=()` distingue assenza reale da
+sessioni catturate ma pending; (70) la simulazione estesa copre winner/loser,
+rollback cross-discovery, defer zero-sessioni, resolution successiva e retry. (59) ogni uso di handled distingue guard relation, session e snapshot:
 una terminale `MULTIPLE` chiude tutte le relazioni originarie ma consuma
 soltanto la selected; (60) direct ID e selezione atleta preservano frozen
 evidence senza sopprimere candidate non selezionate per altre sessioni; (61)

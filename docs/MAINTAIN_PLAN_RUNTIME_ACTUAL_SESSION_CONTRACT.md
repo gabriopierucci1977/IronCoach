@@ -344,6 +344,10 @@ successore. Per una `MULTIPLE(P,Q)` risolta su Q, la resolution di P può citare
 il result Q solo con disposition `CANDIDATE_SNAPSHOT_NOT_SELECTED`, mapping null
 e membership frozen rigorosamente verificata; P resta disponibile ad altre
 sessioni.
+Se invece P viene mappato, ogni altra relation pending che contiene P viene
+chiusa atomicamente come consumed-by-other-mapping. La sessione catturata resta
+evidence: il percorso window-driven deve osservare/deferire quella catena e non
+può trasformare un `remaining=()` da filtro pending in zero-sessioni.
 
 ## 11. Criteri di accettazione
 
