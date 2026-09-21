@@ -337,6 +337,13 @@ ancora essere mappata a una sessione diversa. La decisione zero-sessioni resta
 separata dall'enumerazione: richiede coverage successful continua dell'intera
 finestra (`coverage_start <= start` e `end < coverage_end`), anche per union di
 scope; un gap o una coverage parziale vieta inferenza di assenza.
+Il result zero-sessioni originario e il terminale `NOT_EVALUABLE` hanno ID
+separati: il secondo lega original result, predecessor head e causa answer o
+schedule indipendente, quindi viene inserito con sidecar prima dell'evento
+successore. Per una `MULTIPLE(P,Q)` risolta su Q, la resolution di P può citare
+il result Q solo con disposition `CANDIDATE_SNAPSHOT_NOT_SELECTED`, mapping null
+e membership frozen rigorosamente verificata; P resta disponibile ad altre
+sessioni.
 
 ## 11. Criteri di accettazione
 

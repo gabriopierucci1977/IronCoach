@@ -361,7 +361,8 @@ matching_discovery_resolution:
   discovery_resolution_id: string
   discovery_result_ref: string
   matching_result_ref: string
-  prescription_snapshot_ref: string
+  prescription_snapshot_ref: string  # relation snapshot
+  decision_snapshot_ref: string      # snapshot del result sidecar
   actual_session_ref: string
   disposition: SELECTED_MATCH | INCOMPATIBLE | COMPATIBLE_NOT_SELECTED | CANDIDATE_SNAPSHOT_NOT_SELECTED | NON_ASSOCIATIVE_CLOSURE
   prescription_mapping_ref: string | null
@@ -394,6 +395,17 @@ selected_session_ref` e `mapping.prescription_snapshot_ref =
 result.prescription_snapshot_ref = resolution.prescription_snapshot_ref`.
 Tutte le altre righe impongono `prescription_mapping_ref IS NULL`; in
 particolare non possono prendere in prestito il mapping selezionato.
+
+Per `SELECTED_MATCH`, `INCOMPATIBLE`, `COMPATIBLE_NOT_SELECTED` e
+`NON_ASSOCIATIVE_CLOSURE`, `prescription_snapshot_ref == decision_snapshot_ref
+== result_sidecar.prescription_snapshot_ref` resta obbligatorio. La sola
+`CANDIDATE_SNAPSHOT_NOT_SELECTED` usa la validazione alternativa stretta:
+l'origine è `MULTIPLE/MATCHED` con source `DIRECT_ID|ATHLETE_CONFIRMATION`;
+relation snapshot P e selected snapshot Q sono membri della stessa tupla frozen;
+Q è `discovery.selected_snapshot_ref == decision_snapshot_ref ==
+result_sidecar.prescription_snapshot_ref`; P è diverso da Q; sessione, subject e
+discovery coincidono; mapping è null. La riga chiude soltanto `(session,P)`, non
+consuma P globalmente e non può riferire o prendere in prestito il mapping di Q.
 
 Lifecycle normativo:
 
@@ -693,8 +705,8 @@ Il loop window-driven usa questo medesimo ordine per gruppi e non separa mai un
 gruppo same-start, neppure se i suoi `end` differiscono. Dopo aver creato il caso
 zero di A, rivalida immediatamente il successore autorevole: se il boundary è
 già raggiunto all'istante di creazione della request, **nella stessa
-`BEGIN IMMEDIATE`** inserisce result, request, scheduling e terminale
-`NOT_EVALUABLE/EXPIRED` di A. Soltanto il commit consente di processare un
+`BEGIN IMMEDIATE`** inserisce result e request originari, scheduling, quindi il **distinto** result
+terminale `NOT_EVALUABLE`, la sua sidecar e infine l'evento `EXPIRED` di A. Soltanto il commit consente di processare un
 qualsiasi membro del gruppo B. Finestre parzialmente sovrapposte o contenute
 restano contemporaneamente candidate e possono quindi produrre discovery
 `MULTIPLE`; ciò non allenta l'obbligo di chiudere A prima di processare il
@@ -711,7 +723,7 @@ request_id UTF-8)` (`ZERO_SESSION` prima di `RECONCILIATION`) e non processa
 alcun membro del gruppo finché tutte le expiry dovute non sono committate. Per ciascuna, una
 `BEGIN IMMEDIATE` rilegge request, result, catena, boundary e indice e valida
 che il gruppo sia ancora quello canonico. Se la request è ancora pending,
-appende
+precalcola un ID distinto secondo §9 e appende un
 `MatchingResult NOT_EVALUABLE` terminale con warning ed evidence originali,
 `candidate_session_refs=[]`, `prescription_mapping_ref=null`, reason
 `UNANSWERED_BEFORE_NEXT_PRESCRIPTION`, e un evento `EXPIRED`; non crea answer,
@@ -785,9 +797,10 @@ che referenzia `maintain_plan_confirmations`. La selezione associativa deve
 appartenere byte-per-byte alla tupla congelata. Una risposta associativa crea,
 in ordine FK-immediate-safe **reconciliation answer → mapping → result → sidecar → evento testa**,
 un mapping `ATHLETE_CONFIRMATION` e conserva original result/request,
-reconciliation request, actor e timestamp. Expiry o risposta non
-associativa usa **answer → result `NOT_EVALUABLE` → evento testa**, senza
-mapping; l'expiry automatica usa result → evento e non crea answer. Nessuna
+reconciliation request, actor e timestamp. Expiry o risposta non associativa precalcola tutti gli ID e usa **answer (se
+presente) → result `NOT_EVALUABLE` distinto → result/snapshot sidecar → fan-out
+terminale applicabile → evento testa**, senza mapping; l'expiry automatica omette
+l'answer ma mantiene lo stesso ordine. L'evento è sempre ultimo. Nessuna
 risposta produce un
 nuovo report visibile per una vecchia seduta già superata.
 
@@ -826,8 +839,9 @@ il precedente; request, result, attempt e answer restano tutti immutabili.
 Per la request zero-sessioni iniziale, ognuna delle sole risposte legali
 `NOT_PERFORMED`, `NOT_SYNCHRONIZED` e `DONT_KNOW` chiude la catena. La fase B
 usa un'unica `BEGIN IMMEDIATE`, rilegge la request e la testa pending, quindi
-inserisce nell'ordine FK-immediate-safe **matching confirmation answer → result
-terminale `NOT_EVALUABLE` → evento `ANSWERED` con origine
+precalcola answer/result/event ID e inserisce nell'ordine FK-immediate-safe
+**matching confirmation answer → result terminale `NOT_EVALUABLE` distinto →
+result/snapshot sidecar → eventuale fan-out terminale → evento `ANSWERED` con origine
 `INITIAL_CONFIRMATION`**. Answer, result ed evento sono atomici: nessuno di essi
 può essere osservato senza gli altri. L'evento cita esclusivamente
 `initial_confirmation_answer_ref`; non può citare una reconciliation answer.
@@ -1045,8 +1059,11 @@ v8 aggiunge, senza cambiare v1–v7:
   TEXT NOT NULL REFERENCES maintain_plan_matching_results(matching_result_id),
   prescription_snapshot_ref TEXT NOT NULL REFERENCES
   maintain_plan_prescription_snapshots(prescription_snapshot_id),
+  decision_snapshot_ref TEXT NOT NULL REFERENCES
+  maintain_plan_prescription_snapshots(prescription_snapshot_id),
   actual_session_ref TEXT NOT NULL REFERENCES
-  maintain_plan_actual_sessions(session_id), disposition TEXT NOT NULL CHECK
+  maintain_plan_actual_sessions(session_id), subject_ref TEXT NOT NULL,
+  disposition TEXT NOT NULL CHECK
   (disposition IN ('SELECTED_MATCH','INCOMPATIBLE',
   'COMPATIBLE_NOT_SELECTED','CANDIDATE_SNAPSHOT_NOT_SELECTED',
   'NON_ASSOCIATIVE_CLOSURE')),
@@ -1070,10 +1087,14 @@ v8 aggiunge, senza cambiare v1–v7:
   `SINGLE` **oppure ogni relation congelata** di una discovery
   `MULTIPLE/MATCHED` con source `DIRECT_ID` o `ATHLETE_CONFIRMATION`; impongono
   `SELECTED_MATCH` soltanto sulla selected relation e
-  `CANDIDATE_SNAPSHOT_NOT_SELECTED` su ogni altra, oltre a uguaglianza
-  byte-esatta di snapshot/sessione/subject, tupla completa
-  e decisioni con il result sidecar, e per la riga selezionata uguaglianza di
-  entrambi i ref del mapping. Per ogni riga non selezionata vietano il mapping
+  `CANDIDATE_SNAPSHOT_NOT_SELECTED` su ogni altra. Per tutte le disposition
+  ordinarie impongono `prescription_snapshot_ref=decision_snapshot_ref` e
+  uguaglianza con il result sidecar. Soltanto per la candidate non selezionata
+  accettano P diverso da Q dopo aver provato: origine `MULTIPLE/MATCHED`, source
+  autorevole, membership frozen di P e Q, Q selected e uguale a
+  `decision_snapshot_ref`/result sidecar, P diverso, sessione e subject identici,
+  mapping null. Per la riga selezionata validano inoltre entrambi i ref del
+  mapping. Per ogni riga non selezionata vietano il mapping
   anche nel payload. Prima del commit il repository verifica che il numero di
   resolution inserite sia esattamente il numero delle relazioni discovery
   rappresentate (`SINGLE` più tutte le membership congelate di `MULTIPLE`) nel
@@ -1091,6 +1112,35 @@ v8 aggiunge, senza cambiare v1–v7:
   `(prescription_snapshot_ref,matching_result_ref)`. Non viene dichiarato alcun
   indice su `maintain_plan_matching_results.prescription_snapshot_ref`, perché
   tale colonna non esiste in v1–v7;
+- `maintain_plan_zero_session_terminal_results(terminal_result_ref TEXT PRIMARY
+  KEY REFERENCES maintain_plan_matching_results(matching_result_id),
+  original_matching_result_ref TEXT NOT NULL REFERENCES
+  maintain_plan_matching_results(matching_result_id), previous_chain_head_ref
+  TEXT NOT NULL, prescription_snapshot_ref TEXT NOT NULL REFERENCES
+  maintain_plan_prescription_snapshots(prescription_snapshot_id), subject_ref
+  TEXT NOT NULL, terminal_cause_kind TEXT NOT NULL CHECK(terminal_cause_kind IN
+  ('INITIAL_NON_ASSOCIATIVE_ANSWER','RECONCILIATION_NON_ASSOCIATIVE_ANSWER',
+  'ZERO_SESSION_EXPIRY','RECONCILIATION_EXPIRY')), terminal_cause_ref TEXT NOT
+  NULL, initial_answer_ref TEXT REFERENCES
+  maintain_plan_matching_confirmation_answers(answer_id),
+  reconciliation_answer_ref TEXT REFERENCES
+  maintain_plan_late_session_reconciliation_answers(answer_id),
+  zero_expiry_schedule_ref TEXT REFERENCES
+  maintain_plan_zero_session_chain_events(event_id),
+  reconciliation_expiry_schedule_ref TEXT REFERENCES
+  maintain_plan_late_session_reconciliation_expiry_schedules(schedule_id),
+  terminal_status TEXT NOT NULL CHECK(terminal_status='NOT_EVALUABLE'),
+  matching_policy_version TEXT NOT NULL, payload_json TEXT NOT NULL,
+  CHECK(terminal_result_ref<>original_matching_result_ref),
+  UNIQUE(original_matching_result_ref,previous_chain_head_ref,
+  terminal_cause_kind,terminal_cause_ref), FOREIGN KEY ... ON DELETE NO
+  ACTION)`, append-only. Un CHECK richiede esattamente il ref typed coerente con
+  `terminal_cause_kind` e gli altri tre null; trigger verificano che
+  `terminal_cause_ref` uguagli quel ref, che original result sia
+  `CONFIRMATION_REQUIRED`, terminal result sia `NOT_EVALUABLE`, result sidecar e
+  snapshot/subject coincidano, e che il previous head sia quello corrente.
+  Indici `(original_matching_result_ref,previous_chain_head_ref)` e
+  `(prescription_snapshot_ref,terminal_result_ref)` supportano retry e guard;
 - indici lookup window-driven sulla sidecar precedente. Sulla tabella v1–v7
   `maintain_plan_confirmations`, che possiede `confirmation_id` e non possiede
   `request_id`, v8 crea esattamente
@@ -1117,8 +1167,9 @@ v8 aggiunge, senza cambiare v1–v7:
   maintain_plan_matching_confirmation_answers(answer_id),
   reconciliation_answer_ref TEXT REFERENCES
   maintain_plan_late_session_reconciliation_answers(answer_id),
-  terminal_result_ref TEXT, occurred_at TEXT NOT NULL, payload_json TEXT NOT
-  NULL, UNIQUE(origin_request_ref,
+  terminal_result_ref TEXT REFERENCES
+  maintain_plan_matching_results(matching_result_id), occurred_at TEXT NOT NULL,
+  payload_json TEXT NOT NULL, UNIQUE(origin_request_ref,
   previous_chain_head_ref), FOREIGN KEY ... ON DELETE NO ACTION)`. CHECK e
   trigger impongono: scheduling senza terminal result; expiry zero-sessioni o
   reconciliation con result `NOT_EVALUABLE` e senza answer/mapping; gli eventi
@@ -1236,7 +1287,8 @@ v8 aggiunge, senza cambiare v1–v7:
 
 L'ordine additivo v8 è vincolante: snapshot-window index e backfill;
 result-snapshot sidecar e backfill; discovery e membership; confirmation e
-answer; `maintain_plan_matching_discovery_resolutions`; catene zero-sessioni e
+answer; `maintain_plan_matching_discovery_resolutions`; terminal-result typed
+sidecar; catene zero-sessioni e
 reconciliation; validazione mapping legacy; indici univoci mapping; infine
 trigger e conteggi di completezza. Nessuna resolution storica viene inventata:
 la tabella nasce vuota e ogni result terminale prodotto dopo l'abilitazione v8
@@ -1291,11 +1343,12 @@ answer vincente e un solo mapping: retry byte-identici rileggono/no-op, answer
 divergenti o race perse falliscono chiuso senza record parziali.
 
 In particolare le risposte iniziali `NOT_PERFORMED`, `NOT_SYNCHRONIZED` e
-`DONT_KNOW` eseguono **answer → result terminale → evento `ANSWERED` iniziale**
+`DONT_KNOW` eseguono **answer → result terminale distinto → result/snapshot
+sidecar → fan-out applicabile → evento `ANSWERED` iniziale**
 nella stessa unit of work. La reconciliation associativa conserva
 **reconciliation answer → mapping → result → sidecar → evento `ANSWERED`
 reconciliation**; quella non associativa usa **reconciliation answer → result
-terminale → evento**. Gli eventi rendono le origini non intercambiabili tramite
+terminale distinto → result/snapshot sidecar → fan-out applicabile → evento**. Gli eventi rendono le origini non intercambiabili tramite
 i CHECK e le FK dedicate sopra. Dopo il commit di un qualsiasi evento terminale,
 ogni sweep o reconciliation concorrente osserva la nuova testa e non può
 avanzare la request pending precedente.
@@ -1408,14 +1461,18 @@ ordinate usano byte UTF-8 degli ID. SHA-256 è hex lowercase.
 
 L'identità della resolution terminale è
 `maintain-plan:matching-discovery-resolution:v1:sha256:<hash>` sulla preimage
-canonica composta da discovery, result condiviso, snapshot, sessione della
-riga, disposition, mapping nullable, selected session nullable, decisione di
-compatibilità, evidence fingerprint e policy ID/version. `sync_scope_ref` è
+canonica composta da discovery, `matching_result_ref` condiviso,
+`prescription_snapshot_ref` della relation, `decision_snapshot_ref` del result
+sidecar, sessione della riga, disposition, mapping nullable, selected session
+nullable, decisione di compatibilità, evidence fingerprint e policy ID/version.
+Per `CANDIDATE_SNAPSHOT_NOT_SELECTED`, questi due snapshot sono rispettivamente
+P e Q: includerli entrambi impedisce collisioni fra più relation respinte dalla
+stessa decisione. `sync_scope_ref` è
 sola provenance ed è escluso. Esempio normativo non selezionato:
 
 ```text
-preimage: {"actual_session_ref":"S2","compatibility_decision":"INCOMPATIBLE","discovery_result_ref":"D-S2","disposition":"INCOMPATIBLE","evidence_fingerprint":"evidence-v1","matching_policy_id":"maintain-plan-matching","matching_policy_version":"1.0.0-draft","matching_result_ref":"R-P-tuple","prescription_mapping_ref":null,"prescription_snapshot_ref":"P","selected_session_ref":"S1"}
-sha256: 858f3e2229c23eead65883254913dcd9398f69406c0202132bf24d93af675933
+preimage: {"actual_session_ref":"S1","compatibility_decision":"NOT_SELECTED","decision_snapshot_ref":"Q","discovery_result_ref":"D-S1","disposition":"CANDIDATE_SNAPSHOT_NOT_SELECTED","evidence_fingerprint":"evidence-v1","matching_policy_id":"maintain-plan-matching","matching_policy_version":"1.0.0-draft","matching_result_ref":"R-Q-tuple","prescription_mapping_ref":null,"prescription_snapshot_ref":"P","selected_session_ref":"S1"}
+sha256: 2798d79162184502f4f3fe6cb26994b79c091ce9d5777096c21cbb1f3090bf6f
 ```
 
 Cambiare disposition, selected session o mapping cambia l'identità; un retry
@@ -1459,6 +1516,32 @@ Matching result automatico o boundary zero-sessioni:
 Namespace `maintain-plan:matching-result:v1:sha256:<hash>`. Il mapping mantiene
 la preimage esistente con confirmation, snapshot, sessione e resolution method;
 non esiste mapping nel caso zero sessioni.
+
+Il result zero-sessioni originario `CONFIRMATION_REQUIRED` usa esclusivamente la
+preimage precedente. **Ogni** result terminale derivato `NOT_EVALUABLE` usa
+invece il namespace separato
+`maintain-plan:zero-session-terminal-result:v1:sha256:<hash>` e questa preimage
+versionata, senza campi impliciti:
+
+```json
+{"domain":"maintain-plan.zero-session-terminal-result","identity_version":"1","matching_policy_version":"<version>","original_matching_result_ref":"<result CONFIRMATION_REQUIRED>","prescription_snapshot_ref":"<snapshot>","previous_chain_head_ref":"<head riletto>","subject_ref":"<subject>","terminal_cause_kind":"<INITIAL_NON_ASSOCIATIVE_ANSWER|RECONCILIATION_NON_ASSOCIATIVE_ANSWER|ZERO_SESSION_EXPIRY|RECONCILIATION_EXPIRY>","terminal_cause_ref":"<answer o schedule canonico>","terminal_status":"NOT_EVALUABLE"}
+```
+
+`terminal_cause_ref` è, senza dipendenze circolari: l'ID canonico dell'answer
+iniziale; l'ID canonico della reconciliation answer; l'ID indipendente dello
+zero-session expiry schedule/boundary; oppure l'ID indipendente del
+reconciliation expiry schedule. Il successor-event ID può includere il result
+terminale già calcolato, ma il result non include mai l'evento. Stesso
+predecessore e stessa causa riproducono lo stesso ID; answer, schedule o head
+diversi producono ID diversi. Il domain tag e namespace rendono impossibile la
+collisione con il result originario anche se snapshot, tuple vuota e policy
+coincidono.
+
+Sotto `BEGIN IMMEDIATE` si rilegge prima il predecessor head, poi si calcolano
+tutti gli ID. L'ordine eseguibile è **answer se applicabile → terminal result →
+result/snapshot sidecar → resolution/fan-out terminale applicabile → successor
+event**. Il retry equivalente riusa tutte le righe; un'altra causa sullo stesso
+head perde `UNIQUE(origin_request_ref,previous_chain_head_ref)` e rollbacka.
 
 Un override direct-ID usa invece una forma distinta che lega esplicitamente
 la discovery completa (anche `MULTIPLE`) e non perde il candidate set:
@@ -1551,6 +1634,13 @@ zero iniziale include inoltre `origin_request_id`, `previous_chain_head_id`,
 include request e answer reconciliation. Un evento answerless include entrambi
 gli ID come null. Questa discriminazione fa parte della preimage e impedisce a
 due tipi di answer con lo stesso testo di condividere identità.
+
+Vettore normativo del result terminale zero-sessioni (`é` è U+00E9):
+
+```text
+terminal result preimage: {"domain":"maintain-plan.zero-session-terminal-result","identity_version":"1","matching_policy_version":"1.0.0-draft","original_matching_result_ref":"maintain-plan:matching-result:v1:sha256:original-é","prescription_snapshot_ref":"snapshot-é","previous_chain_head_ref":"request-é","subject_ref":"subject-é","terminal_cause_kind":"ZERO_SESSION_EXPIRY","terminal_cause_ref":"expiry-schedule-é","terminal_status":"NOT_EVALUABLE"}
+SHA-256: 70a38f858b53ee8f848d8f6f04d4aeebd34b6b3345647f13ad6463a3127ffb6b
+```
 
 Vettori normativi aggiuntivi (`é` è U+00E9):
 
@@ -1998,6 +2088,44 @@ finestra, autorizzando zero-sessioni. Per una point window a `t`, coverage
 la copre. In tutti i casi il test di copertura precede creazione zero,
 scheduling expiry e processing del successore.
 
+### 10.34 Identità terminale e validazione eseguibile v8
+
+Il result zero originario Z (`CONFIRMATION_REQUIRED`) e il terminale T
+(`NOT_EVALUABLE`) hanno namespace e preimage differenti; il vincolo typed
+impone inoltre `T != Z`. Per lo stesso head H, answer A riproduce T(A,H), mentre
+answer B, expiry schedule E o head H2 producono ID differenti. Il successor
+event cita T soltanto dopo che T e la sidecar sono inseriti; T non cita mai
+l'event ID.
+
+Per `MULTIPLE(P,Q)` risolta su Q, il result sidecar indica Q. La resolution
+`SELECTED_MATCH` usa relation=decision=Q e porta l'unico mapping; la resolution
+`CANDIDATE_SNAPSHOT_NOT_SELECTED` usa relation=P, decision=Q e mapping null.
+Un trigger rifiuta P non membro, P=Q, Q non selected, source non autorevole,
+subject/session divergenti o qualunque mapping sulla riga P. Dopo il commit P
+resta mappabile a S2. Se una riga della fan-out fallisce, l'intera
+`BEGIN IMMEDIATE` rollbacka.
+
+Prima del commit documentale è stata eseguita una simulazione SQLite temporanea
+non versionata con `PRAGMA foreign_keys=ON`. Il DDL eseguibile ha materializzato
+le tabelle correnti coinvolte e tutte le relazioni additive v8 coinvolte in
+questi flussi, con gli stessi nomi di tabella/colonna, FK immediate, CHECK,
+indici univoci e trigger dichiarati nel §7. Ha eseguito: origine zero seguita da
+expiry; origine zero seguita da answer non associativa; reconciliation answer ed
+expiry; retry di ogni causa; due cause concorrenti sullo stesso predecessor;
+`MULTIPLE(P,Q)`→Q con resolution P→Q; mapping successiva P→S2; membership
+respinta invalida; mapping vietato sulla resolution non selezionata; rollback di
+fan-out parziale. `PRAGMA foreign_key_check` ha restituito zero righe e
+`PRAGMA integrity_check` ha restituito `ok`. Lo script e il database temporanei
+non fanno parte del repository.
+
+L'audit DDL ha verificato specificamente che ogni colonna usata dai trigger
+esista: `decision_snapshot_ref` e `subject_ref` nella resolution,
+`terminal_result_ref` con FK nell'evento, i quattro typed cause ref nella
+sidecar terminale, e gli indici sulle sole colonne dichiarate. L'ordine
+eseguibile verificato è ID precompute e head re-read → answer eventuale → result
+terminale → result/snapshot sidecar → fan-out → event; nessuna FK differita o
+identità circolare è richiesta.
+
 ## 11. Errori, upgrade e decisioni residue
 
 Sono errori tecnici: scope assente/non riuscito/incoerente; righe nel perimetro
@@ -2110,7 +2238,13 @@ borrowed mapping; (56) ogni lookup v8 cita colonne esistenti o additive e quello
 confirmation usa `confirmation_id`; (57) solo zero-sessioni e reconciliation
 hanno expiry, mentre la confirmation full-tuple ordinaria resta pending; (58)
 fan-out completa, retry, rollback e conflitti concorrenti sono serializzati e
-atomici. (59) ogni uso di handled distingue guard relation, session e snapshot:
+atomici. (63) result zero originario e terminale usano
+namespace/preimage distinti, typed cause ref non circolari e insertion order
+verificato; (64) la validazione conditional P→Q è limitata a
+`CANDIDATE_SNAPSHOT_NOT_SELECTED`, mentre ogni disposition ordinaria mantiene
+snapshot equality; (65) la simulazione SQLite temporanea ha esercitato FK,
+CHECK, trigger, retry, race, release e rollback e ha superato
+`foreign_key_check`/`integrity_check`. (59) ogni uso di handled distingue guard relation, session e snapshot:
 una terminale `MULTIPLE` chiude tutte le relazioni originarie ma consuma
 soltanto la selected; (60) direct ID e selezione atleta preservano frozen
 evidence senza sopprimere candidate non selezionate per altre sessioni; (61)

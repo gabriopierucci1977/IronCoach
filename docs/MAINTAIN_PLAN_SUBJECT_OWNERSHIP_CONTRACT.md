@@ -154,3 +154,10 @@ La ownership non sostituisce la prova temporale di assenza: zero-sessioni è
 legale soltanto quando la union continua delle coverage successful same-subject
 copre tutta la finestra (`coverage_start <= start`, `end < coverage_end`);
 intersezione, gap o copertura parziale non bastano.
+L'ownership della resolution non impone uguaglianza P=Q soltanto per
+`CANDIDATE_SNAPSHOT_NOT_SELECTED`: P e Q devono essere same-subject, membri
+della stessa `MULTIPLE/MATCHED`, Q selected e sidecar snapshot del result, P
+non selected e mapping null. Tutte le altre disposition mantengono uguaglianza
+stretta. I terminal result zero-sessioni hanno identità distinta dall'origine e
+includono subject e snapshot insieme alla causa canonica, impedendo riuso
+cross-subject o cross-snapshot.

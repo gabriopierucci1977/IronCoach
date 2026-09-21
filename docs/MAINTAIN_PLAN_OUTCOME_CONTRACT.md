@@ -1665,7 +1665,10 @@ ogni candidata congelata rispetto alla sessione originaria, incluse le non
 selezionate, ma non consuma globalmente queste ultime. Solo la selected relation
 può creare mapping; mapping o result/chain terminali snapshot-owning alimentano
 la guard globale dello snapshot. Una candidata respinta resta quindi eleggibile
-per una diversa sessione.
+per una diversa sessione. La resolution respinta può citare il result della
+selected Q: la relation snapshot P resta distinta dal decision snapshot Q; solo
+questa disposition consente la differenza, richiede entrambi nella frozen
+`MULTIPLE` e vieta mapping.
 
 Quando esiste un solo snapshot ma il matcher puro richiede conferma, la
 discovery `SINGLE` conserva obbligatoriamente il riferimento a quel
@@ -1717,6 +1720,14 @@ la stessa identità snapshot-centric.
 Il testo obbligatorio dovrà essere:
 
 > Non ho trovato un'attività associabile alla seduta prevista
+
+Il result `CONFIRMATION_REQUIRED` originario e ogni result terminale
+`NOT_EVALUABLE` sono artefatti distinti. Il terminale usa l'identità versionata
+del contratto runtime con domain tag, original result, predecessor head,
+snapshot, subject, causa e cause ref indipendente; answer ed expiry differenti
+non possono collidere né con l'origine né tra loro. La transazione rilegge la
+testa e inserisce answer eventuale, result terminale, sidecar, fan-out eventuale
+e successor event per ultimo.
 
 La futura implementazione non dovrà presumere che la seduta non sia stata
 svolta e dovrà chiedere se sia:
