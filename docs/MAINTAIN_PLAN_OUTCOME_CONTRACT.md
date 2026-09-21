@@ -1780,13 +1780,13 @@ eseguire e committare uno sweep che appende un result terminale
 answer né mapping, preservando warning ed evidence; request e result originari
 restano immutati. Answer, expiry e avvio reconciliation competeranno sotto
 `BEGIN IMMEDIATE` dopo rilettura della testa, così un solo successore sarà
-ammesso e retry/stale answer non potranno creare mapping duplicati. Ogni
-reconciliation tardiva persisterà inoltre una deadline propria: start del primo
-gruppo same-subject strettamente successivo al suo `created_at` committato, mai
-il boundary zero-sessioni già trascorso. Se il gruppo futuro non è noto resterà
-pending fino a synchronization autorevole; scheduling ed expiry
-`NOT_EVALUABLE` senza answer/mapping precederanno il processing del gruppo e
-competeranno con l'answer sulla stessa testa append-only.
+ammesso e retry/stale answer non potranno creare mapping duplicati. Ogni reconciliation tardiva usa una sola deadline canonica nella relazione
+`maintain_plan_late_session_reconciliation_expiry_schedules`: start del primo
+gruppo same-subject strettamente successivo al suo `created_at`, mai il boundary
+zero-sessioni. Se noto alla creazione, request e schedule committano insieme; se
+ignoto, la request resta senza deadline finché una sync inserisce l'unica
+schedule. Solo quella riga autorizza expiry `NOT_EVALUABLE`, determina cause,
+sweep e audit e compete con l'answer sulla stessa testa append-only.
 
 ### 5.6 Sessioni composte e consecutività
 

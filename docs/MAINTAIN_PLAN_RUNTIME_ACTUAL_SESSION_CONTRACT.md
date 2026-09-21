@@ -340,7 +340,9 @@ scope; un gap o una coverage parziale vieta inferenza di assenza.
 Il result zero-sessioni originario e il terminale `NOT_EVALUABLE` hanno ID
 separati: il secondo lega original result, predecessor head e causa answer o
 schedule indipendente, quindi viene inserito con sidecar prima dell'evento
-successore. Per una `MULTIPLE(P,Q)` risolta su Q, la resolution di P può citare
+successore. Per reconciliation, la causa è sempre l'ID della
+singola riga `maintain_plan_late_session_reconciliation_expiry_schedules`; la
+request non possiede deadline inline e senza schedule non può scadere. Per una `MULTIPLE(P,Q)` risolta su Q, la resolution di P può citare
 il result Q solo con disposition `CANDIDATE_SNAPSHOT_NOT_SELECTED`, mapping null
 e membership frozen rigorosamente verificata; P resta disponibile ad altre
 sessioni.
