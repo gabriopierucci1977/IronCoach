@@ -552,26 +552,6 @@ riutilizzata dalla stability.
 
 ## 5. Attività eseguita e matching
 
-Il futuro boundary applicativo di discovery e matching, inclusi ownership v7,
-ordine runtime, dry-run, transazioni e compatibilità legacy, è specificato nel
-[contratto runtime matching](MAINTAIN_PLAN_RUNTIME_MATCHING_CONTRACT.md). Le
-regole di dominio di questa sezione restano normative e non sono sostituite da
-quel documento.
-
-In particolare, quel contratto definisce dopo un sync riuscito una fase
-obbligatoria di expiry pre-processing, committata prima delle due invocazioni:
-quella session-driven e quella prescription/window-driven per finestre chiuse
-senza sessione catturata. Definisce inoltre un set synchronization-wide,
-riservato al percorso senza sessione e composto **soltanto** da finestre
-same-subject che intersecano la coverage autorevole, e un candidate set distinto per ogni
-sessione: direct target validato, finestre che ne contengono inclusivamente lo
-start oppure, **solo quando nessuna finestra contiene lo start**, esatti gruppi
-same-subject immediatamente precedente e successivo, inclusi tutti i pari
-merito di boundary. «Candidate» nelle sezioni 5.4–5.5
-significa il pertinente insieme indicizzato e limitato; l'unione dell'intero
-sync non viene passata a ogni sessione e non si usa mai tutta la storia
-same-subject.
-
 ### 5.1 Schema canonico
 
 ```yaml
@@ -1597,9 +1577,8 @@ seduta anche se
 disciplina, durata, intensità o struttura differiscono: queste differenze sono
 scostamenti di esecuzione, non errori di matching.
 
-Un direct ID dichiarato ma duplicato, incompleto, contraddittorio, privo di
-prescrizione corrispondente o cross-subject è un errore tecnico fail-closed e
-non dovrà aprire una confirmation. Un ID Garmin o Strava che
+Un ID duplicato, incompleto, contraddittorio o privo di prescrizione
+corrispondente dovrà richiedere confirmation. Un ID Garmin o Strava che
 identificherà soltanto l'attività non dovrà equivalere automaticamente al
 prescription/workout ID.
 
@@ -1607,186 +1586,27 @@ prescription/workout ID.
 
 Policy draft: `maintain-plan-matching/1.0.0-draft`.
 
-Questa sezione risolve esplicitamente il rilievo della vecchia PR #7:
-**“Define deterministic matching without a direct identifier”.**
+Enumerazione, ownership, dispatch composition-aware e cardinalità deterministica
+`ZERO`/`ONE`/`MULTIPLE` sono definiti dal
+[contratto runtime matching](MAINTAIN_PLAN_RUNTIME_MATCHING_CONTRACT.md).
+L’associazione automatica è ammessa soltanto per un unico candidato compatibile;
+zero o più candidati non producono un tie-break o un mapping automatico. Durata,
+distanza, nome, carico e somiglianza non sono spareggi.
 
-Senza direct ID, la futura implementazione dovrà applicare queste regole agli
-snapshot preservati dallo scope autorevole della sincronizzazione:
-
-1. l'inizio dell'attività dovrà ricadere nella `scheduled_window` per il match
-   automatico;
-2. un'attività fuori finestra dovrà richiedere conferma e non dovrà essere
-   scartata definitivamente;
-3. `composition` dovrà coincidere;
-4. numero, ordine e `discipline` dei componenti dovranno coincidere;
-5. una sostituzione sarà compatibile automaticamente soltanto se autorizzata
-   esplicitamente nella prescrizione;
-6. `environment` e `mode` non saranno filtri eliminatori: se mancanti, non
-   impediranno il match ma renderanno non valutabile la relativa parte;
-7. un mismatch di composition, discipline o ordine dovrà richiedere conferma;
-8. dopo la conferma, ogni scostamento resterà valutato separatamente.
-
-L'associazione automatica sarà ammessa soltanto se resterà esattamente una
-candidata compatibile. Uno snapshot rilevante fuori finestra o incompatibile
-resta evidence e richiede conferma: non viene eliminato dal discovery. Zero
-snapshot nello scope o più snapshot richiederanno la confirmation discovery
-dedicata; zero sessioni per uno snapshot scaduto produrrà invece il
-`MatchingResult` snapshot-centric della sezione 5.5.
-Non dovranno essere usati spareggi impliciti basati su durata, distanza, nome,
-carico o somiglianza. Candidate set, evidence, provenance e stato della
-conferma dovranno essere conservati. Nessun learning sarà ammesso prima della
-conferma.
-
-Il matcher futuro deve avere tre branch validi distinti. `SINGLE` conserva il
-comportamento corrente; `BRICK` conserva la consecutività governata dalla brick
-policy; `MULTISPORT` non richiede né accetta brick policy e applica soltanto i
-predicati esatti di finestra, composition, cardinalità, ordine e discipline/
-sostituzioni autorizzate definiti dal
-[contratto runtime matching](MAINTAIN_PLAN_RUNTIME_MATCHING_CONTRACT.md#41-contratto-puro-composition-aware).
-Un `MULTISPORT` same-subject, in finestra ed esattamente compatibile può quindi
-produrre `MATCHED` automatico; incompatibilità o ambiguità richiedono conferma,
-mentre struttura canonica insufficiente produce `NOT_EVALUABLE` con reason
-esplicita. Il matcher corrente non implementa ancora questo dispatch e il
-feature resta disabilitato fino alla futura modifica runtime.
-
-Una selezione snapshot valida dell'atleta è essa stessa conferma autorevole:
-non riesegue il matcher automatico, crea result e mapping confirmation-aware
-con riferimento a confirmation discovery, actor e timestamp, e conserva
-l'evidence originale fuori-finestra/incompatibile. La kind continua a
-rappresentare la cardinalità congelata: una selezione da `MULTIPLE` produce
-`MULTIPLE/MATCHED`, non un falso `SINGLE`. Analogamente un direct ID strict e
-same-subject può risolvere `MULTIPLE` conservando tutte le candidate e
-registrando selected snapshot e source `DIRECT_ID`; il mapping usa però il
-valore schema-valid `resolution_method=AUTOMATIC`, senza confondere source di
-discovery ed enum mapping. Se una relazione snapshot/sessione compare in una qualsiasi catena discovery,
-il percorso window-driven considera già gestita **quella coppia**
-indipendentemente dallo stato della testa. Per un'origine `MULTIPLE` ciò chiude
-ogni candidata congelata rispetto alla sessione originaria, incluse le non
-selezionate, ma non consuma globalmente queste ultime. Solo la selected relation
-può creare mapping; mapping o result/chain terminali snapshot-owning alimentano
-la guard globale dello snapshot. Una candidata respinta resta quindi eleggibile
-per una diversa sessione. La resolution respinta può citare il result della
-selected Q: la relation snapshot P resta distinta dal decision snapshot Q; solo
-questa disposition consente la differenza, richiede entrambi nella frozen
-`MULTIPLE` e vieta mapping. Quando un mapping consuma uno snapshot, la stessa
-transazione chiude con `CANDIDATE_SNAPSHOT_CONSUMED_BY_OTHER_MAPPING` ogni sua
-relation pending in altre discovery. Il frozen set resta immutabile; answer e
-zero-session usano l'effective set, che sottrae tutte le relation terminali. Un
-set svuotato chiude `NOT_EVALUABLE` senza answer; un membro residuo resta
-selezionabile.
-
-Quando esiste un solo snapshot ma il matcher puro richiede conferma, la
-discovery `SINGLE` conserva obbligatoriamente il riferimento a quel
-`MatchingResult`; il mapping resta nullo. Questo caso usa la confirmation
-MatchingResult esistente, non lo storage discovery-specific riservato a `ZERO`
-e `MULTIPLE`. Una risposta associativa crea mapping e nuovo result
-confirmation-aware e una discovery `SINGLE` derivata, senza perdere result,
-evidence, answer, actor o timestamp originari.
-
-Ogni confirmation matching ha due transazioni: la prima crea e committa la
-request prima di esporla; nessun lock resta aperto durante l'attesa umana. La
-seconda parte solo dopo l'answer, rilegge e valida la request pending committata
-e persiste atomicamente answer e derivati in ordine FK-safe. Retry equivalenti
-sono no-op; risposte concorrenti divergenti falliscono senza update dei record
-append-only.
-
-Il `matching_result` dovrà mantenere `prescription_mapping: null` quando lo
-stato sarà `CONFIRMATION_REQUIRED` o `NOT_EVALUABLE`, oppure quando non vi sarà
-alcuna candidata o il candidate set resterà ambiguo. Soltanto un match
-automatico unico e valido o una conferma esplicita potranno produrre il mapping
-immutabile descritto nella sezione 5.1.
+Una decisione ambigua o non automatica richiede futura conferma a livello di
+outcome. PR #46 non definisce né rende eseguibile la persistenza della conferma,
+della risposta o del relativo lifecycle.
 
 ### 5.5 Zero candidate
 
-Dopo la fine della finestra e una sincronizzazione riuscita il cui scope copre
-quella finestra, l'invocazione prescription/window-driven dovrà creare senza
-invocare il matcher un `MatchingResult` snapshot-centric deterministico con
-zero candidate session, mapping nullo e `CONFIRMATION_REQUIRED`. Questo
-boundary outcome vale identicamente per prescrizioni `SINGLE`, `MULTISPORT` e
-`BRICK`; descrive assenza di attività e non introduce compatibilità o ranking.
-L'intersezione rende la finestra enumerabile, ma zero-sessioni richiede che la
-union canonica e senza gap delle coverage successful contenga l'intero
-intervallo eleggibile degli start. Per un solo intervallo half-open vale
-`coverage_start <= scheduled_window.start` e
-`scheduled_window.end < coverage_end`; tail/head/middle parziali, frammenti con
-gap e point window esattamente a `coverage_end` non autorizzano zero, expiry o
-successor processing. Sessioni effettivamente importate nella parte coperta
-restano valutabili. Il matcher puro sarà chiamato soltanto quando è fornita
-almeno una `ActualSession` persistita. La decisione deve distinguere lo snapshot già
-gestito dalla sessione gestita altrove. Per ogni snapshot si cercano prima
-mapping, discovery, result/request zero-sessioni, reconciliation e terminali che trattano quello snapshot o la sua
-specifica relazione. Inoltre una membership `SINGLE|MULTIPLE` pending o una
-confirmation che offre ancora lo snapshot impone defer/observe: una tupla vuota
-perché la sessione catturata è già rappresentata non prova assenza. Soltanto in
-assenza di tali relation attive si prosegue. Poi si
-escludono dalla tupla le sessioni già legate autorevolmente ad altre
-prescrizioni, senza reinterpretarle: se la tupla rimanente è vuota, lo snapshot
-non è mai stato globalmente gestito **e non esiste pending offer**, il
-result/request zero-sessioni è obbligatorio e unico. Scope sovrapposti e retry usano lo stesso lookup globale e
-la stessa identità snapshot-centric.
+Dopo copertura autorevole completa dell’intera finestra, uno snapshot non
+gestito senza sessioni catturate attive ed eleggibili può produrre la pura
+osservazione `ZERO`. L’intersezione parziale della coverage non basta.
 
-Il testo obbligatorio dovrà essere:
-
-> Non ho trovato un'attività associabile alla seduta prevista
-
-Il result `CONFIRMATION_REQUIRED` originario e ogni result terminale
-`NOT_EVALUABLE` sono artefatti distinti. Il terminale usa l'identità versionata
-del contratto runtime con domain tag, original result, predecessor head,
-snapshot, subject, causa e cause ref indipendente; answer ed expiry differenti
-non possono collidere né con l'origine né tra loro. La transazione rilegge la
-testa e inserisce answer eventuale, result terminale, sidecar, fan-out eventuale
-e successor event per ultimo.
-
-La futura implementazione non dovrà presumere che la seduta non sia stata
-svolta e dovrà chiedere se sia:
-
-- non svolta;
-- svolta ma non sincronizzata;
-- non determinabile.
-
-La request iniziale congela una tupla sessioni vuota e non dovrà offrire
-associazione manuale. Se una sincronizzazione successiva persiste una o più
-sessioni eleggibili, entrambi i percorsi runtime dovranno intercettare la
-precedente catena zero-sessioni **prima** del matcher o di un mapping
-automatico. Dovranno appendere una reconciliation request con tupla candidata
-same-subject non vuota, canonica e congelata; solo questa nuova request potrà
-offrire associazione manuale e la scelta dovrà appartenere alla tupla. Una
-associazione accettata userà `ATHLETE_CONFIRMATION` e conserverà i link a
-result/request originali, reconciliation request, dedicated append-only answer,
-actor e timestamp. La request reconciliation resta immutabile `REQUIRED`; una
-relazione answer distinta, con FK alla request, congela response, sessione
-selezionata, actor, tempo, payload/versione ed evidence. La selezione deve essere
-membro esatto della tupla; rejection e risposte non associative richiedono
-sessione null. Rifiuto, expiry o risposta non associativa non produrranno
-mapping.
-
-Se mancherà una risposta prima della prescrizione successiva, il caso dovrà
-essere chiuso internamente come non valutabile, senza outcome definitivo e
-senza learning. Una sincronizzazione tardiva potrà aggiornare lo storico dopo
-conferma, ma non dovrà generare un nuovo report visibile sulla vecchia seduta
-ormai superata.
-
-La deadline zero-sessioni usa l'ordinamento canonico delle prescrizioni: gruppi
-same-subject per `scheduled_window.start`, exact same-start indivisibili e
-internamente ordinati per ID UTF-8. Il successore è il gruppo immediatamente
-seguente con start strettamente maggiore dello start originario, anche in caso
-di overlap, containment o esatta adiacenza end/start; il boundary è quello
-start.
-Se non è ancora noto, la request resta pending finché una sync lo scopre. Dopo
-che il successor è noto ma prima sia del percorso session-driven sia di
-quello prescription/window-driven, il synchronization pre-processing dovrà
-eseguire e committare uno sweep che appende un result terminale
-`NOT_EVALUABLE`, senza
-answer né mapping, preservando warning ed evidence; request e result originari
-restano immutati. Answer, expiry e avvio reconciliation competeranno sotto
-`BEGIN IMMEDIATE` dopo rilettura della testa, così un solo successore sarà
-ammesso e retry/stale answer non potranno creare mapping duplicati. Ogni reconciliation tardiva usa una sola deadline canonica nella relazione
-`maintain_plan_late_session_reconciliation_expiry_schedules`: start del primo
-gruppo same-subject strettamente successivo al suo `created_at`, mai il boundary
-zero-sessioni. Se noto alla creazione, request e schedule committano insieme; se
-ignoto, la request resta senza deadline finché una sync inserisce l'unica
-schedule. Solo quella riga autorizza expiry `NOT_EVALUABLE`, determina cause,
-sweep e audit e compete con l'answer sulla stessa testa append-only.
+PR #46 non definisce conferma persistita, risposta dell’atleta, chiusura
+automatica, gestione delle sessioni tardive o evoluzione terminale. Non si può
+inferire che lo schema corrente esegua tali comportamenti: restano disabilitati
+fino a un contratto, schema e runtime separatamente approvati.
 
 ### 5.6 Sessioni composte e consecutività
 
@@ -3511,63 +3331,16 @@ Il completamento della checklist implementativa non cambia automaticamente lo
 stato del documento. Fino a una successiva approvazione esplicita resta
 **DRAFT — NON IMPLEMENTATO**.
 
-### Addendum normativo v8 — identità cross-scope e reconciliation
+## Appendice — boundary del futuro runtime matching
 
-Il boundary runtime v8 applica prima di ogni matcher la guard autorevole globale
-del contratto runtime matching: `sync_scope_ref` è sola provenance e non può
-rendere nuova una relazione sessione/snapshot già mappata, presente in una
-catena discovery/confirmation o in una reconciliation pending o terminale. Un
-mapping per `actual_session_ref` chiude semanticamente la sessione; una catena
-irrisolta viene ripresa, non duplicata. Un nuovo tentativo append-only dopo una
-testa terminale senza mapping è ammesso soltanto per un diverso fingerprint
-dell'evidence canonica ed è collegato alla testa precedente.
+Il futuro matching fra `PrescriptionSnapshot` e `ActualSession` è definito dal
+[contratto runtime matching](MAINTAIN_PLAN_RUNTIME_MATCHING_CONTRACT.md). Questo
+contratto outcome ne recepisce soltanto le decisioni pure `ZERO`, `ONE` e
+`MULTIPLE`: una decisione automatica univoca può produrre un mapping futuro;
+un esito ambiguo o non automatico richiede futura conferma dell'atleta.
 
-Per finestre consecutive già note, la creazione zero-sessioni del predecessore
-e la sua expiry già dovuta sono atomiche e precedono ogni elaborazione del
-successore. Le resolution sidecar discovery richiedono la discovery; quelle da
-late-session reconciliation la vietano e usano esclusivamente la dedicated
-reconciliation answer, dalla quale rimane raggiungibile la catena originaria.
-Il solo spelling ammesso per la risposta esistente è `NOT_SYNCHRONIZED`.
-Nel percorso window-driven, una sessione già gestita per B non rende A gestito:
-se il filtro lascia `remaining=()` e A non ha un proprio mapping, discovery,
-zero-session result/request, reconciliation o terminale, A riceve esattamente
-un outcome zero-sessioni. Se una catena propria di A esiste già, A è invece
-saltato senza duplicazione.
-
-### Addendum normativo v8 — matching snapshot-centric uno-a-uno
-
-Il percorso session-driven costruisce una worklist deduplicata di snapshot su
-tutte le sessioni same-subject coperte. Per ogni snapshot passa una sola volta
-al matcher l'intera tupla eleggibile ordinata per `(start, session_id UTF-8)`.
-Una compatibile produce mapping automatico anche in presenza di incompatibili;
-più compatibili producono una sola confirmation con tupla congelata e nessun
-mapping fino alla selezione. Guardie, retry e persistenza sono simmetrici:
-`actual_session_ref` e `prescription_snapshot_ref` sono entrambi univoci.
-
-### Addendum normativo v8 — terminalità per-sessione
-
-Il `MatchingResult` snapshot-level appartiene alla valutazione dello snapshot
-contro l'intera tupla congelata. Ogni discovery `SINGLE` della tupla deve avere
-esattamente una resolution terminale: la sola sessione scelta è
-`SELECTED_MATCH` e può citare il mapping; incompatibili, compatibili non scelte
-e chiusure non associative citano il result condiviso ma impongono mapping
-null. Un outcome terminale non è pubblicabile finché la fan-out completa non è
-committata atomicamente; durante `CONFIRMATION_REQUIRED` tutte le discovery
-rappresentate restano invece pending in modo coerente.
-
-### Addendum normativo v8 — indici MULTISPORT, metadata e lifecycle confirmation
-
-Il branch futuro `MULTISPORT` confronta componenti soltanto dopo aver validato
-unicità/comparabilità e richiede uguaglianza byte-esatta dei `component_index`
-ordinati sui due lati; non rinumera sequenze non contigue. Mismatch valido è
-incompatibile/`CONFIRMATION_REQUIRED`; struttura malformata è `NOT_EVALUABLE`.
-Per sostituzioni, metadata observed `environment`/`mode` optional mancanti
-rendono soltanto quella dimensione unknown e non impediscono da soli il match;
-un valore presente confliggente resta incompatibile.
-
-Una confirmation ordinaria per più sessioni compatibili non scade
-automaticamente e resta pending fino a risposta valida. Le sole expiry sono
-quelle già definite per zero-sessioni e late-session reconciliation. Una
-risoluzione direct-ID `MULTIPLE/MATCHED` conserva l'intero candidate set e può
-partecipare alla fan-out mista con discovery `SINGLE`; soltanto la selected
-membership possiede il mapping.
+PR #46 non definisce persistenza di conferme o risposte, scadenze automatiche,
+gestione di sessioni tardive, fan-out terminale, consumo fra candidate set
+pendenti, nuove tabelle o identità di eventi/result. Questi comportamenti sono
+fuori scope e disabilitati; lo schema e il runtime correnti non sono dichiarati
+capaci di eseguirli.

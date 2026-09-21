@@ -299,58 +299,6 @@ Qualunque mapping persistito DEVE ora superare il confronto esatto e
 fail-closed previsto dal contratto dedicato; i record legacy senza binding non
 sono eleggibili.
 
-Ordine runtime, candidate discovery e transazione del futuro collegamento sono
-definiti dal
-[contratto runtime matching](MAINTAIN_PLAN_RUNTIME_MATCHING_CONTRACT.md), che
-richiede un `SynchronizationCoverage` autorevole e limitato e ordina expiry
-pre-processing committato, percorso session-driven e poi
-prescription/window-driven, senza
-estendere il perimetro di cattura di questo documento. Per ciascuna sessione
-usa tutte le finestre contenenti; soltanto quando queste mancano usa i vicini
-indicizzati immediati attorno allo start. Questi vicini non entrano
-nell'enumerazione synchronization-wide, limitata alle finestre che intersecano
-la coverage. Il secondo percorso deve rispettare come già gestita ogni
-relazione presente in qualsiasi catena discovery, inclusa una testa terminale,
-e ogni confirmation committa la request prima dell'attesa umana. Prima di
-processare una sessione tardiva entrambi i percorsi cercano una precedente
-catena snapshot-centric zero-sessioni: se esiste, vietano il mapping automatico
-e creano la reconciliation confirmation con tuple sessione non vuote congelate.
-La relativa answer vive in una relazione append-only dedicata, valida membership
-della selezione e non muta mai la request `REQUIRED`.
-La request zero originaria resta vuota e non offre associazione manuale. Lo
-sweep expiry prescritto precede entrambi i percorsi, anche quando la stessa sync
-importa una sessione della prescrizione successiva. Il successore zero-sessioni
-è il gruppo di start canonico immediatamente seguente, senza richiedere che
-inizi dopo l'end originario; overlap, containment, point window e adiacenza
-restano validi. Ogni reconciliation usa invece il proprio primo gruppo con
-start successivo al `created_at` committato, scoperto ora o da una sync futura,
-e scade append-only prima che quel gruppo sia processato. L'handled predicate
-di una `ActualSession` resta session-level: la esclude da nuove candidature se è già
-mappata o in una catena autorevole, ma non rende handled uno snapshot estraneo.
-Il percorso window-driven deve quindi creare il caso zero per uno snapshot mai
-gestito quando tutte le sessioni dello scope sono state escluse perché trattate
-da altre relazioni.
-La guard relation-level è la coppia esatta sessione/snapshot; una `MULTIPLE`
-terminale chiude tutte le proprie coppie soltanto per la sessione originaria.
-Una candidata non selezionata non soddisfa la guard snapshot globale e può
-ancora essere mappata a una sessione diversa. La decisione zero-sessioni resta
-separata dall'enumerazione: richiede coverage successful continua dell'intera
-finestra (`coverage_start <= start` e `end < coverage_end`), anche per union di
-scope; un gap o una coverage parziale vieta inferenza di assenza.
-Il result zero-sessioni originario e il terminale `NOT_EVALUABLE` hanno ID
-separati: il secondo lega original result, predecessor head e causa answer o
-schedule indipendente, quindi viene inserito con sidecar prima dell'evento
-successore. Per reconciliation, la causa è sempre l'ID della
-singola riga `maintain_plan_late_session_reconciliation_expiry_schedules`; la
-request non possiede deadline inline e senza schedule non può scadere. Per una `MULTIPLE(P,Q)` risolta su Q, la resolution di P può citare
-il result Q solo con disposition `CANDIDATE_SNAPSHOT_NOT_SELECTED`, mapping null
-e membership frozen rigorosamente verificata; P resta disponibile ad altre
-sessioni.
-Se invece P viene mappato, ogni altra relation pending che contiene P viene
-chiusa atomicamente come consumed-by-other-mapping. La sessione catturata resta
-evidence: il percorso window-driven deve osservare/deferire quella catena e non
-può trasformare un `remaining=()` da filtro pending in zero-sessioni.
-
 ## 11. Criteri di accettazione
 
 Il futuro servizio P0 è conforme soltanto se:
@@ -427,49 +375,14 @@ I test del futuro incremento DEVONO includere almeno:
   matching/`PrescriptionMapping`: vietati;
 - deployment single-athlete: prova che non viene trattato come ownership.
 
-### Addendum normativo v8 — sessione già gestita
+## Appendice — uso futuro nel matching
 
-Prima di passare una `ActualSession` al matcher, il runtime v8 cerca senza filtro
-su synchronization scope mapping, discovery/confirmation e reconciliation che
-la contengono. Mapping o catena esistente rendono gestita la sessione o la sola relazione
-snapshot/sessione che rappresentano; non rendono gestiti snapshot estranei. Una
-request pending viene ripresa, una testa terminale con identica evidence non
-genera un nuovo tentativo. Soltanto evidence canonica realmente cambiata può
-creare un tentativo append-only collegato alla testa terminale precedente. Lo
-scope resta provenance e l'indice univoco garantisce un solo mapping per
-sessione anche tra coverage sovrapposte.
+Un'`ActualSession` persistita può essere input del futuro
+[contratto runtime matching](MAINTAIN_PLAN_RUNTIME_MATCHING_CONTRACT.md) solo
+con payload strict, timestamp autorevole e `subject_ref` byte-equal allo
+snapshot e alla coverage. L'intera tupla eleggibile deve essere preservata e
+ordinata canonicamente; il suo ordine non è ranking.
 
-Per una sessione canonica `MULTISPORT`, il futuro boundary non può chiamare il
-matcher corrente invariato. Deve usare il branch composition-aware normativo:
-brick policy assente, uguaglianza di composition/cardinalità/ordine e confronto
-esatto di discipline o sostituzioni autorizzate, oltre alla finestra inclusiva.
-Un unico caso compatibile può creare il normale mapping automatico; mismatch o
-ambiguità richiedono conferma e struttura insufficiente è `NOT_EVALUABLE` con
-reason esplicita. Il feature resta disabilitato finché quel branch non esiste.
-
-### Addendum normativo v8 — aggregazione per snapshot
-
-Una `ActualSession` non viene più valutata mediante chiamate singleton per ogni
-snapshot. Il futuro boundary raccoglie i candidate snapshot di tutte le
-sessioni coperte, deduplica la worklist, e per ogni snapshot invoca una volta il
-matcher con la tupla completa same-subject ordinata. Prima di qualsiasi mapping
-rilegge sia la sessione sia lo snapshot: ciascun lato può partecipare ad al più
-un mapping; catene precedenti su qualunque lato vengono osservate o riprese.
-
-### Addendum normativo v8 — terminalità discovery per sessione
-
-Ogni sessione della tupla conserva la propria discovery `SINGLE`. Alla
-terminalizzazione snapshot-level riceve esattamente una resolution che cita il
-result condiviso e la decisione di compatibilità. Soltanto la sessione
-selezionata può avere `SELECTED_MATCH` e un mapping con
-`mapping.actual_session_ref` uguale al proprio ID; ogni sessione non selezionata
-deve avere mapping null. La fan-out atomica impedisce sia discovery pending
-orfane sia il falso collegamento di una sessione al mapping di un'altra.
-
-### Addendum normativo v8 — component identity e metadata optional
-
-Per `MULTISPORT`, gli indici observed non vengono compattati: devono essere
-unici, comparabili e identici agli indici planned corrispondenti dopo
-ordinamento. Metadata optional `environment`/`mode` assenti restano missing e
-rendono unknown soltanto la dimensione vincolata; non sono convertiti in un
-mismatch. Valori presenti in conflitto restano incompatibili.
+PR #46 non abilita matching né aggiunge persistenza di conferme, risposte o
+lifecycle successivi. Restano necessari schema, repository, runtime e test
+separatamente approvati; fino ad allora il flag di matching resta falso.
