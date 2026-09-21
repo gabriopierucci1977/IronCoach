@@ -1658,12 +1658,14 @@ rappresentare la cardinalità congelata: una selezione da `MULTIPLE` produce
 same-subject può risolvere `MULTIPLE` conservando tutte le candidate e
 registrando selected snapshot e source `DIRECT_ID`; il mapping usa però il
 valore schema-valid `resolution_method=AUTOMATIC`, senza confondere source di
-discovery ed enum mapping. Se una relazione snapshot/sessione compare in una
-qualsiasi catena discovery, il percorso window-driven deve considerarla già
-gestita indipendentemente dallo stato della testa. Per un'origine `MULTIPLE`
-ciò vale per tutte le candidate congelate, incluse le non selezionate dopo una
-risoluzione, e impedisce mapping concorrenti anche dopo `MATCHED` o
-`NOT_EVALUABLE`.
+discovery ed enum mapping. Se una relazione snapshot/sessione compare in una qualsiasi catena discovery,
+il percorso window-driven considera già gestita **quella coppia**
+indipendentemente dallo stato della testa. Per un'origine `MULTIPLE` ciò chiude
+ogni candidata congelata rispetto alla sessione originaria, incluse le non
+selezionate, ma non consuma globalmente queste ultime. Solo la selected relation
+può creare mapping; mapping o result/chain terminali snapshot-owning alimentano
+la guard globale dello snapshot. Una candidata respinta resta quindi eleggibile
+per una diversa sessione.
 
 Quando esiste un solo snapshot ma il matcher puro richiede conferma, la
 discovery `SINGLE` conserva obbligatoriamente il riferimento a quel
@@ -1694,8 +1696,15 @@ invocare il matcher un `MatchingResult` snapshot-centric deterministico con
 zero candidate session, mapping nullo e `CONFIRMATION_REQUIRED`. Questo
 boundary outcome vale identicamente per prescrizioni `SINGLE`, `MULTISPORT` e
 `BRICK`; descrive assenza di attività e non introduce compatibilità o ranking.
-Il matcher puro sarà chiamato soltanto quando è fornita almeno una
-`ActualSession` persistita. La decisione deve distinguere lo snapshot già
+L'intersezione rende la finestra enumerabile, ma zero-sessioni richiede che la
+union canonica e senza gap delle coverage successful contenga l'intero
+intervallo eleggibile degli start. Per un solo intervallo half-open vale
+`coverage_start <= scheduled_window.start` e
+`scheduled_window.end < coverage_end`; tail/head/middle parziali, frammenti con
+gap e point window esattamente a `coverage_end` non autorizzano zero, expiry o
+successor processing. Sessioni effettivamente importate nella parte coperta
+restano valutabili. Il matcher puro sarà chiamato soltanto quando è fornita
+almeno una `ActualSession` persistita. La decisione deve distinguere lo snapshot già
 gestito dalla sessione gestita altrove. Per ogni snapshot si cercano prima
 mapping, discovery, result/request zero-sessioni, reconciliation e terminali che trattano quello snapshot o la sua
 specifica relazione. Soltanto questi artefatti consentono lo skip. Poi si

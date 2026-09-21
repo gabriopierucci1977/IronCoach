@@ -330,6 +330,13 @@ mappata o in una catena autorevole, ma non rende handled uno snapshot estraneo.
 Il percorso window-driven deve quindi creare il caso zero per uno snapshot mai
 gestito quando tutte le sessioni dello scope sono state escluse perché trattate
 da altre relazioni.
+La guard relation-level è la coppia esatta sessione/snapshot; una `MULTIPLE`
+terminale chiude tutte le proprie coppie soltanto per la sessione originaria.
+Una candidata non selezionata non soddisfa la guard snapshot globale e può
+ancora essere mappata a una sessione diversa. La decisione zero-sessioni resta
+separata dall'enumerazione: richiede coverage successful continua dell'intera
+finestra (`coverage_start <= start` e `end < coverage_end`), anche per union di
+scope; un gap o una coverage parziale vieta inferenza di assenza.
 
 ## 11. Criteri di accettazione
 

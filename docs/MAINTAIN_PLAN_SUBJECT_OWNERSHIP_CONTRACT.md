@@ -140,8 +140,17 @@ a riferire il mapping di un'altra sessione.
 ### Addendum normativo v8 — fan-out mista e confirmation senza deadline
 
 Una fan-out snapshot-centric può contenere membership da discovery `SINGLE` e
-la selected membership autorevole di una discovery `MULTIPLE`; tutte richiedono
-lo stesso `subject_ref`, mentre soltanto `SELECTED_MATCH` può portare il mapping.
-Le candidate non selezionate restano guarded. Le confirmation full-tuple
+tutte le membership congelate di una discovery `MULTIPLE` risolta; tutte
+richiedono lo stesso `subject_ref`. La selected relation usa `SELECTED_MATCH`,
+le altre `CANDIDATE_SNAPSHOT_NOT_SELECTED`, e soltanto la prima può portare il
+mapping.
+Le candidate non selezionate restano guarded soltanto nella relazione con la
+sessione originaria; non sono globalmente consumate e possono formare una
+relazione con un'altra sessione. Solo selected mapping o result/chain terminale
+snapshot-owning soddisfa la guard globale. Le confirmation full-tuple
 ordinarie non hanno expiry; gli sweep automatici restano limitati a
 zero-sessioni e late-session reconciliation.
+La ownership non sostituisce la prova temporale di assenza: zero-sessioni è
+legale soltanto quando la union continua delle coverage successful same-subject
+copre tutta la finestra (`coverage_start <= start`, `end < coverage_end`);
+intersezione, gap o copertura parziale non bastano.
