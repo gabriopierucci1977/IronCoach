@@ -261,12 +261,76 @@ class MaintainPlanRepository:
              value.resolution_method.value, PAYLOAD_SCHEMA_VERSION, serialize_contract(value)),
         )
 
-    def get_prescription_mapping(self, identifier: str) -> PrescriptionMapping | None:
-        stored = self._get("maintain_plan_prescription_mappings", "mapping_id", identifier,
-                           PrescriptionMapping)
-        if stored is None:
-            return None
-        row, value = stored
+    def persist_prescription_mapping(self, value: PrescriptionMapping) -> PrescriptionMapping:
+        """Atomically validate and insert a decided mapping, or return its exact retry."""
+        connection = self._connect()
+        connection.row_factory = sqlite3.Row
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            self._require_valid(validate_mapping(value))
+            snapshot_row = connection.execute(
+                "SELECT * FROM maintain_plan_prescription_snapshots "
+                "WHERE prescription_snapshot_id = ?", (value.prescription_snapshot_ref,),
+            ).fetchone()
+            session_row = connection.execute(
+                "SELECT * FROM maintain_plan_actual_sessions WHERE session_id = ?",
+                (value.actual_session_ref,),
+            ).fetchone()
+            mapping_rows = {
+                "mapping_id": connection.execute(
+                    "SELECT * FROM maintain_plan_prescription_mappings WHERE mapping_id = ?",
+                    (value.mapping_id,),
+                ).fetchone(),
+                "snapshot": connection.execute(
+                    "SELECT * FROM maintain_plan_prescription_mappings "
+                    "WHERE prescription_snapshot_ref = ?", (value.prescription_snapshot_ref,),
+                ).fetchone(),
+                "session": connection.execute(
+                    "SELECT * FROM maintain_plan_prescription_mappings "
+                    "WHERE actual_session_ref = ?", (value.actual_session_ref,),
+                ).fetchone(),
+            }
+            if snapshot_row is None or session_row is None:
+                raise ValueError("mapping must reference a persisted snapshot and actual session")
+            snapshot = self._decode_prescription_snapshot_row(snapshot_row)
+            session = self._decode_actual_session_row(session_row)
+            # Legacy NULL ownership is readable for compatibility, but never mapping eligible.
+            self._validate_mapping_refs(value, snapshot, session)
+
+            decoded = {
+                key: None if row is None else self._decode_prescription_mapping_row(row)
+                for key, row in mapping_rows.items()
+            }
+            existing_id = decoded["mapping_id"]
+            if existing_id is not None:
+                if existing_id != value:
+                    raise ValueError("mapping_id already exists with different content")
+                self._validate_mapping_refs(existing_id, snapshot, session)
+                connection.commit()
+                return existing_id
+            if decoded["snapshot"] is not None:
+                raise ValueError("prescription snapshot is already mapped")
+            if decoded["session"] is not None:
+                raise ValueError("actual session is already mapped")
+
+            connection.execute(
+                "INSERT INTO maintain_plan_prescription_mappings VALUES (?, ?, ?, ?, ?, ?)",
+                (value.mapping_id, value.prescription_snapshot_ref, value.actual_session_ref,
+                 value.resolution_method.value, PAYLOAD_SCHEMA_VERSION,
+                 serialize_contract(value)),
+            )
+            connection.commit()
+            return value
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+
+    def _decode_prescription_mapping_row(self, row: sqlite3.Row) -> PrescriptionMapping:
+        if row["payload_schema_version"] != PAYLOAD_SCHEMA_VERSION:
+            raise ValueError("unsupported stored MAINTAIN_PLAN payload schema version")
+        value = deserialize_contract(row["payload_json"], PrescriptionMapping)
         self._require_valid(validate_mapping(value))
         if (row["mapping_id"], row["prescription_snapshot_ref"], row["actual_session_ref"],
                 row["resolution_method"]) != (value.mapping_id,
@@ -274,6 +338,15 @@ class MaintainPlanRepository:
                                                value.actual_session_ref,
                                                value.resolution_method.value):
             raise ValueError("stored prescription mapping metadata does not match payload")
+        return value
+
+    def get_prescription_mapping(self, identifier: str) -> PrescriptionMapping | None:
+        stored = self._get("maintain_plan_prescription_mappings", "mapping_id", identifier,
+                           PrescriptionMapping)
+        if stored is None:
+            return None
+        row, value = stored
+        value = self._decode_prescription_mapping_row(row)
         snapshot = self.get_prescription_snapshot(value.prescription_snapshot_ref)
         session = self.get_actual_session(value.actual_session_ref)
         if snapshot is None or session is None:

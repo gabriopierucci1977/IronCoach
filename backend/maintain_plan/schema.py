@@ -481,6 +481,22 @@ def run_migrations(database_path: str | Path, migrations: Iterable[Migration] = 
                 continue
             try:
                 connection.execute("BEGIN IMMEDIATE")
+                # Another initializer may have completed this migration while this
+                # connection was waiting for SQLite's write lock.  The record read
+                # above is therefore only a fast path; this locked read is the
+                # authority for deciding whether migration SQL may run.
+                locked_record = connection.execute(
+                    "SELECT checksum FROM maintain_plan_schema_migrations WHERE version = ?",
+                    (migration.version,),
+                ).fetchone()
+                if locked_record is not None:
+                    if locked_record[0] != migration.checksum:
+                        raise RuntimeError(
+                            f"MAINTAIN_PLAN migration {migration.version} checksum mismatch"
+                        )
+                    connection.commit()
+                    applied[migration.version] = migration.checksum
+                    continue
                 migration.apply(connection)
                 connection.execute(
                     "INSERT INTO maintain_plan_schema_migrations"
