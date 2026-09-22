@@ -1704,6 +1704,24 @@ continua dell'intera finestra chiusa, inclusi gap, frontiere e finestre
 puntuali. Queste precisazioni non introducono persistenza di confirmation,
 risposte o candidate consumption.
 
+L'input diretto del boundary ridotto è il tipo canonico esistente
+`DirectIdEvidence`, con `evidence_id`, `session_id`,
+`returned_prescription_id`, `source` e `provenance`; non è un nuovo record o
+schema persistente. Il matcher riceve esplicitamente una tupla di questi
+oggetti e ne valida envelope, riferimento alla sessione e ownership. Non legge
+il direct ID da `ActualSession`, `raw_ids`, `original_activity_id`, provenance
+o metadata. Evidence corrotta o cross-subject fallisce l'intero scope; in un
+envelope valido, ID pendente, malformato o ambiguo resta
+`CONFIRMATION_REQUIRED`.
+
+`ZERO` è soltanto la cardinalità pura di un candidate set senza sessioni
+compatibili. Poiché gli input ridotti non contengono intervalli autorevoli di
+copertura della sincronizzazione, anche una tupla vuota produce
+deterministicamente `NOT_EVALUABLE` e non crea `NO_MATCH`, conferma, mapping o
+decisione persistita di assenza. La copertura continua dell'intera finestra
+resta precondizione obbligatoria ma irraggiungibile in questo boundary finché
+un input autorevole separatamente approvato non la renderà disponibile.
+
 ## 6. Applicability e valutazione dell'esecuzione
 
 Per ogni sessione supportata da `MAINTAIN_PLAN` v1, sport/componenti,

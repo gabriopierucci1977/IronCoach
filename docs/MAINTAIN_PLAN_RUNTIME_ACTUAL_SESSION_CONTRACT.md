@@ -398,3 +398,12 @@ non-eliminante; un valore esplicito viene invece preservato e può rendere
 incompatibile il solo componente interessato. Un returned prescription ID è
 evidence da validare: non è derivato dagli ID attività elencati in questo
 contratto e non costituisce ownership.
+
+Nel boundary ridotto tale valore arriva esclusivamente come input separato
+`DirectIdEvidence`, secondo il
+[contratto outcome §5.7](MAINTAIN_PLAN_OUTCOME_CONTRACT.md). Il matcher non lo
+decodifica da `ActualSession`: `raw_ids`, `original_activity_id`, provenance e
+metadata restano identificatori/evidence dell'attività e non diventano mai
+`returned_prescription_id`. Inoltre `ActualSession` non contiene intervalli
+autorevoli di copertura della sincronizzazione: una tupla vuota non prova
+assenza e conduce a `NOT_EVALUABLE` secondo il contratto di matching.

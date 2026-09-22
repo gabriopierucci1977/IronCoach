@@ -84,3 +84,10 @@ gli artefatti, entrambi i `subject_ref` e i due lati del mapping, quindi
 ricontrollare tutte le invarianti. Conflitto o modifica concorrente impone
 rollback; un retry semanticamente identico è idempotente e non duplica il
 mapping. Questa sezione non introduce schema, migrazioni, DDL o wiring.
+
+Quando è fornito l'input separato `DirectIdEvidence`, il suo `session_id` deve
+risolvere una `ActualSession` valida nello scope; ownership è verificata
+esclusivamente sui `subject_ref` persistiti della sessione e dello snapshot
+risolto. Evidence cross-subject o con envelope persistito corrotto fallisce
+l'intero scope. Nessun campo dell'evidence crea, sostituisce o normalizza un
+`subject_ref`.

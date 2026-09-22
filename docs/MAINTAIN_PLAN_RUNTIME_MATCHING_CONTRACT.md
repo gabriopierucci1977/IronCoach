@@ -11,11 +11,14 @@ fallisce chiuso, senza mapping parziale.
 
 ## 1. Input e scope autorevoli
 
-Gli unici input sono `PrescriptionSnapshot` e `ActualSession` canonici,
-immutabili e **già persistiti**. Non sono ammessi payload della richiesta,
-history aggregate, record provider, nomi, decisioni correnti, ricostruzioni o
-fallback. Uno scope contiene un soggetto opaco, l'insieme completo degli
-snapshot eleggibili e la tupla completa delle sessioni dello stesso soggetto.
+Gli input sono `PrescriptionSnapshot` e `ActualSession` canonici, immutabili e
+**già persistiti**, più la tupla esplicita del tipo esistente
+`DirectIdEvidence` definito nel
+[contratto outcome §5.7](MAINTAIN_PLAN_OUTCOME_CONTRACT.md). Non sono ammessi
+payload della richiesta, history aggregate, record provider, nomi, decisioni
+correnti, ricostruzioni o fallback. Uno scope contiene un soggetto opaco,
+l'insieme completo degli snapshot eleggibili, la tupla completa delle sessioni
+dello stesso soggetto e l'eventuale evidence diretta esplicitamente fornita.
 
 Prima di valutare candidati, il matcher DEVE leggere e validare l'intero scope.
 `subject_ref` è confrontato sui byte UTF-8 esatti come definito dal
@@ -28,20 +31,45 @@ dei rispettivi ID, in ordine lessicografico unsigned. L'ordine serve soltanto a
 rendere deterministici valutazione e output: tutti i candidati sono valutati e
 l'ordine non è mai un tie-break.
 
+### 1.1 Provenienza di ogni predicato
+
+| Decisione o predicato | Dato autorevole permesso |
+|---|---|
+| ownership e scope | `subject_ref` persistito di snapshot e sessione |
+| relazione diretta | `DirectIdEvidence.session_id` e `.returned_prescription_id`, mai campi reinterpretati da `ActualSession` |
+| finestra | `PrescriptionSnapshot.scheduled_window` e `ActualSession.start` |
+| composition, componenti, ordine e sostituzioni | composition/componenti authored dello snapshot e osservati della sessione |
+| `environment` e `mode` | vincolo authored del componente e valore osservato presente dello stesso componente |
+| consecutività Brick | componenti, start/end e transizioni osservati, più massimo gap esplicito o default versionato |
+| cardinalità globale | insieme completo degli snapshot e tupla completa delle sessioni nello scope |
+| assenza autorevole nell'intera finestra | **non disponibile** negli input ridotti correnti |
+| insert del mapping | coppia `ONE`, artefatti e due lati del mapping riletti nella transazione |
+
+Nessun esito o predicato può dipendere da un dato diverso da quelli elencati.
+In particolare timestamp di sincronizzazione, discovery di predecessori o
+successori e assenza nei dati localmente disponibili non costituiscono prova
+di copertura.
+
 ## 2. Autorità dell'ID diretto
 
-Un `returned_prescription_id` è autorevole soltanto se è ben formato, risolve
-un solo snapshot persistito nello scope e quello snapshot appartiene allo
-stesso soggetto della sessione. In tal caso seleziona quell'associazione anche
-se esistono alternative strutturali, lo start è fuori finestra o l'esecuzione
-devia dalla prescrizione. Le deviazioni appartengono a una valutazione
-successiva e non annullano la relazione.
+Il matcher legge `returned_prescription_id` soltanto da un
+`DirectIdEvidence` esplicito il cui envelope (`evidence_id`, `session_id`,
+`source` e `provenance`) è valido e riferisce una sessione canonica dello
+scope. `ActualSession.raw_ids`, `original_activity_id`, provenance e metadata
+non sono mai reinterpretati come direct-ID evidence. Un valore è autorevole
+soltanto se è ben formato, risolve un solo snapshot persistito nello scope e
+quello snapshot appartiene allo stesso soggetto della sessione riferita. In tal
+caso seleziona quell'associazione anche se esistono alternative strutturali,
+lo start è fuori finestra o l'esecuzione devia dalla prescrizione. Le
+deviazioni appartengono a una valutazione successiva e non annullano la
+relazione.
 
-Un ID cross-subject, o ownership persistita corrotta su uno dei due lati, è
-corruzione: fallimento chiuso dello scope completo. Un ID restituito pendente,
-ambiguo o malformato non autorizza fallback strutturale e produce il boundary
-non automatico `CONFIRMATION_REQUIRED`. Questo documento non definisce come
-una conferma sia richiesta, memorizzata o applicata.
+Evidence cross-subject, un envelope `DirectIdEvidence` persistito corrotto, o
+ownership persistita corrotta su uno dei due lati è corruzione: fallimento
+chiuso dello scope completo. In un envelope altrimenti valido, un valore ID
+restituito pendente, ambiguo o malformato non autorizza fallback strutturale e
+produce il boundary non automatico `CONFIRMATION_REQUIRED`. Questo documento
+non definisce come una conferma sia richiesta, memorizzata o applicata.
 
 ## 3. Dispatch della composition
 
@@ -111,26 +139,34 @@ nessun ID diretto autorevole ne seleziona uno, nessuna iterazione può scegliere
 il risultato è ambiguo e non automatico. Analogamente, più sessioni
 compatibili con uno snapshot sono ambigue. La cardinalità deterministica è:
 
-* `ZERO`: nessuna sessione compatibile, ma soltanto dopo la prova di copertura
-  completa descritta sotto;
+* `ZERO`: nessuna sessione strutturalmente compatibile; è cardinalità pura del
+  candidate set e non prova l'assenza di una sessione reale;
 * `ONE`: esattamente una coppia globale, senza competizione su nessuno dei due
   lati;
 * `MULTIPLE`: ogni altra pluralità o competizione.
 
 `ONE` può produrre un mapping automatico. `MULTIPLE` produce
-`CONFIRMATION_REQUIRED`. Se l'assenza non è dimostrabile, il risultato è
-`NOT_EVALUABLE`, non `ZERO`.
+`CONFIRMATION_REQUIRED`. `ZERO`, inclusa una tupla di sessioni vuota, produce
+deterministicamente `NOT_EVALUABLE`: non crea mapping, `NO_MATCH`, conferma di
+assenza o altra decisione persistita sull'assenza.
 
 ### Osservazione zero e copertura
 
-`ZERO` richiede copertura autorevole e continua dell'intero intervallo
-eleggibile chiuso, non la sola assenza nei dati disponibili. L'unione degli
-intervalli di copertura validi deve includere ogni istante dalla frontiera
-iniziale a quella finale. Un gap, una frontiera aperta, una sorgente non
-autorevole o un tratto non verificato impedisce `ZERO`. Per una finestra
-puntuale deve esistere copertura autorevole proprio di quel punto. Intervalli
-adiacenti sono continui solo quando le rispettive inclusività coprono la
-frontiera comune.
+Un futuro outcome autorevole “nessuna sessione” richiederà copertura autorevole
+e continua dell'intero intervallo eleggibile chiuso. L'unione degli intervalli
+di copertura validi dovrà includere ogni istante dalla frontiera iniziale a
+quella finale; un gap, una frontiera aperta, una sorgente non autorevole o un
+tratto non verificato impedirà tale outcome. Per una finestra puntuale dovrà
+esistere copertura autorevole proprio di quel punto; intervalli adiacenti
+saranno continui solo quando le rispettive inclusività copriranno la frontiera
+comune.
+
+Nessun input ammesso dal boundary ridotto corrente trasporta questi intervalli.
+Di conseguenza l'outcome autorevole di assenza resta **irraggiungibile** finché
+un contratto separatamente approvato non fornirà una prova di copertura
+autorevole. Non si fabbrica copertura da tupla vuota, timestamp, assenza locale
+o discovery di predecessori/successori; questo documento non introduce query
+provider/history, tabelle, sidecar, schema, migrazioni, expiry o reconciliation.
 
 ## 6. Persistenza atomica minima
 
@@ -153,3 +189,16 @@ Sono differiti: UX e memorizzazione delle conferme, evaluation dell'aderenza,
 reporting/learning e strategie operative di rollout. Non sono parte di questo
 contratto lifecycle di expiry o reconciliation, risoluzione persistita della
 discovery, consumo candidati o nuove identità/tabelle accessorie.
+
+## 8. Esempi focalizzati
+
+* Snapshot valido più tupla sessioni vuota e nessuna prova di copertura:
+  cardinalità candidati `ZERO`, esito `NOT_EVALUABLE`, nessuna scrittura.
+* Una futura prova autorevole di copertura continua sarebbe una precondizione
+  per un outcome di assenza, non un meccanismo implementato da questo boundary.
+* Un `DirectIdEvidence` valido per la sessione `S`, con ID che risolve
+  univocamente lo snapshot same-subject `P`, seleziona `P` anche in presenza di
+  alternative strutturali o deviazioni di esecuzione.
+* `ActualSession.raw_ids`, `original_activity_id` e provenance, anche se
+  contengono una stringa uguale a un workout ID, non sono `DirectIdEvidence` e
+  non attivano il percorso diretto.
