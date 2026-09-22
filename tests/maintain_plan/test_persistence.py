@@ -47,8 +47,18 @@ def test_migration_on_empty_database_is_versioned_and_idempotent(tmp_path):
         versions = connection.execute(
             "SELECT version, checksum FROM maintain_plan_schema_migrations"
         ).fetchall()
-        assert [item[0] for item in versions] == [1, 2, 3, 4, 5, 6, 7]
+        assert [item[0] for item in versions] == [1, 2, 3, 4, 5, 6, 7, 8]
         assert all(len(item[1]) == 64 for item in versions)
+        assert {row[1:3] for row in connection.execute(
+            "PRAGMA index_list(maintain_plan_prescription_mappings)"
+        ) if row[2]} >= {
+            ("idx_mp_mappings_snapshot_unique", 1),
+            ("idx_mp_mappings_session_unique", 1),
+        }
+        assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
+        assert connection.execute("PRAGMA integrity_check").fetchone() == ("ok",)
+    with pytest.raises(RuntimeError, match="migration 8 checksum mismatch"):
+        run_migrations(path, (Migration(8, "changed-v8", lambda connection: None),))
     run_migrations(path)
     with sqlite3.connect(path) as connection:
         after = connection.execute(
@@ -57,7 +67,7 @@ def test_migration_on_empty_database_is_versioned_and_idempotent(tmp_path):
         assert before == after
         assert connection.execute(
             "SELECT count(*) FROM maintain_plan_schema_migrations"
-            ).fetchone() == (7,)
+            ).fetchone() == (8,)
 
 
 def _seed_confirmation_parents(connection):
@@ -96,7 +106,7 @@ def test_historical_v3_checksum_and_upgrade_to_v4_preserve_existing_rows(tmp_pat
     with sqlite3.connect(path) as connection:
         assert connection.execute("SELECT * FROM maintain_plan_confirmations").fetchall() == before
         assert [row[0] for row in connection.execute(
-            "SELECT version FROM maintain_plan_schema_migrations ORDER BY version")] == [1, 2, 3, 4, 5, 6, 7]
+            "SELECT version FROM maintain_plan_schema_migrations ORDER BY version")] == [1, 2, 3, 4, 5, 6, 7, 8]
         assert {
             "maintain_plan_confirmations_validate_insert",
             "maintain_plan_confirmations_validate_update",
@@ -167,7 +177,7 @@ def test_v4_rejects_invalid_historical_rows_atomically(tmp_path):
         assert connection.execute(
             "SELECT count(*) FROM sqlite_master WHERE type='trigger' AND name LIKE 'maintain_plan_confirmations_validate_%'"
         ).fetchone() == (0,)
-    assert SCHEMA_VERSION == 7
+    assert SCHEMA_VERSION == 8
 
 
 def test_migration_preserves_legacy_schema_and_record_exactly(tmp_path):
@@ -209,6 +219,99 @@ def test_applied_migration_rejects_changed_content_for_same_version(tmp_path):
     run_migrations(path)
     with pytest.raises(RuntimeError, match="checksum mismatch"):
         run_migrations(path, (Migration(1, "different-content", lambda connection: None),))
+
+
+def _seed_v7_mapping_rows(path, mappings):
+    run_migrations(path, MIGRATIONS[:7])
+    with sqlite3.connect(path) as connection:
+        for reference in sorted({item for mapping in mappings for item in mapping[1:]}):
+            if reference.startswith("snapshot"):
+                connection.execute(
+                    "INSERT INTO maintain_plan_prescription_snapshots VALUES "
+                    "(?, 'workout', 'decision', 'contract', 'payload-v', 'payload', 'athlete-1')",
+                    (reference,),
+                )
+            else:
+                connection.execute(
+                    "INSERT INTO maintain_plan_actual_sessions VALUES "
+                    "(?, '2026-01-01T00:00:00+00:00', 'single', 'contract', "
+                    "'payload-v', 'payload', 'athlete-1')",
+                    (reference,),
+                )
+        connection.executemany(
+            "INSERT INTO maintain_plan_prescription_mappings VALUES "
+            "(?, ?, ?, 'AUTOMATIC', 'payload-v', 'payload')",
+            mappings,
+        )
+
+
+def _all_table_rows(connection):
+    tables = [row[0] for row in connection.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
+    )]
+    return {table: connection.execute(f'SELECT * FROM "{table}"').fetchall()
+            for table in tables}
+
+
+def test_clean_v7_upgrades_to_v8_losslessly_and_reopens(tmp_path):
+    path = tmp_path / "clean-v7.db"
+    mappings = [
+        ("mapping-1", "snapshot-1", "session-1"),
+        ("mapping-2", "snapshot-2", "session-2"),
+    ]
+    _seed_v7_mapping_rows(path, mappings)
+
+    run_migrations(path)
+    run_migrations(path)
+
+    with sqlite3.connect(path) as connection:
+        assert connection.execute(
+            "SELECT mapping_id, prescription_snapshot_ref, actual_session_ref "
+            "FROM maintain_plan_prescription_mappings ORDER BY mapping_id"
+        ).fetchall() == mappings
+        assert connection.execute(
+            "SELECT version FROM maintain_plan_schema_migrations ORDER BY version"
+        ).fetchall() == [(version,) for version in range(1, 9)]
+        assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
+        assert connection.execute("PRAGMA integrity_check").fetchone() == ("ok",)
+
+
+@pytest.mark.parametrize(("mappings", "error_side"), [
+    ([
+        ("mapping-1", "snapshot-1", "session-1"),
+        ("mapping-2", "snapshot-1", "session-2"),
+    ], "snapshot-side"),
+    ([
+        ("mapping-1", "snapshot-1", "session-1"),
+        ("mapping-2", "snapshot-2", "session-1"),
+    ], "session-side"),
+    ([
+        ("mapping-1", "snapshot-1", "session-1"),
+        ("mapping-2", "snapshot-1", "session-2"),
+        ("mapping-3", "snapshot-2", "session-1"),
+    ], "snapshot-side .* and session-side"),
+])
+def test_dirty_v7_mapping_upgrade_fails_atomically(tmp_path, mappings, error_side):
+    path = tmp_path / "dirty-v7.db"
+    _seed_v7_mapping_rows(path, mappings)
+    with sqlite3.connect(path) as connection:
+        before = _all_table_rows(connection)
+
+    with pytest.raises(RuntimeError, match=error_side):
+        run_migrations(path)
+
+    with sqlite3.connect(path) as connection:
+        assert _all_table_rows(connection) == before
+        assert connection.execute(
+            "SELECT version FROM maintain_plan_schema_migrations ORDER BY version"
+        ).fetchall() == [(version,) for version in range(1, 8)]
+        assert connection.execute(
+            "SELECT name FROM sqlite_master WHERE type='index' "
+            "AND name IN ('idx_mp_mappings_snapshot_unique', "
+            "'idx_mp_mappings_session_unique')"
+        ).fetchall() == []
+        assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
+        assert connection.execute("PRAGMA integrity_check").fetchone() == ("ok",)
 
 
 def test_insert_read_round_trip_reopen_and_deep_immutability(tmp_path):
@@ -318,17 +421,29 @@ def test_schema_has_explicit_versions_constraints_and_no_backfill(tmp_path):
                    for name in dir(repository))
 
 
-def test_schema_allows_versioned_results_for_same_relationship(tmp_path):
+def test_schema_enforces_bidirectional_one_to_one_prescription_mappings(tmp_path):
     repository = MaintainPlanRepository(tmp_path / "versions.db")
     repository.create_prescription_snapshot(RUN_PRESCRIPTION)
     repository.create_actual_session(RUN_SESSION)
     repository.create_prescription_mapping(RUN_MAPPING)
-    second_mapping = replace(RUN_MAPPING, mapping_id="mapping-2")
-    repository.create_prescription_mapping(second_mapping)
-    repository.create_execution_evaluation(RUN_EXECUTION)
-    repository.create_execution_evaluation(replace(RUN_EXECUTION, evaluation_id="evaluation-2"))
-    assert repository.get_prescription_mapping("mapping-2") == second_mapping
-    assert repository.get_execution_evaluation("evaluation-2").evaluation_id == "evaluation-2"
+    repository.create_prescription_snapshot(replace(
+        RUN_PRESCRIPTION, prescription_snapshot_id="snapshot-2"))
+    repository.create_actual_session(replace(RUN_SESSION, session_id="session-2"))
+
+    duplicate_pairs = (
+        ("mapping-2", "snapshot-1", "session-1"),
+        ("mapping-3", "snapshot-1", "session-2"),
+        ("mapping-4", "snapshot-2", "session-1"),
+    )
+    with sqlite3.connect(repository.database_path) as connection:
+        for mapping_id, snapshot_ref, session_ref in duplicate_pairs:
+            with pytest.raises(sqlite3.IntegrityError, match="UNIQUE constraint failed"):
+                connection.execute(
+                    "INSERT INTO maintain_plan_prescription_mappings "
+                    "SELECT ?, ?, ?, resolution_method, payload_schema_version, payload_json "
+                    "FROM maintain_plan_prescription_mappings WHERE mapping_id='mapping-1'",
+                    (mapping_id, snapshot_ref, session_ref),
+                )
 
 
 def test_schema_enforces_matching_state_and_exact_evaluation_relationship(tmp_path):
