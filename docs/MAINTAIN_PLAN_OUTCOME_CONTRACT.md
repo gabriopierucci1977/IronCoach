@@ -1676,6 +1676,52 @@ separato per ciascun componente outdoor e sarà `NOT_APPLICABLE` per ciascun
 componente indoor. Quantità, intensità e dose resteranno separate per
 componente e non sommeranno unità incompatibili.
 
+### 5.7 Boundary ridotto del futuro matching runtime
+
+Per il solo incremento futuro ridotto, il
+[contratto runtime di matching](MAINTAIN_PLAN_RUNTIME_MATCHING_CONTRACT.md)
+specializza le sezioni 5.3–5.6 senza abilitare esecuzione o modificare le
+successive regole di evaluation e outcome. Gli input sono esclusivamente
+`PrescriptionSnapshot` e `ActualSession` autorevoli già persistiti. Il matcher
+deve valutare la tupla completa delle sessioni same-subject per ogni snapshot
+e, prima di emettere `ONE`, tutti gli snapshot strutturalmente compatibili per
+ogni sessione; finestre sovrapposte non sono risolte dall'ordine di iterazione.
+
+Un direct ID valido, univoco e same-subject è autorevole anche fuori finestra o
+in presenza di deviazioni di esecuzione, ma non supera mai ownership. Un ID
+restituito malformato, pendente o ambiguo resta al boundary non automatico
+`CONFIRMATION_REQUIRED`; ownership cross-subject o corrotta invalida invece
+l'intero scope. Input persistito sconosciuto o indecodificabile è corruzione e
+impone rollback, mentre soltanto una capability valida e deliberatamente non
+supportata può produrre `NOT_EVALUABLE`.
+
+Senza direct ID autorevole, `SINGLE`, `BRICK` e `MULTISPORT` richiedono lo
+start nella `scheduled_window`. Le sostituzioni restano component-scoped e gli
+eventuali vincoli authored di `environment` e `mode` eliminano il candidato
+solo quando un valore osservato presente è contraddittorio; metadata osservato
+mancante non elimina. `ZERO` è dichiarabile soltanto con copertura autorevole e
+continua dell'intera finestra chiusa, inclusi gap, frontiere e finestre
+puntuali. Queste precisazioni non introducono persistenza di confirmation,
+risposte o candidate consumption.
+
+L'input diretto del boundary ridotto è il tipo canonico esistente
+`DirectIdEvidence`, con `evidence_id`, `session_id`,
+`returned_prescription_id`, `source` e `provenance`; non è un nuovo record o
+schema persistente. Il matcher riceve esplicitamente una tupla di questi
+oggetti e ne valida envelope, riferimento alla sessione e ownership. Non legge
+il direct ID da `ActualSession`, `raw_ids`, `original_activity_id`, provenance
+o metadata. Evidence corrotta o cross-subject fallisce l'intero scope; in un
+envelope valido, ID pendente, malformato o ambiguo resta
+`CONFIRMATION_REQUIRED`.
+
+`ZERO` è soltanto la cardinalità pura di un candidate set senza sessioni
+compatibili. Poiché gli input ridotti non contengono intervalli autorevoli di
+copertura della sincronizzazione, anche una tupla vuota produce
+deterministicamente `NOT_EVALUABLE` e non crea `NO_MATCH`, conferma, mapping o
+decisione persistita di assenza. La copertura continua dell'intera finestra
+resta precondizione obbligatoria ma irraggiungibile in questo boundary finché
+un input autorevole separatamente approvato non la renderà disponibile.
+
 ## 6. Applicability e valutazione dell'esecuzione
 
 Per ogni sessione supportata da `MAINTAIN_PLAN` v1, sport/componenti,
