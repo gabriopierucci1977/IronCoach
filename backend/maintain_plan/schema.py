@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Callable, Iterable
 
 
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 
 
 @dataclass(frozen=True)
@@ -414,6 +414,46 @@ def _migration_7(connection: sqlite3.Connection) -> None:
 
 MIGRATIONS = MIGRATIONS + (Migration(
     7, hashlib.sha256(_MIGRATION_7_SQL.encode("utf-8")).hexdigest(), _migration_7,
+),)
+
+
+_MIGRATION_8_STATEMENTS = (
+    "CREATE UNIQUE INDEX idx_mp_mappings_snapshot_unique "
+    "ON maintain_plan_prescription_mappings(prescription_snapshot_ref)",
+    "CREATE UNIQUE INDEX idx_mp_mappings_session_unique "
+    "ON maintain_plan_prescription_mappings(actual_session_ref)",
+)
+_MIGRATION_8_SQL = ";\n".join(_MIGRATION_8_STATEMENTS)
+
+
+def _migration_8(connection: sqlite3.Connection) -> None:
+    duplicate_snapshot = connection.execute(
+        "SELECT 1 FROM maintain_plan_prescription_mappings "
+        "WHERE prescription_snapshot_ref IS NOT NULL "
+        "GROUP BY prescription_snapshot_ref HAVING COUNT(*) > 1 LIMIT 1"
+    ).fetchone() is not None
+    duplicate_session = connection.execute(
+        "SELECT 1 FROM maintain_plan_prescription_mappings "
+        "WHERE actual_session_ref IS NOT NULL "
+        "GROUP BY actual_session_ref HAVING COUNT(*) > 1 LIMIT 1"
+    ).fetchone() is not None
+    if duplicate_snapshot or duplicate_session:
+        duplicate_sides = []
+        if duplicate_snapshot:
+            duplicate_sides.append("snapshot-side (prescription_snapshot_ref)")
+        if duplicate_session:
+            duplicate_sides.append("session-side (actual_session_ref)")
+        raise RuntimeError(
+            "cannot apply MAINTAIN_PLAN migration 8: duplicate "
+            + " and ".join(duplicate_sides)
+            + " prescription mappings"
+        )
+    for statement in _MIGRATION_8_STATEMENTS:
+        connection.execute(statement)
+
+
+MIGRATIONS = MIGRATIONS + (Migration(
+    8, hashlib.sha256(_MIGRATION_8_SQL.encode("utf-8")).hexdigest(), _migration_8,
 ),)
 
 
