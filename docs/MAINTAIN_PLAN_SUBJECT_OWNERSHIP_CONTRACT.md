@@ -68,3 +68,19 @@ validazione fail-closed e wiring dell'identità autorevole nella cattura della
 prescrizione. Restano fuori scope: modifiche al matcher, candidate discovery,
 evaluation, reporting, learning, modifica del piano e Coach Engine.
 
+## 7. Boundary del futuro matching ridotto
+
+Il futuro [contratto runtime di matching](MAINTAIN_PLAN_RUNTIME_MATCHING_CONTRACT.md)
+usa questo binding senza modificarlo. Prima della candidate evaluation deve
+validare ownership sull'intero scope: binding mancante, malformato, non
+codificabile o discordante, compreso quello raggiunto tramite direct ID,
+fallisce chiuso senza ripiegare su un sottoinsieme. Un direct ID non supera mai
+ownership.
+
+L'unico mapping automatico ammesso dal boundary ridotto conserva unicità
+bidirezionale fra snapshot e sessione. Prima dell'insert il repository futuro
+deve aprire `BEGIN IMMEDIATE`, rileggere sotto la medesima transazione entrambi
+gli artefatti, entrambi i `subject_ref` e i due lati del mapping, quindi
+ricontrollare tutte le invarianti. Conflitto o modifica concorrente impone
+rollback; un retry semanticamente identico è idempotente e non duplica il
+mapping. Questa sezione non introduce schema, migrazioni, DDL o wiring.

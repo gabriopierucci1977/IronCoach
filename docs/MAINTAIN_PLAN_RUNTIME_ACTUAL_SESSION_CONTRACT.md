@@ -374,3 +374,27 @@ I test del futuro incremento DEVONO includere almeno:
 - tentativi di usare qualunque ID come returned prescription ID o di creare
   matching/`PrescriptionMapping`: vietati;
 - deployment single-athlete: prova che non viene trattato come ownership.
+
+## 13. Boundary come input del futuro matching ridotto
+
+Le limitazioni di cattura P0 sopra restano invariate. Un futuro matcher non
+legge nuovamente la sorgente Garmin e non completa questi artefatti: consuma
+soltanto `ActualSession` canoniche, immutabili e già persistite insieme ai
+`PrescriptionSnapshot` persistiti, come definito dal
+[contratto runtime di matching](MAINTAIN_PLAN_RUNTIME_MATCHING_CONTRACT.md).
+Riceve la tupla completa delle sessioni same-subject dello scope e la ordina
+sui byte UTF-8 esatti di `session_id`; tale ordine rende l'output deterministico
+ma non costituisce uno spareggio.
+
+Una composition persistita sconosciuta, incoerente o indecodificabile è
+corruzione dell'intero scope e impone rollback, non `NOT_EVALUABLE`. Una
+composition valida può essere `NOT_EVALUABLE` soltanto se la capability è
+deliberatamente non supportata. L'eventuale supporto futuro a `BRICK` e
+`MULTISPORT` non cambia il fatto che questo boundary P0 acquisisce soltanto
+`SINGLE` e non autorizza qui nuovi normalizer, repository, schema o wiring.
+
+Metadata opzionale osservato mancante per `environment` o `mode` resta
+non-eliminante; un valore esplicito viene invece preservato e può rendere
+incompatibile il solo componente interessato. Un returned prescription ID è
+evidence da validare: non è derivato dagli ID attività elencati in questo
+contratto e non costituisce ownership.
