@@ -84,6 +84,15 @@ class RuntimeMatchingScopeError(ValueError):
         super().__init__("; ".join(self.errors))
 
 
+def returned_prescription_id_issue(value: object) -> DirectIdEvidenceIssue | None:
+    """Classify one direct target using the contract's exact ID rules."""
+    if value is None:
+        return DirectIdEvidenceIssue.MISSING_RETURNED_PRESCRIPTION_ID
+    if _utf8_errors(value, "returned_prescription_id"):
+        return DirectIdEvidenceIssue.MALFORMED_RETURNED_PRESCRIPTION_ID
+    return None
+
+
 def _semantic_evidence_issues(
         evidence: tuple[DirectIdEvidence, ...]) -> tuple[DirectIdEvidenceIssue, ...]:
     issues: set[DirectIdEvidenceIssue] = set()
@@ -91,12 +100,11 @@ def _semantic_evidence_issues(
     targets_by_session: dict[str, set[str]] = {}
     for item in evidence:
         target = item.returned_prescription_id
-        if target is None:
-            issues.add(DirectIdEvidenceIssue.MISSING_RETURNED_PRESCRIPTION_ID)
+        issue = returned_prescription_id_issue(target)
+        if issue is not None:
+            issues.add(issue)
             continue
-        if _utf8_errors(target, "returned_prescription_id"):
-            issues.add(DirectIdEvidenceIssue.MALFORMED_RETURNED_PRESCRIPTION_ID)
-            continue
+        assert isinstance(target, str)
         assertion = (item.session_id, target)
         if assertion in assertions:
             issues.add(DirectIdEvidenceIssue.DUPLICATE_ASSERTION)
