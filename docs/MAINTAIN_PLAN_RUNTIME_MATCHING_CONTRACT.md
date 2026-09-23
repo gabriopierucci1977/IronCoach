@@ -11,9 +11,9 @@ fallisce chiuso, senza mapping parziale.
 
 ## 1. Input e scope autorevoli
 
-Gli input sono `PrescriptionSnapshot` e `ActualSession` canonici, immutabili e
-**già persistiti**, più la tupla esplicita del tipo esistente
-`DirectIdEvidence` definito nel
+Gli input sono una tupla di `PrescriptionSnapshot`, una tupla di
+`ActualSession` canonici, immutabili e **già persistiti**, e la tupla esplicita
+`tuple[DirectIdEvidence, ...]` del tipo esistente definito nel
 [contratto outcome §5.7](MAINTAIN_PLAN_OUTCOME_CONTRACT.md). Non sono ammessi
 payload della richiesta, history aggregate, record provider, nomi, decisioni
 correnti, ricostruzioni o fallback. Uno scope contiene un soggetto opaco,
@@ -139,8 +139,9 @@ nessun ID diretto autorevole ne seleziona uno, nessuna iterazione può scegliere
 il risultato è ambiguo e non automatico. Analogamente, più sessioni
 compatibili con uno snapshot sono ambigue. La cardinalità deterministica è:
 
-* `ZERO`: nessuna sessione strutturalmente compatibile; è cardinalità pura del
-  candidate set e non prova l'assenza di una sessione reale;
+* `ZERO`: nessun candidato strutturalmente compatibile fra gli artefatti nello
+  scope; è cardinalità pura del candidate set e non prova l'assenza di una
+  sessione reale;
 * `ONE`: esattamente una coppia globale, senza competizione su nessuno dei due
   lati;
 * `MULTIPLE`: ogni altra pluralità o competizione.

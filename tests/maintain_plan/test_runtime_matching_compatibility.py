@@ -234,6 +234,34 @@ def test_brick_explicit_maximum_gap_closed_boundary(gap, state):
         assert CompatibilityReason.BRICK_MAXIMUM_GAP_EXCEEDED in evaluated.reasons
 
 
+def test_finite_but_unrepresentable_maximum_gap_is_specific_input_error():
+    snapshot, session = brick(limit=1e100)
+    with pytest.raises(CompatibilityInputError,
+                       match="snapshot transition maximum gap is invalid"):
+        result(snapshot, session)
+
+
+@pytest.mark.parametrize("orientation", ("reversed", "nonadjacent"))
+def test_every_written_transition_limit_is_validated(orientation):
+    snapshot, session = brick()
+    transition = snapshot.transitions[0]
+    if orientation == "reversed":
+        transition = replace(
+            transition, from_component_id="bike", to_component_id="run",
+            applicable_limit_minutes=float("nan"))
+        snapshot = replace(snapshot, transitions=(transition,))
+    else:
+        third = replace(snapshot.components[1], component_id="third", component_index=2)
+        transition = replace(
+            transition, from_component_id="run", to_component_id="third",
+            applicable_limit_minutes=-1)
+        snapshot = replace(snapshot, components=snapshot.components + (third,),
+                           transitions=(transition,))
+    with pytest.raises(CompatibilityInputError,
+                       match="snapshot transition maximum gap is invalid"):
+        result(snapshot, session)
+
+
 @pytest.mark.parametrize(("gap", "state"), [(15, CompatibilityState.UNSUPPORTED),
                                                (15.01, CompatibilityState.INCOMPATIBLE)])
 def test_brick_default_fifteen_minute_gap_closed_boundary(gap, state):
@@ -327,6 +355,17 @@ def test_unknown_or_undecodable_composition_is_corruption(side, value):
     else:
         session = replace(session, composition=value)
     with pytest.raises(CompatibilityInputError, match="unknown or undecodable"):
+        result(snapshot, session)
+
+
+@pytest.mark.parametrize("side", ("snapshot", "session"))
+def test_completely_malformed_component_is_specific_input_corruption(side):
+    snapshot, session = RUN_PRESCRIPTION, RUN_SESSION
+    if side == "snapshot":
+        snapshot = replace(snapshot, components=(None,))
+    else:
+        session = replace(session, components=(None,))
+    with pytest.raises(CompatibilityInputError, match=f"{side} component is malformed"):
         result(snapshot, session)
 
 

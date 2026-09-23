@@ -101,6 +101,20 @@ def test_evidence_envelope_membership_and_duplicate_ids_are_structural():
                                         (_evidence("e", "s"), _evidence("e", "s", "other")))
 
 
+@pytest.mark.parametrize("provenance", [None, "scalar", {"nested": None},
+                                         {"nested": "scalar"}])
+def test_evidence_provenance_requires_mappings_at_every_level(provenance):
+    evidence = replace(_evidence("e", "s"), provenance=provenance)
+    with pytest.raises(RuntimeMatchingScopeError, match="provenance.*must be a mapping"):
+        validate_runtime_matching_scope("athlete-1", (), (_session("s"),), (evidence,))
+
+
+def test_evidence_nested_mapping_provenance_is_valid():
+    evidence = replace(_evidence("e", "s"), provenance={"device": {"import": {}}})
+    scope = validate_runtime_matching_scope("athlete-1", (), (_session("s"),), (evidence,))
+    assert scope.direct_id_evidence == (evidence,)
+
+
 def test_duplicate_contradictory_and_malformed_targets_are_semantic_not_matches():
     scope = validate_runtime_matching_scope(
         "athlete-1", (_snapshot("p"),), (_session("s"),),
