@@ -5,7 +5,7 @@ from datetime import timedelta
 
 import pytest
 
-from backend.maintain_plan.models import DirectIdEvidence
+from backend.maintain_plan.models import DirectIdEvidence, SupportStatus
 from backend.maintain_plan.runtime_matching_decision import (
     CandidateCardinality, DecisionReason, DecisionStatus, MatchingDecisionInputError,
     decide_runtime_matching,
@@ -143,6 +143,45 @@ def test_two_direct_ids_for_one_prescription_remain_a_real_conflict():
     assert {(item.prescription_snapshot_id, item.session_id, item.direct)
             for item in result.candidates} == {
                 ("p", "first", True), ("p", "second", True)}
+
+
+def test_unique_direct_match_is_not_blocked_by_unsupported_structural_alternative():
+    unsupported = snapshot("p")
+    unsupported = replace(unsupported, components=(replace(
+        unsupported.components[0], support_status=SupportStatus.UNSUPPORTED),))
+    result = decide(
+        (unsupported,),
+        (session("direct"), session("structural-unsupported")),
+        (evidence("e", "direct", "p"),),
+    )
+    assert result.status is DecisionStatus.MATCHED
+    assert result.cardinality is CandidateCardinality.ONE
+    assert result.selected_pair is not None
+    assert result.selected_pair.session_id == "direct"
+    assert result.selected_pair.direct is True
+    assert DecisionReason.UNSUPPORTED_COMPATIBILITY in result.reasons
+    assert any(item.session_id == "structural-unsupported" and
+               item.compatibility.state.value == "UNSUPPORTED"
+               for item in result.pair_evaluations)
+
+
+def test_known_multiple_candidates_take_priority_over_unrelated_unsupported_diagnostics():
+    compatible = snapshot("compatible")
+    unsupported = snapshot("unsupported")
+    unsupported = replace(unsupported, components=(replace(
+        unsupported.components[0], support_status=SupportStatus.UNSUPPORTED),))
+    result = decide(
+        (compatible, unsupported),
+        (session("first"), session("second")),
+    )
+    assert result.cardinality is CandidateCardinality.MULTIPLE
+    assert result.status is DecisionStatus.CONFIRMATION_REQUIRED
+    assert DecisionReason.MULTIPLE_CANDIDATES in result.reasons
+    assert DecisionReason.PRESCRIPTION_COMPETITION in result.reasons
+    assert DecisionReason.UNSUPPORTED_COMPATIBILITY in result.reasons
+    assert {(item.prescription_snapshot_id, item.session_id)
+            for item in result.candidates} == {
+                ("compatible", "first"), ("compatible", "second")}
 
 
 @pytest.mark.parametrize("target, reason", [

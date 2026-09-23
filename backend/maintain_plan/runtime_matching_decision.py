@@ -129,6 +129,7 @@ def decide_runtime_matching(scope: RuntimeMatchingScope) -> MatchingDecision:
     reasons = _issue_reasons(scope)
     involved_prescriptions: set[str] = set()
     involved_sessions: set[str] = set()
+    blocking_unsupported = False
 
     # Evaluate the full matrix even when direct evidence will select or suppress
     # a row.  This prevents input iteration order from becoming a tie-break.
@@ -142,11 +143,14 @@ def decide_runtime_matching(scope: RuntimeMatchingScope) -> MatchingDecision:
                 compatibility,
                 has_direct_envelope,
             ))
-            if (not has_direct_envelope and
-                    compatibility.state is CompatibilityState.UNSUPPORTED):
+            if compatibility.state is CompatibilityState.UNSUPPORTED:
                 reasons.add(DecisionReason.UNSUPPORTED_COMPATIBILITY)
                 involved_prescriptions.add(snapshot.prescription_snapshot_id)
                 involved_sessions.add(session.session_id)
+                blocking_unsupported |= (
+                    not has_direct_envelope and
+                    snapshot.prescription_snapshot_id not in
+                    reserved_direct_prescription_ids)
             elif (not has_direct_envelope and
                   snapshot.prescription_snapshot_id not in
                   reserved_direct_prescription_ids and
@@ -201,13 +205,13 @@ def decide_runtime_matching(scope: RuntimeMatchingScope) -> MatchingDecision:
 
     if uncertain_direct:
         status, selected = DecisionStatus.CONFIRMATION_REQUIRED, None
-    elif DecisionReason.UNSUPPORTED_COMPATIBILITY in reasons:
-        status, selected = DecisionStatus.NOT_EVALUABLE, None
-    elif cardinality is CandidateCardinality.ONE:
-        status, selected = DecisionStatus.MATCHED, ordered_candidates[0]
     elif cardinality is CandidateCardinality.MULTIPLE:
         status, selected = DecisionStatus.CONFIRMATION_REQUIRED, None
         reasons.add(DecisionReason.MULTIPLE_CANDIDATES)
+    elif blocking_unsupported:
+        status, selected = DecisionStatus.NOT_EVALUABLE, None
+    elif cardinality is CandidateCardinality.ONE:
+        status, selected = DecisionStatus.MATCHED, ordered_candidates[0]
     else:
         status, selected = DecisionStatus.NOT_EVALUABLE, None
         reasons.add(DecisionReason.NO_CANDIDATE)
