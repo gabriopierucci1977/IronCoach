@@ -261,7 +261,13 @@ class MaintainPlanRepository:
              value.resolution_method.value, PAYLOAD_SCHEMA_VERSION, serialize_contract(value)),
         )
 
-    def persist_prescription_mapping(self, value: PrescriptionMapping) -> PrescriptionMapping:
+    def persist_prescription_mapping(
+        self,
+        value: PrescriptionMapping,
+        *,
+        expected_snapshot: PrescriptionSnapshot | None = None,
+        expected_session: ActualSession | None = None,
+    ) -> PrescriptionMapping:
         """Atomically validate and insert a decided mapping, or return its exact retry."""
         connection = self._connect()
         connection.row_factory = sqlite3.Row
@@ -294,6 +300,10 @@ class MaintainPlanRepository:
                 raise ValueError("mapping must reference a persisted snapshot and actual session")
             snapshot = self._decode_prescription_snapshot_row(snapshot_row)
             session = self._decode_actual_session_row(session_row)
+            if expected_snapshot is not None and snapshot != expected_snapshot:
+                raise ValueError("prescription snapshot changed since matching decision")
+            if expected_session is not None and session != expected_session:
+                raise ValueError("actual session changed since matching decision")
             # Legacy NULL ownership is readable for compatibility, but never mapping eligible.
             self._validate_mapping_refs(value, snapshot, session)
 
