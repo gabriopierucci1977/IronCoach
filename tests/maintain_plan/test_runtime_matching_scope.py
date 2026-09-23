@@ -112,6 +112,8 @@ def test_evidence_provenance_accepts_simple_and_nested_values():
     evidence = replace(_evidence("e", "s"), provenance={
         "provider": "garmin", "attempt": 1, "verified": True,
         "optional": None, "device": {"model": "edge", "import": {}},
+        "records": [{"provider": "garmin"}], "coordinates": (45.0, 9.0),
+        "labels": {"outdoor", "verified"},
     })
     scope = validate_runtime_matching_scope("athlete-1", (), (_session("s"),), (evidence,))
     assert scope.direct_id_evidence == (evidence,)
@@ -122,6 +124,21 @@ def test_evidence_provenance_rejects_malformed_nested_mapping_keys(key):
     evidence = replace(_evidence("e", "s"), provenance={"device": {key: "value"}})
     with pytest.raises(RuntimeMatchingScopeError, match="provenance.*key"):
         validate_runtime_matching_scope("athlete-1", (), (_session("s"),), (evidence,))
+
+
+@pytest.mark.parametrize("container", [lambda value: [value], lambda value: (value,)])
+def test_evidence_provenance_validates_object_keys_inside_sequences(container):
+    valid = replace(_evidence("valid", "s"), provenance={
+        "records": container({"provider": "garmin"}),
+    })
+    scope = validate_runtime_matching_scope("athlete-1", (), (_session("s"),), (valid,))
+    assert scope.direct_id_evidence == (valid,)
+
+    invalid = replace(_evidence("invalid", "s"), provenance={
+        "records": container({None: "garmin"}),
+    })
+    with pytest.raises(RuntimeMatchingScopeError, match="provenance.*key"):
+        validate_runtime_matching_scope("athlete-1", (), (_session("s"),), (invalid,))
 
 
 def test_duplicate_contradictory_and_malformed_targets_are_semantic_not_matches():
