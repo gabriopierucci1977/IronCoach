@@ -16,7 +16,8 @@ from typing import Iterable
 
 from .models import (
     ActualSession, Composition, Discipline, Environment, Mode, ObservedComponent,
-    PlannedComponent, PrescriptionSnapshot, SupportStatus,
+    ObservedTransition, PlannedComponent, PlannedTransition, PrescriptionSnapshot,
+    SupportStatus,
 )
 from .validators import validate_actual_session, validate_prescription
 
@@ -101,6 +102,12 @@ def _validated(snapshot: object, session: object) -> tuple[PrescriptionSnapshot,
                         errors.append("snapshot substitution environment is unknown or undecodable")
                     if substitution.mode is not None and type(substitution.mode) is not Mode:
                         errors.append("snapshot substitution mode is unknown or undecodable")
+    for label, transitions in (("snapshot", snapshot.transitions),
+                               ("session", session.transitions)):
+        expected_type = PlannedTransition if label == "snapshot" else ObservedTransition
+        for transition in transitions:
+            if not isinstance(transition, expected_type):
+                errors.append(f"{label} transition is malformed")
     if errors:
         raise CompatibilityInputError(errors)
     try:

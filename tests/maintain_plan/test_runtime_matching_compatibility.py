@@ -370,6 +370,17 @@ def test_completely_malformed_component_is_specific_input_corruption(side):
         result(snapshot, session)
 
 
+@pytest.mark.parametrize("side", ("snapshot", "session"))
+def test_completely_malformed_transition_is_specific_input_corruption(side):
+    snapshot, session = brick()
+    if side == "snapshot":
+        snapshot = replace(snapshot, transitions=(None,))
+    else:
+        session = replace(session, transitions=(None,))
+    with pytest.raises(CompatibilityInputError, match=f"{side} transition is malformed"):
+        result(snapshot, session)
+
+
 def test_valid_deliberately_unsupported_capability_is_unsupported():
     snapshot = replace(RUN_PRESCRIPTION, components=(replace(
         RUN_PRESCRIPTION.components[0], discipline=Discipline.STRENGTH,
