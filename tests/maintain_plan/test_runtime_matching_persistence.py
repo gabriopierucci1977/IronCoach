@@ -6,6 +6,17 @@ import sqlite3
 
 import pytest
 
+from backend.maintain_plan.matching_service import build_mapping
+from backend.maintain_plan.models import (
+    ActualSession,
+    Composition,
+    Discipline,
+    MatchStatus,
+    ObservedTransition,
+    PlannedTransition,
+    PolicyRef,
+    ResolutionMethod,
+)
 from backend.maintain_plan.runtime_matching_decision import decide_runtime_matching
 from backend.maintain_plan.runtime_matching_persistence import (
     RuntimeMatchingPersistenceError,
@@ -18,7 +29,14 @@ from backend.maintain_plan.runtime_matching_scope import (
 )
 from backend.maintain_plan.repository import MaintainPlanRepository
 from backend.maintain_plan.serialization import serialize_contract
-from tests.maintain_plan.fixtures import NOW, RUN_PRESCRIPTION, RUN_SESSION
+from tests.maintain_plan.fixtures import (
+    NOW,
+    RUN_PRESCRIPTION,
+    RUN_SESSION,
+    observed,
+    planned,
+    prescription,
+)
 
 
 def _scope(*, snapshots=(RUN_PRESCRIPTION,), sessions=(RUN_SESSION,)):
@@ -35,6 +53,36 @@ def _count(repository):
 def _seed(repository):
     repository.create_prescription_snapshot(RUN_PRESCRIPTION)
     repository.create_actual_session(RUN_SESSION)
+
+
+def _multisport_with_transitions(observed_transitions):
+    policy = PolicyRef("multisport-transition", "1")
+    snapshot = prescription(
+        planned("planned-run", 0, Discipline.RUN),
+        planned("planned-bike", 1, Discipline.BIKE),
+        planned("planned-swim", 2, Discipline.SWIM),
+        composition=Composition.MULTISPORT,
+        transitions=(
+            PlannedTransition(
+                "planned-run-bike", "planned-run", "planned-bike", policy, 15),
+            PlannedTransition(
+                "planned-bike-swim", "planned-bike", "planned-swim", policy, 15),
+        ),
+    )
+    session = ActualSession(
+        "multisport-session",
+        NOW,
+        Composition.MULTISPORT,
+        (
+            observed("actual-run", 0, Discipline.RUN),
+            observed("actual-bike", 1, Discipline.BIKE),
+            observed("actual-swim", 2, Discipline.SWIM),
+        ),
+        transition_ids=tuple(item.transition_id for item in observed_transitions),
+        transitions=tuple(observed_transitions),
+        subject_ref="athlete-1",
+    )
+    return snapshot, session
 
 
 def _persist(repository, scope, decision, mapping_id="runtime-mapping"):
@@ -203,3 +251,65 @@ def test_manually_constructed_scope_with_incoherent_ownership_cannot_write(tmp_p
     with pytest.raises(RuntimeMatchingScopeError, match="byte-exactly"):
         _persist(repository, manual_scope, unchecked_decision)
     assert _count(repository) == 0
+
+
+def test_multisport_transitions_match_by_mapped_endpoints_despite_tuple_order(tmp_path):
+    observed_transitions = (
+        ObservedTransition("actual-bike-swim", "actual-bike", "actual-swim"),
+        ObservedTransition("actual-run-bike", "actual-run", "actual-bike"),
+    )
+    snapshot, session = _multisport_with_transitions(observed_transitions)
+    repository = MaintainPlanRepository(tmp_path / "multisport.db")
+    repository.create_prescription_snapshot(snapshot)
+    repository.create_actual_session(session)
+    scope = validate_runtime_matching_scope(
+        "athlete-1", (snapshot,), (session,))
+
+    mapping = _persist(repository, scope, decide_runtime_matching(scope))
+
+    assert mapping is not None
+    assert tuple(
+        (item.planned_transition_ref.transition_id,
+         item.observed_transition_ref.transition_id,
+         item.match_status)
+        for item in mapping.transition_mappings
+    ) == (
+        ("planned-run-bike", "actual-run-bike", MatchStatus.MATCHED),
+        ("planned-bike-swim", "actual-bike-swim", MatchStatus.MATCHED),
+    )
+    assert repository.get_prescription_mapping(mapping.mapping_id) == mapping
+    assert _count(repository) == 1
+
+
+@pytest.mark.parametrize("case", ["missing", "duplicate", "nonmatching"])
+def test_multisport_transition_mismatches_are_never_paired_automatically(case):
+    matching = ObservedTransition(
+        "actual-run-bike", "actual-run", "actual-bike")
+    if case == "missing":
+        observed_transitions = ()
+    elif case == "duplicate":
+        observed_transitions = (
+            matching,
+            replace(matching, transition_id="actual-run-bike-duplicate"),
+        )
+    else:
+        observed_transitions = (
+            ObservedTransition("actual-bike-run", "actual-bike", "actual-run"),)
+    snapshot, session = _multisport_with_transitions(observed_transitions)
+
+    mapping = build_mapping(
+        snapshot,
+        session,
+        mapping_id=f"{case}-mapping",
+        created_at=NOW,
+        resolution_method=ResolutionMethod.AUTOMATIC,
+    )
+
+    assert not any(
+        item.match_status is MatchStatus.MATCHED
+        for item in mapping.transition_mappings
+    )
+    assert sum(item.match_status is MatchStatus.PLANNED_ONLY
+               for item in mapping.transition_mappings) == 2
+    assert sum(item.match_status is MatchStatus.OBSERVED_ONLY
+               for item in mapping.transition_mappings) == len(observed_transitions)

@@ -135,19 +135,57 @@ def build_mapping(snapshot: PrescriptionSnapshot, session: ActualSession, *, map
                     None if repetition is None else ObservedRepetitionRef(
                         session.session_id, o.component_id, ob.block_id, repetition.repetition_id),
                     repetition_status))
-    planned_transitions = tuple(snapshot.transitions)
-    observed_transitions = tuple(session.transitions)
+    # Transition tuple order is not semantic.  Resolve endpoints through the
+    # component pairs already established above, and only associate a unique
+    # planned/observed endpoint pair.  Missing, extra, or duplicate endpoint
+    # pairs remain explicit rather than being paired positionally.
+    component_links = {
+        item.planned_component_ref.component_id: item.observed_component_ref.component_id
+        for item in components
+        if (item.planned_component_ref is not None and
+            item.observed_component_ref is not None and
+            item.match_status is MatchStatus.MATCHED)
+    }
+    planned_by_observed_endpoints = {}
+    for item in snapshot.transitions:
+        mapped_from = component_links.get(item.from_component_id)
+        mapped_to = component_links.get(item.to_component_id)
+        key = None if mapped_from is None or mapped_to is None else (mapped_from, mapped_to)
+        planned_by_observed_endpoints.setdefault(key, []).append(item)
+    observed_by_endpoints = {}
+    for item in session.transitions:
+        key = (item.from_component_ref, item.to_component_ref)
+        observed_by_endpoints.setdefault(key, []).append(item)
+
     transitions = []
-    for position in range(max(len(planned_transitions), len(observed_transitions))):
-        p = planned_transitions[position] if position < len(planned_transitions) else None
-        o = observed_transitions[position] if position < len(observed_transitions) else None
-        status = (MatchStatus.MATCHED if p is not None and o is not None else
-                  MatchStatus.PLANNED_ONLY if p is not None else MatchStatus.OBSERVED_ONLY)
+    matched_observed_ids = set()
+    for planned_transition in snapshot.transitions:
+        mapped_from = component_links.get(planned_transition.from_component_id)
+        mapped_to = component_links.get(planned_transition.to_component_id)
+        key = None if mapped_from is None or mapped_to is None else (mapped_from, mapped_to)
+        planned_candidates = planned_by_observed_endpoints.get(key, ())
+        observed_candidates = observed_by_endpoints.get(key, ()) if key is not None else ()
+        observed_transition = (observed_candidates[0]
+                               if len(planned_candidates) == len(observed_candidates) == 1
+                               else None)
+        if observed_transition is not None:
+            matched_observed_ids.add(observed_transition.transition_id)
         transitions.append(TransitionMapping(
-            None if p is None else PlannedTransitionRef(snapshot.prescription_snapshot_id,
-                                                         p.transition_id),
-            None if o is None else ObservedTransitionRef(session.session_id, o.transition_id),
-            status))
+            PlannedTransitionRef(snapshot.prescription_snapshot_id,
+                                 planned_transition.transition_id),
+            None if observed_transition is None else ObservedTransitionRef(
+                session.session_id, observed_transition.transition_id),
+            MatchStatus.PLANNED_ONLY if observed_transition is None else MatchStatus.MATCHED,
+        ))
+    transitions.extend(
+        TransitionMapping(
+            None,
+            ObservedTransitionRef(session.session_id, item.transition_id),
+            MatchStatus.OBSERVED_ONLY,
+        )
+        for item in session.transitions
+        if item.transition_id not in matched_observed_ids
+    )
     value = PrescriptionMapping(mapping_id, snapshot.prescription_snapshot_id, session.session_id,
                                 resolution_method, tuple(components), tuple(blocks),
                                 tuple(repetitions), tuple(transitions), confirmation_ref, actor,
