@@ -5,7 +5,7 @@ from __future__ import annotations
 import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Iterator, Mapping
+from typing import TYPE_CHECKING, Any, Iterator, Mapping
 
 from .models import (ActualSession, Confirmation, ConfirmationAnswerType, ExecutionEvaluation, FeedbackEvent, FeedbackEventLog,
                      FeedbackProjection, MatchingResult, PrescriptionMapping,
@@ -23,6 +23,10 @@ from .validators import (validate_actual_session, validate_execution_evaluation,
                          validate_confirmation, validate_mapping, validate_matching_result,
                          validate_mapping_ownership, validate_prescription,
                          validate_source_conflict_impact)
+
+if TYPE_CHECKING:
+    from .runtime_matching_decision import MatchingDecision
+    from .runtime_matching_scope import RuntimeMatchingScope
 
 
 class ActualSessionConflictError(ValueError):
@@ -261,7 +265,13 @@ class MaintainPlanRepository:
              value.resolution_method.value, PAYLOAD_SCHEMA_VERSION, serialize_contract(value)),
         )
 
-    def persist_prescription_mapping(self, value: PrescriptionMapping) -> PrescriptionMapping:
+    def persist_prescription_mapping(
+        self,
+        value: PrescriptionMapping,
+        *,
+        expected_scope: "RuntimeMatchingScope | None" = None,
+        expected_decision: "MatchingDecision | None" = None,
+    ) -> PrescriptionMapping:
         """Atomically validate and insert a decided mapping, or return its exact retry."""
         connection = self._connect()
         connection.row_factory = sqlite3.Row
@@ -294,6 +304,45 @@ class MaintainPlanRepository:
                 raise ValueError("mapping must reference a persisted snapshot and actual session")
             snapshot = self._decode_prescription_snapshot_row(snapshot_row)
             session = self._decode_actual_session_row(session_row)
+
+            if (expected_scope is None) != (expected_decision is None):
+                raise ValueError("atomic scope verification requires its matching decision")
+            if expected_scope is not None:
+                from .runtime_matching_decision import decide_runtime_matching
+                from .runtime_matching_scope import validate_runtime_matching_scope
+
+                stored_snapshots = []
+                for expected in expected_scope.snapshots:
+                    row = connection.execute(
+                        "SELECT * FROM maintain_plan_prescription_snapshots "
+                        "WHERE prescription_snapshot_id = ?",
+                        (expected.prescription_snapshot_id,),
+                    ).fetchone()
+                    if row is None:
+                        raise ValueError("prescription scope changed since matching decision")
+                    stored_snapshots.append(self._decode_prescription_snapshot_row(row))
+                stored_sessions = []
+                for expected in expected_scope.sessions:
+                    row = connection.execute(
+                        "SELECT * FROM maintain_plan_actual_sessions WHERE session_id = ?",
+                        (expected.session_id,),
+                    ).fetchone()
+                    if row is None:
+                        raise ValueError("actual-session scope changed since matching decision")
+                    stored_sessions.append(self._decode_actual_session_row(row))
+                if tuple(stored_snapshots) != expected_scope.snapshots:
+                    raise ValueError("prescription scope changed since matching decision")
+                if tuple(stored_sessions) != expected_scope.sessions:
+                    raise ValueError("actual-session scope changed since matching decision")
+
+                persisted_scope = validate_runtime_matching_scope(
+                    expected_scope.subject_ref,
+                    stored_snapshots,
+                    stored_sessions,
+                    expected_scope.direct_id_evidence,
+                )
+                if decide_runtime_matching(persisted_scope) != expected_decision:
+                    raise ValueError("matching decision is no longer valid")
             # Legacy NULL ownership is readable for compatibility, but never mapping eligible.
             self._validate_mapping_refs(value, snapshot, session)
 
