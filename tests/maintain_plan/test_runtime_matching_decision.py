@@ -102,6 +102,49 @@ def test_direct_id_uses_snapshot_identity_never_workout_id():
     assert resolved.selected_pair.direct is True
 
 
+def test_unique_direct_id_beats_another_structurally_similar_session():
+    result = decide(
+        (snapshot("p"),),
+        (session("structural-only"), session("direct")),
+        (evidence("e", "direct", "p"),),
+    )
+    assert result.status is DecisionStatus.MATCHED
+    assert result.cardinality is CandidateCardinality.ONE
+    assert result.selected_pair is not None
+    assert result.selected_pair.session_id == "direct"
+    assert result.selected_pair.direct is True
+    assert {(item.session_id, item.suppressed_by_direct_evidence)
+            for item in result.pair_evaluations} == {
+                ("direct", True), ("structural-only", False)}
+
+
+def test_direct_reservation_keeps_independent_structural_association_visible():
+    result = decide(
+        (snapshot("direct-p", offset=0), snapshot("independent-p", offset=2)),
+        (session("direct-s", offset=0), session("independent-s", offset=2)),
+        (evidence("e", "direct-s", "direct-p"),),
+    )
+    assert {(item.prescription_snapshot_id, item.session_id, item.direct)
+            for item in result.candidates} == {
+                ("direct-p", "direct-s", True),
+                ("independent-p", "independent-s", False),
+            }
+
+
+def test_two_direct_ids_for_one_prescription_remain_a_real_conflict():
+    result = decide(
+        (snapshot("p"),),
+        (session("first"), session("second")),
+        (evidence("one", "first", "p"), evidence("two", "second", "p")),
+    )
+    assert result.status is DecisionStatus.CONFIRMATION_REQUIRED
+    assert result.cardinality is CandidateCardinality.MULTIPLE
+    assert DecisionReason.PRESCRIPTION_COMPETITION in result.reasons
+    assert {(item.prescription_snapshot_id, item.session_id, item.direct)
+            for item in result.candidates} == {
+                ("p", "first", True), ("p", "second", True)}
+
+
 @pytest.mark.parametrize("target, reason", [
     (None, DecisionReason.DIRECT_ID_MISSING),
     (" ", DecisionReason.DIRECT_ID_MALFORMED),

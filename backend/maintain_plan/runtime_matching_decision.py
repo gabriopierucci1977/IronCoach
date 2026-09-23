@@ -108,6 +108,22 @@ def decide_runtime_matching(scope: RuntimeMatchingScope) -> MatchingDecision:
     for item in scope.direct_id_evidence:
         evidence_by_session[item.session_id].append(item)
 
+    # A clean, single direct assertion reserves its prescription before the
+    # structural matrix is turned into candidates.  Pair evaluation still
+    # covers the full matrix, but another session cannot compete merely because
+    # it looks similar.  Multiple direct assertions are deliberately not
+    # collapsed here: they remain visible as real direct-ID conflicts.
+    reserved_direct_prescription_ids: set[str] = set()
+    for evidence in evidence_by_session.values():
+        valid_targets = [item.returned_prescription_id for item in evidence
+                         if returned_prescription_id_issue(
+                             item.returned_prescription_id) is None]
+        if len(evidence) == 1 and len(valid_targets) == 1:
+            target = valid_targets[0]
+            assert isinstance(target, str)
+            if target in snapshot_by_id:
+                reserved_direct_prescription_ids.add(target)
+
     candidates: set[CandidatePair] = set()
     evaluations: list[PairEvaluation] = []
     reasons = _issue_reasons(scope)
@@ -132,6 +148,8 @@ def decide_runtime_matching(scope: RuntimeMatchingScope) -> MatchingDecision:
                 involved_prescriptions.add(snapshot.prescription_snapshot_id)
                 involved_sessions.add(session.session_id)
             elif (not has_direct_envelope and
+                  snapshot.prescription_snapshot_id not in
+                  reserved_direct_prescription_ids and
                   compatibility.state is CompatibilityState.COMPATIBLE):
                 candidates.add(CandidatePair(
                     snapshot.prescription_snapshot_id, session.session_id))
