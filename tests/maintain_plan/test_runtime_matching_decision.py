@@ -116,6 +116,17 @@ def test_uncertain_direct_id_blocks_structural_fallback(target, reason):
     assert result.involved_session_ids == ("s",)
 
 
+@pytest.mark.parametrize("target", [object(), ["p"], {"id": "p"}, "bad\ud800"])
+def test_non_string_or_invalid_utf8_direct_id_is_non_automatic_without_type_error(target):
+    result = decide((snapshot("p"),), (session("s"),), (evidence("e", "s", target),))
+    assert result.status is DecisionStatus.CONFIRMATION_REQUIRED
+    assert result.cardinality is CandidateCardinality.ZERO
+    assert result.selected_pair is None
+    assert result.candidates == ()
+    assert DecisionReason.DIRECT_ID_MALFORMED in result.reasons
+    assert result.involved_session_ids == ("s",)
+
+
 def test_contradictory_direct_ids_expose_all_possibilities():
     result = decide(
         (snapshot("a"), snapshot("b")), (session("s"),),

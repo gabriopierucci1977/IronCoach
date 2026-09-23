@@ -15,7 +15,11 @@ from .runtime_matching_compatibility import (
     StructuralCompatibility,
     evaluate_structural_compatibility,
 )
-from .runtime_matching_scope import DirectIdEvidenceIssue, RuntimeMatchingScope
+from .runtime_matching_scope import (
+    DirectIdEvidenceIssue,
+    RuntimeMatchingScope,
+    returned_prescription_id_issue,
+)
 
 
 class CandidateCardinality(str, Enum):
@@ -138,10 +142,15 @@ def decide_runtime_matching(scope: RuntimeMatchingScope) -> MatchingDecision:
         involved_sessions.add(session_id)
         for item in evidence:
             target = item.returned_prescription_id
+            # Validate before hashing or comparing the untrusted target.  In
+            # particular, frozen mappings and other containers are unhashable.
+            if returned_prescription_id_issue(target) is not None:
+                continue
+            assert isinstance(target, str)
             if target in snapshot_by_id:
                 candidates.add(CandidatePair(target, session_id, True))
                 involved_prescriptions.add(target)
-            elif isinstance(target, str) and target and not target.isspace():
+            else:
                 # Deliberately do not try workout_id here.
                 reasons.add(DecisionReason.DIRECT_ID_DANGLING)
 
