@@ -7,6 +7,7 @@ scope into a defensively copied, canonical immutable value.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import Enum
 from typing import Iterable
@@ -31,6 +32,28 @@ def _utf8_errors(value: object, field: str) -> tuple[str, ...]:
 def _utf8_key(value: str) -> bytes:
     """Return the normative unsigned-byte ordering key (Python bytes order)."""
     return value.encode("utf-8", errors="strict")
+
+
+def _nested_provenance_errors(value: object, field: str) -> tuple[str, ...]:
+    """Validate keys in mappings reachable through model-supported containers."""
+    errors: list[str] = []
+    if isinstance(value, Mapping):
+        for key, nested in value.items():
+            key_errors = _utf8_errors(key, f"{field} key")
+            errors.extend(key_errors)
+            nested_field = f"{field}.{key}" if not key_errors else field
+            errors.extend(_nested_provenance_errors(nested, nested_field))
+    elif isinstance(value, (tuple, frozenset)):
+        for nested in value:
+            errors.extend(_nested_provenance_errors(nested, field))
+    return tuple(errors)
+
+
+def _provenance_errors(value: object, field: str) -> tuple[str, ...]:
+    """Require a provenance object and validate all nested object keys."""
+    if not isinstance(value, Mapping):
+        return (f"{field} must be a mapping",)
+    return _nested_provenance_errors(value, field)
 
 
 class DirectIdEvidenceIssue(str, Enum):
@@ -149,6 +172,7 @@ def validate_runtime_matching_scope(
         errors.extend(_utf8_errors(item.evidence_id, f"{label}.evidence_id"))
         errors.extend(_utf8_errors(item.session_id, f"{label}.session_id"))
         errors.extend(_utf8_errors(item.source, f"{label}.source"))
+        errors.extend(_provenance_errors(item.provenance, f"{label}.provenance"))
         if type(item.evidence_id) is str:
             evidence_ids.append(item.evidence_id)
         if type(item.session_id) is str and item.session_id not in session_id_set:

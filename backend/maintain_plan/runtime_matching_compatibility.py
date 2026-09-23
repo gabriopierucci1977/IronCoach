@@ -16,7 +16,8 @@ from typing import Iterable
 
 from .models import (
     ActualSession, Composition, Discipline, Environment, Mode, ObservedComponent,
-    PlannedComponent, PrescriptionSnapshot, SupportStatus,
+    ObservedTransition, PlannedComponent, PlannedTransition, PrescriptionSnapshot,
+    SupportStatus,
 )
 from .validators import validate_actual_session, validate_prescription
 
@@ -78,6 +79,10 @@ def _validated(snapshot: object, session: object) -> tuple[PrescriptionSnapshot,
         raise CompatibilityInputError(errors)
     for label, components in (("snapshot", snapshot.components), ("session", session.components)):
         for component in components:
+            expected_type = PlannedComponent if label == "snapshot" else ObservedComponent
+            if not isinstance(component, expected_type):
+                errors.append(f"{label} component is malformed")
+                continue
             if type(component.component_index) is not int or component.component_index < 0:
                 errors.append(f"{label} component_index is malformed")
             if type(component.discipline) is not Discipline:
@@ -97,6 +102,12 @@ def _validated(snapshot: object, session: object) -> tuple[PrescriptionSnapshot,
                         errors.append("snapshot substitution environment is unknown or undecodable")
                     if substitution.mode is not None and type(substitution.mode) is not Mode:
                         errors.append("snapshot substitution mode is unknown or undecodable")
+    for label, transitions in (("snapshot", snapshot.transitions),
+                               ("session", session.transitions)):
+        expected_type = PlannedTransition if label == "snapshot" else ObservedTransition
+        for transition in transitions:
+            if not isinstance(transition, expected_type):
+                errors.append(f"{label} transition is malformed")
     if errors:
         raise CompatibilityInputError(errors)
     try:
@@ -107,6 +118,33 @@ def _validated(snapshot: object, session: object) -> tuple[PrescriptionSnapshot,
     if errors:
         raise CompatibilityInputError(errors)
     return snapshot, session
+
+
+def _is_representable_nonnegative_minutes(value: object) -> bool:
+    if type(value) not in (int, float) or value < 0:
+        return False
+    if type(value) is float and not math.isfinite(value):
+        return False
+    try:
+        timedelta(minutes=value)
+    except OverflowError:
+        return False
+    return True
+
+
+def _validate_transition_numbers(snapshot: PrescriptionSnapshot, session: ActualSession) -> None:
+    """Validate numeric limits on every authored transition before pair matching."""
+    errors: list[str] = []
+    for transition in snapshot.transitions:
+        value = transition.applicable_limit_minutes
+        if not _is_representable_nonnegative_minutes(value):
+            errors.append("snapshot transition maximum gap is invalid")
+    for transition in session.transitions:
+        value = transition.duration_minutes
+        if value is not None and not _is_representable_nonnegative_minutes(value):
+            errors.append("observed transition duration is invalid")
+    if errors:
+        raise CompatibilityInputError(errors)
 
 
 def _component_reasons(
@@ -196,8 +234,6 @@ def _brick_reasons(snapshot: PrescriptionSnapshot, session: ActualSession,
         authored = planned_by_pair.get(adjacent_planned[position])
         if authored is not None:
             value = authored.applicable_limit_minutes
-            if (type(value) not in (int, float) or not math.isfinite(value) or value < 0):
-                raise CompatibilityInputError(("snapshot transition maximum gap is invalid",))
             limit = timedelta(minutes=value)
         if right.start - left.end > limit:
             reasons.append(CompatibilityReason.BRICK_MAXIMUM_GAP_EXCEEDED)
@@ -212,8 +248,6 @@ def _brick_reasons(snapshot: PrescriptionSnapshot, session: ActualSession,
             reasons.append(CompatibilityReason.BRICK_TRANSITION_INVALID)
         if transition.duration_minutes is not None:
             duration = transition.duration_minutes
-            if type(duration) not in (int, float) or not math.isfinite(duration) or duration < 0:
-                raise CompatibilityInputError(("observed transition duration is invalid",))
             actual_duration = (transition.end - transition.start).total_seconds() / 60
             if duration != actual_duration:
                 reasons.append(CompatibilityReason.BRICK_TRANSITION_INVALID)
@@ -224,6 +258,7 @@ def evaluate_structural_compatibility(
         snapshot: PrescriptionSnapshot, session: ActualSession) -> StructuralCompatibility:
     """Evaluate only authoritative pair-local structural predicates."""
     snapshot, session = _validated(snapshot, session)
+    _validate_transition_numbers(snapshot, session)
     planned, observed, reasons = _common_reasons(snapshot, session)
 
     if snapshot.composition is Composition.BRICK:
