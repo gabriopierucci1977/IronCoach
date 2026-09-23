@@ -24,7 +24,7 @@ from .runtime_matching_decision import (
     MatchingDecision,
     decide_runtime_matching,
 )
-from .runtime_matching_scope import RuntimeMatchingScope
+from .runtime_matching_scope import RuntimeMatchingScope, validate_runtime_matching_scope
 
 
 class RuntimeMatchingPersistenceError(ValueError):
@@ -46,7 +46,16 @@ def persist_runtime_matching_decision(
     to reject a forged or stale decision object, while the repository rereads
     both artifacts and both mapping sides under its ``BEGIN IMMEDIATE`` lock.
     """
-    authoritative_decision = decide_runtime_matching(scope)
+    # RuntimeMatchingScope is a public dataclass and can be instantiated without
+    # passing through the canonical ownership, artifact, and evidence checks.
+    # Rebuild it at this trust boundary rather than trusting its declared fields.
+    canonical_scope = validate_runtime_matching_scope(
+        scope.subject_ref,
+        scope.snapshots,
+        scope.sessions,
+        scope.direct_id_evidence,
+    )
+    authoritative_decision = decide_runtime_matching(canonical_scope)
     if decision != authoritative_decision:
         raise RuntimeMatchingPersistenceError(
             "decision does not match the complete validated scope")
@@ -57,9 +66,10 @@ def persist_runtime_matching_decision(
 
     pair = decision.selected_pair
     snapshot = next(
-        item for item in scope.snapshots
+        item for item in canonical_scope.snapshots
         if item.prescription_snapshot_id == pair.prescription_snapshot_id)
-    session = next(item for item in scope.sessions if item.session_id == pair.session_id)
+    session = next(
+        item for item in canonical_scope.sessions if item.session_id == pair.session_id)
     mapping = build_mapping(
         snapshot,
         session,
@@ -70,6 +80,6 @@ def persist_runtime_matching_decision(
     )
     return repository.persist_prescription_mapping(
         mapping,
-        expected_snapshot=snapshot,
-        expected_session=session,
+        expected_scope=canonical_scope,
+        expected_decision=authoritative_decision,
     )
