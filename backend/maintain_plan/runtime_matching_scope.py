@@ -35,15 +35,16 @@ def _utf8_key(value: str) -> bytes:
 
 
 def _provenance_errors(value: object, field: str) -> tuple[str, ...]:
-    """Require an explicitly structured provenance tree, never scalar leaves."""
+    """Validate a provenance object and any mapping values nested within it."""
     if not isinstance(value, Mapping):
         return (f"{field} must be a mapping",)
     errors: list[str] = []
     for key, nested in value.items():
         key_errors = _utf8_errors(key, f"{field} key")
         errors.extend(key_errors)
-        nested_field = f"{field}.{key}" if not key_errors else field
-        errors.extend(_provenance_errors(nested, nested_field))
+        if isinstance(nested, Mapping):
+            nested_field = f"{field}.{key}" if not key_errors else field
+            errors.extend(_provenance_errors(nested, nested_field))
     return tuple(errors)
 
 
