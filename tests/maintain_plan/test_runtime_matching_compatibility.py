@@ -234,8 +234,9 @@ def test_brick_explicit_maximum_gap_closed_boundary(gap, state):
         assert CompatibilityReason.BRICK_MAXIMUM_GAP_EXCEEDED in evaluated.reasons
 
 
-def test_finite_but_unrepresentable_maximum_gap_is_specific_input_error():
-    snapshot, session = brick(limit=1e100)
+@pytest.mark.parametrize("limit", (1e100, 1_440_000_000_000.0))
+def test_finite_but_unrepresentable_maximum_gap_is_specific_input_error(limit):
+    snapshot, session = brick(limit=limit)
     with pytest.raises(CompatibilityInputError,
                        match="snapshot transition maximum gap is invalid"):
         result(snapshot, session)

@@ -22,7 +22,6 @@ from .validators import validate_actual_session, validate_prescription
 
 
 DEFAULT_BRICK_MAXIMUM_GAP = timedelta(minutes=15)
-MAX_TIMEDELTA_MINUTES = timedelta.max.total_seconds() / 60
 
 
 class CompatibilityState(str, Enum):
@@ -114,19 +113,26 @@ def _validated(snapshot: object, session: object) -> tuple[PrescriptionSnapshot,
     return snapshot, session
 
 
+def _is_representable_nonnegative_minutes(value: object) -> bool:
+    if type(value) not in (int, float) or not math.isfinite(value) or value < 0:
+        return False
+    try:
+        timedelta(minutes=value)
+    except OverflowError:
+        return False
+    return True
+
+
 def _validate_transition_numbers(snapshot: PrescriptionSnapshot, session: ActualSession) -> None:
     """Validate numeric limits on every authored transition before pair matching."""
     errors: list[str] = []
     for transition in snapshot.transitions:
         value = transition.applicable_limit_minutes
-        if (type(value) not in (int, float) or not math.isfinite(value) or value < 0 or
-                value > MAX_TIMEDELTA_MINUTES):
+        if not _is_representable_nonnegative_minutes(value):
             errors.append("snapshot transition maximum gap is invalid")
     for transition in session.transitions:
         value = transition.duration_minutes
-        if (value is not None and
-                (type(value) not in (int, float) or not math.isfinite(value) or value < 0 or
-                 value > MAX_TIMEDELTA_MINUTES)):
+        if value is not None and not _is_representable_nonnegative_minutes(value):
             errors.append("observed transition duration is invalid")
     if errors:
         raise CompatibilityInputError(errors)
