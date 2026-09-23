@@ -167,6 +167,16 @@ class MaintainPlanRepository:
             raise ValueError("stored prescription snapshot metadata does not match payload")
         return value
 
+    def list_prescription_snapshots(self, subject_ref: str) -> tuple[PrescriptionSnapshot, ...]:
+        """Return the complete persisted snapshot set for one exact subject."""
+        with self._connect() as connection:
+            connection.row_factory = sqlite3.Row
+            rows = connection.execute(
+                "SELECT * FROM maintain_plan_prescription_snapshots "
+                "WHERE subject_ref = ? ORDER BY prescription_snapshot_id", (subject_ref,),
+            ).fetchall()
+        return tuple(self._decode_prescription_snapshot_row(row) for row in rows)
+
     def _decode_prescription_snapshot_row(self, row: sqlite3.Row) -> PrescriptionSnapshot:
         if row["payload_schema_version"] != PAYLOAD_SCHEMA_VERSION:
             raise ValueError("unsupported stored MAINTAIN_PLAN payload schema version")
@@ -251,6 +261,16 @@ class MaintainPlanRepository:
                 row["contract_version"]) != metadata or row["subject_ref"] != value.subject_ref:
             raise ValueError("stored actual session metadata does not match payload")
         return value
+
+    def list_actual_sessions(self, subject_ref: str) -> tuple[ActualSession, ...]:
+        """Return the complete persisted activity set for one exact subject."""
+        with self._connect() as connection:
+            connection.row_factory = sqlite3.Row
+            rows = connection.execute(
+                "SELECT * FROM maintain_plan_actual_sessions "
+                "WHERE subject_ref = ? ORDER BY session_id", (subject_ref,),
+            ).fetchall()
+        return tuple(self._decode_actual_session_row(row) for row in rows)
 
     def create_prescription_mapping(self, value: PrescriptionMapping) -> None:
         self._require_valid(validate_mapping(value))
@@ -402,6 +422,21 @@ class MaintainPlanRepository:
             raise ValueError("stored prescription mapping has unresolved references")
         self._validate_mapping_refs(value, snapshot, session)
         return value
+
+    def list_prescription_mappings(self) -> tuple[PrescriptionMapping, ...]:
+        with self._connect() as connection:
+            connection.row_factory = sqlite3.Row
+            rows = connection.execute(
+                "SELECT * FROM maintain_plan_prescription_mappings ORDER BY mapping_id"
+            ).fetchall()
+        values = tuple(self._decode_prescription_mapping_row(row) for row in rows)
+        for value in values:
+            snapshot = self.get_prescription_snapshot(value.prescription_snapshot_ref)
+            session = self.get_actual_session(value.actual_session_ref)
+            if snapshot is None or session is None:
+                raise ValueError("stored prescription mapping has unresolved references")
+            self._validate_mapping_refs(value, snapshot, session)
+        return values
 
     @staticmethod
     def _validate_mapping_refs(value: PrescriptionMapping, snapshot: PrescriptionSnapshot,

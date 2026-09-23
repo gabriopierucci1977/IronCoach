@@ -52,6 +52,7 @@ from backend.maintain_plan.runtime_prescription_capture import (
 from backend.maintain_plan.runtime_actual_session_capture import (
     RuntimeActualSessionCapture,
 )
+from backend.maintain_plan.coach_review import format_coach_review, review_database
 
 
 APP_NAME = "IRONCOACH"
@@ -143,6 +144,13 @@ def _build_argument_parser() -> argparse.ArgumentParser:
             "Decision Memory già pendenti, senza "
             "creare una nuova decisione."
         ),
+    )
+
+    parser.add_argument(
+        "--maintain-plan-review",
+        metavar="SUBJECT_REF",
+        help=("Confronta piano e attività importate già persistiti per l'atleta, "
+              "salvando solo una corrispondenza univoca e la sua valutazione."),
     )
 
     return parser
@@ -828,6 +836,17 @@ def _run_process_pending_memory() -> int:
     return 0
 
 
+def _run_maintain_plan_review(subject_ref: str) -> int:
+    runtime_config = _execute_phase(
+        "caricamento configurazione MAINTAIN_PLAN", get_runtime_config)
+    review = _execute_phase(
+        "confronto piano e attività",
+        lambda: review_database(runtime_config.maintain_plan_database_path, subject_ref),
+    )
+    print("\n" + format_coach_review(review))
+    return 0
+
+
 
 
 def create_activity_runtime(
@@ -1005,6 +1024,13 @@ def main(
 
     if args.process_pending_memory:
         return _run_process_pending_memory()
+
+    if args.maintain_plan_review:
+        try:
+            return _run_maintain_plan_review(args.maintain_plan_review)
+        except IronCoachExecutionError as exc:
+            _print_error(exc)
+            return 1
 
     try:
         if args.dry_run:
