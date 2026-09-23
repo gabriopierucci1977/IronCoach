@@ -114,7 +114,9 @@ def _validated(snapshot: object, session: object) -> tuple[PrescriptionSnapshot,
 
 
 def _is_representable_nonnegative_minutes(value: object) -> bool:
-    if type(value) not in (int, float) or not math.isfinite(value) or value < 0:
+    if type(value) not in (int, float) or value < 0:
+        return False
+    if type(value) is float and not math.isfinite(value):
         return False
     try:
         timedelta(minutes=value)
