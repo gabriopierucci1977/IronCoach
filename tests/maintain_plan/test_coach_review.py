@@ -16,7 +16,7 @@ from backend.maintain_plan.coach_review import (
     review_database, review_subject,
 )
 from backend.maintain_plan.coach_web import (
-    configured_database_path, make_handler, render_page,
+    _trusted_origins, configured_database_path, make_handler, render_page,
 )
 from backend.maintain_plan.matching_service import build_mapping
 from backend.maintain_plan.models import (
@@ -394,6 +394,57 @@ def test_browser_get_is_read_only_and_cross_origin_post_is_rejected(tmp_path):
         server.shutdown()
         server.server_close()
         thread.join()
+
+
+def test_codespaces_accepts_only_forwarded_address_from_environment(tmp_path):
+    repository = _repository(tmp_path)
+    environment = {
+        "CODESPACE_NAME": "sturdy-space-123",
+        "GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN": "app.github.dev",
+    }
+    server = ThreadingHTTPServer(
+        ("127.0.0.1", 0), make_handler(
+            str(repository.database_path), environment=environment))
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    host, port = server.server_address
+    forwarded_host = f"sturdy-space-123-{port}.app.github.dev"
+    try:
+        connection = http.client.HTTPConnection(host, port)
+        connection.request("GET", "/?subject=athlete-1", headers={
+            "Host": forwarded_host,
+            "X-Forwarded-Host": "attacker.example",
+        })
+        accepted = connection.getresponse()
+        page = accepted.read().decode()
+        assert accepted.status == 200
+        assert "Corrispondenza univoca proposta" in page
+        assert "Secure" in accepted.getheader("Set-Cookie")
+        assert accepted.getheader("X-Frame-Options") == "DENY"
+        assert repository.list_prescription_mappings() == ()
+
+        connection.request("GET", "/?subject=athlete-1", headers={
+            "Host": "address-chosen-by-request.example",
+            "X-Forwarded-Host": forwarded_host,
+        })
+        rejected = connection.getresponse()
+        rejected.read()
+        assert rejected.status == 400
+        assert repository.list_prescription_mappings() == ()
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join()
+
+
+def test_codespaces_origin_is_derived_from_trusted_environment():
+    assert _trusted_origins(8765, {
+        "CODESPACE_NAME": "sturdy-space-123",
+        "GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN": "app.github.dev",
+    }) == {
+        "sturdy-space-123-8765.app.github.dev":
+            "https://sturdy-space-123-8765.app.github.dev",
+    }
 
 
 def test_launcher_loads_project_dotenv_and_requires_configured_archive(

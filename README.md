@@ -27,6 +27,17 @@ Il comando è **di sola consultazione**: non salva abbinamenti né valutazioni.
 Per confermare e salvare una proposta usare la pagina browser avviata con
 uno dei file `Avvia revisione coach`.
 
+### Avvio in GitHub Codespaces
+
+1. Nel terminale eseguire `./Avvia\ revisione\ coach.sh`.
+2. Aprire **Porte**, lasciare la porta `8765` su **Privata** e scegliere
+   **Apri nel browser**.
+
+La pagina accetta esclusivamente l'indirizzo inoltrato assegnato da GitHub al
+Codespace corrente. Non copiare la porta su **Pubblica**. Usa l'archivio già
+configurato da `IRONCOACH_MAINTAIN_PLAN_DATABASE_PATH` nel `.env` del progetto;
+se il file non esiste, l'avvio si interrompe senza crearne uno nuovo.
+
 Una sola corrispondenza globale affidabile viene proposta; viene salvata e
 valutata soltanto quando il coach preme il pulsante di conferma. In quel
 momento IronCoach rilegge l'intero archivio dell'atleta. La valutazione può
