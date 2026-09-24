@@ -13,7 +13,7 @@ from backend import main as main_module
 
 from backend.maintain_plan.coach_review import (
     format_coach_review, resolve_coach_choice, retry_saved_evaluation,
-    review_subject,
+    review_database, review_subject,
 )
 from backend.maintain_plan.coach_web import (
     configured_database_path, make_handler, render_page,
@@ -91,6 +91,29 @@ def test_coach_can_answer_ambiguity_and_get_the_evaluation(tmp_path):
     assert f"Conseguenza sul piano: {review.evaluation.overall.value}" in page
     assert "Corrispondenza salvata:</strong> snapshot-1 ← session-2" in page
     assert "Conferma questa corrispondenza" not in page
+
+    with sqlite3.connect(repository.database_path) as connection:
+        confirmation_ids = [row[0] for row in connection.execute(
+            "SELECT confirmation_id FROM maintain_plan_confirmations "
+            "ORDER BY confirmation_id").fetchall()]
+        assert connection.execute(
+            "SELECT count(*) FROM maintain_plan_matching_results"
+        ).fetchone()[0] == 2
+    assert len(confirmation_ids) == 2
+    confirmations = [repository.get_confirmation(item) for item in confirmation_ids]
+    answered = next(item for item in confirmations if item.selected_session_ref)
+    request = next(item for item in confirmations if not item.selected_session_ref)
+    assert request.candidate_session_refs == ("session-1", "session-2")
+    assert answered.candidate_session_refs == request.candidate_session_refs
+    assert answered.selected_session_ref == "session-2"
+    assert answered.actor == "coach"
+    assert answered.answered_at == NOW
+    assert mapping.confirmation_ref == answered.confirmation_id
+
+    reopened = MaintainPlanRepository(repository.database_path)
+    assert reopened.get_confirmation(answered.confirmation_id) == answered
+    assert reopened.get_prescription_mapping(mapping.mapping_id) == mapping
+    assert len(reopened.list_prescription_mappings()) == 1
 
 
 def test_browser_page_offers_every_candidate_and_a_no_write_exit(tmp_path):
@@ -439,6 +462,37 @@ def test_cli_help_declares_review_read_only_and_points_to_browser():
 
     assert "Consulta senza scrivere" in help_text
     assert "pagina browser coach" in help_text
+
+
+def test_manual_mapping_is_not_saved_when_confirmation_persistence_fails(
+        tmp_path, monkeypatch):
+    repository = _repository(
+        tmp_path, (RUN_SESSION, replace(RUN_SESSION, session_id="session-2")))
+    original = repository.create_confirmation
+    calls = 0
+
+    def fail_answer(value):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise RuntimeError("confirmation storage unavailable")
+        return original(value)
+
+    monkeypatch.setattr(repository, "create_confirmation", fail_answer)
+    with pytest.raises(RuntimeError, match="confirmation storage unavailable"):
+        resolve_coach_choice(repository, "athlete-1", "snapshot-1",
+                             "session-2", now=NOW)
+    assert repository.list_prescription_mappings() == ()
+
+
+def test_read_only_database_open_rejects_missing_path_without_creating_it(tmp_path):
+    missing = tmp_path / "missing-parent" / "wrong.db"
+
+    with pytest.raises(FileNotFoundError, match="configurato non trovato"):
+        review_database(str(missing), "athlete-1")
+
+    assert not missing.exists()
+    assert not missing.parent.exists()
 
 
 def test_existing_evaluation_is_found_by_mapping_not_generated_id(tmp_path):

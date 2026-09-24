@@ -4,11 +4,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from pathlib import Path
 from uuid import NAMESPACE_URL, uuid5
 
 from .execution_evaluation_service import evaluate
-from .matching_service import build_mapping
-from .models import ResolutionMethod
+from .confirmation_service import answer_confirmation, request_confirmation
+from .matching_service import build_mapping, match
+from .models import ConfirmationAnswerType, MatchingStatus, ResolutionMethod
 from .repository import MaintainPlanRepository
 from .runtime_matching_decision import (
     CandidatePair, MatchingDecision, DecisionStatus, decide_runtime_matching,
@@ -177,17 +179,45 @@ def resolve_coach_choice(repository: MaintainPlanRepository, subject_ref: str,
         raise ValueError("i dati in conflitto impediscono l’abbinamento automatico")
     timestamp = now or datetime.now(timezone.utc)
     automatic = decision.status is DecisionStatus.MATCHED
-    mapping = build_mapping(
-        snapshot, session,
-        mapping_id=_stable_id("mapping", prescription_id, session_id),
-        created_at=timestamp,
-        resolution_method=(ResolutionMethod.AUTOMATIC if automatic
-                           else ResolutionMethod.ATHLETE_CONFIRMATION),
-        actor=None if automatic else "coach",
-        provenance={"source": "coach-review", "action": "explicit-save"},
-    )
+    if automatic:
+        mapping = build_mapping(
+            snapshot, session,
+            mapping_id=_stable_id("mapping", prescription_id, session_id),
+            created_at=timestamp, resolution_method=ResolutionMethod.AUTOMATIC,
+            provenance={"source": "coach-review", "action": "explicit-save"},
+        )
+        resolved_result = None
+    else:
+        result = match(
+            snapshot, sessions,
+            matching_result_id=_stable_id("matching", prescription_id, subject_ref),
+            mapping_id=_stable_id("unused-mapping", prescription_id, session_id),
+            created_at=timestamp, provenance={"source": "coach-review"})
+        if (result.status is not MatchingStatus.CONFIRMATION_REQUIRED or
+                session_id not in result.candidate_set):
+            raise ValueError("la scelta globale non può essere conservata come conferma")
+        request = request_confirmation(
+            result, confirmation_id=_stable_id("question", prescription_id, subject_ref),
+            asked_at=timestamp, provenance={"source": "coach-review"})
+        answered, resolved_result = answer_confirmation(
+            request, result, snapshot, sessions,
+            confirmation_id=_stable_id("answer", prescription_id, session_id),
+            matching_result_id=_stable_id("resolved", prescription_id, session_id),
+            mapping_id=_stable_id("mapping", prescription_id, session_id),
+            answer_type=ConfirmationAnswerType.SELECT_CANDIDATE,
+            selected_session_ref=session_id, actor="coach", answered_at=timestamp,
+            provenance={"source": "coach-review", "action": "explicit-save"})
+        # Persist the complete audit trail before consuming either artifact.
+        # A failure here deliberately leaves no mapping behind.
+        repository.create_matching_result(result)
+        repository.create_confirmation(request)
+        repository.create_confirmation(answered)
+        mapping = resolved_result.prescription_mapping
+        assert mapping is not None
     repository.persist_prescription_mapping(
         mapping, expected_scope=scope, expected_decision=decision)
+    if resolved_result is not None:
+        repository.create_matching_result(resolved_result)
     evaluation, saved_pair, message = _evaluate_saved(
         repository, snapshot, session, mapping, timestamp)
     return CoachReview(decision, evaluation, details, saved_pair, message,
@@ -196,13 +226,21 @@ def resolve_coach_choice(repository: MaintainPlanRepository, subject_ref: str,
 
 def review_database(database_path: str, subject_ref: str) -> CoachReview:
     """Runtime boundary that keeps repository construction inside the subsystem."""
-    return review_subject(MaintainPlanRepository(database_path), subject_ref)
+    return review_subject(_existing_repository(database_path), subject_ref)
 
 
 def resolve_database_choice(database_path: str, subject_ref: str,
                             prescription_id: str, session_id: str) -> CoachReview:
-    return resolve_coach_choice(MaintainPlanRepository(database_path), subject_ref,
+    return resolve_coach_choice(_existing_repository(database_path), subject_ref,
                                 prescription_id, session_id)
+
+
+def _existing_repository(database_path: str | Path) -> MaintainPlanRepository:
+    path = Path(database_path)
+    if not path.is_file():
+        raise FileNotFoundError(
+            f"Archivio MAINTAIN_PLAN configurato non trovato: {path}")
+    return MaintainPlanRepository(path)
 
 
 def retry_saved_evaluation(repository: MaintainPlanRepository, subject_ref: str,
@@ -223,6 +261,12 @@ def retry_saved_evaluation(repository: MaintainPlanRepository, subject_ref: str,
         repository, snapshot, session, mapping, now or datetime.now(timezone.utc))
     return CoachReview(decision, evaluation, saved_pair=pair,
                        evaluation_message=message)
+
+
+def retry_database_evaluation(database_path: str, subject_ref: str,
+                              prescription_id: str, session_id: str) -> CoachReview:
+    return retry_saved_evaluation(
+        _existing_repository(database_path), subject_ref, prescription_id, session_id)
 
 
 def format_coach_review(review: CoachReview) -> str:

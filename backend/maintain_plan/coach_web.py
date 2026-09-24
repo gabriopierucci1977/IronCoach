@@ -14,9 +14,8 @@ import webbrowser
 from backend.config import get_runtime_config
 from dotenv import dotenv_values
 from .coach_review import (
-    retry_saved_evaluation, review_database, resolve_database_choice,
+    retry_database_evaluation, review_database, resolve_database_choice,
 )
-from .repository import MaintainPlanRepository
 from .runtime_matching_decision import DecisionStatus
 
 
@@ -177,9 +176,8 @@ def make_handler(database_path: str, *, action_token: str | None = None):
                 prescription = values.get("prescription", [""])[0]
                 session = values.get("session", [""])[0]
                 if values.get("operation", [""])[0] == "retry_evaluation":
-                    review = retry_saved_evaluation(
-                        MaintainPlanRepository(database_path), subject,
-                        prescription, session)
+                    review = retry_database_evaluation(
+                        database_path, subject, prescription, session)
                 else:
                     review = resolve_database_choice(
                         database_path, subject, prescription, session)
