@@ -27,16 +27,40 @@ Il comando è **di sola consultazione**: non salva abbinamenti né valutazioni.
 Per confermare e salvare una proposta usare la pagina browser avviata con
 uno dei file `Avvia revisione coach`.
 
-### Avvio in GitHub Codespaces
+### Preparazione e avvio in GitHub Codespaces
 
-1. Nel terminale eseguire `./Avvia\ revisione\ coach.sh`.
-2. Aprire **Porte**, lasciare la porta `8765` su **Privata** e scegliere
-   **Apri nel browser**.
+La pagina non inizializza un archivio vuoto: prima deve esistere almeno un
+piano `MAINTAIN_PLAN` prodotto dal runtime reale e devono essere state lette le
+attività Garmin dell'atleta. Nel file `.env` impostare:
+
+```dotenv
+IRONCOACH_MAINTAIN_PLAN_SNAPSHOT_ENABLED=true
+IRONCOACH_MAINTAIN_PLAN_ACTUAL_SESSION_ENABLED=true
+IRONCOACH_MAINTAIN_PLAN_DATABASE_PATH=data/ironcoach_maintain_plan.db
+IRONCOACH_MAINTAIN_PLAN_TIMEZONE=Europe/Rome
+```
+
+Poi, nel terminale del Codespace:
+
+1. Eseguire `python -m backend.main` con le credenziali Airtable e Garmin già
+   configurate. È la normale esecuzione IronCoach: legge i dati reali e salva
+   nello stesso archivio isolato sia le attività Garmin supportate sia il piano,
+   ma salva il piano soltanto se la decisione risultante è
+   `MAINTAIN_PLAN` / `KEEP_PLAN`.
+2. Verificare che l'esecuzione sia terminata senza errori e che esista
+   `data/ironcoach_maintain_plan.db`. Non usare `--dry-run`: per definizione non
+   scrive gli artefatti MAINTAIN_PLAN.
+3. Eseguire `./Avvia\ revisione\ coach.sh`.
+4. Aprire **Porte**, lasciare la porta `8765` su **Privata** e scegliere
+   **Apri nel browser**. Inserire come ID atleta il `record_id` del profilo
+   atleta Airtable (il valore `source_id` mostrato dal runtime).
 
 La pagina accetta esclusivamente l'indirizzo inoltrato assegnato da GitHub al
 Codespace corrente. Non copiare la porta su **Pubblica**. Usa l'archivio già
 configurato da `IRONCOACH_MAINTAIN_PLAN_DATABASE_PATH` nel `.env` del progetto;
 se il file non esiste, l'avvio si interrompe senza crearne uno nuovo.
+I database `ironcoach_memory*.db` sono archivi Decision Memory distinti e non
+devono essere indicati come `IRONCOACH_MAINTAIN_PLAN_DATABASE_PATH`.
 
 Una sola corrispondenza globale affidabile viene proposta; viene salvata e
 valutata soltanto quando il coach preme il pulsante di conferma. In quel
