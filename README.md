@@ -23,9 +23,11 @@ inserire l'ID atleta e premere
 python -m backend.main --maintain-plan-review ID_ATLETA
 ```
 
-Una sola corrispondenza globale affidabile viene salvata e produce subito la
-valutazione di esecuzione (`IN_LINE`, `PARTIALLY_IN_LINE`, `DIFFERENT` oppure
-`INSUFFICIENT_DATA`). Più candidati vengono mostrati e sottoposti al coach,
+Una sola corrispondenza globale affidabile viene proposta; viene salvata e
+valutata soltanto quando il coach preme il pulsante di conferma. In quel
+momento IronCoach rilegge l'intero archivio dell'atleta. La valutazione può
+essere `IN_LINE`, `PARTIALLY_IN_LINE`, `DIFFERENT` o `INSUFFICIENT_DATA`.
+Più candidati vengono mostrati e sottoposti al coach,
 senza scegliere per ordine o somiglianza. Con zero candidati, dati incompleti
 o corrotti, il comando non dichiara mai automaticamente saltata la seduta.
 

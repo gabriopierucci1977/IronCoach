@@ -5,10 +5,18 @@ from __future__ import annotations
 from html import escape
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
+from pathlib import Path
+import hmac
+import os
+import secrets
 import webbrowser
 
 from backend.config import get_runtime_config
-from .coach_review import review_database, resolve_database_choice
+from dotenv import dotenv_values
+from .coach_review import (
+    retry_saved_evaluation, review_database, resolve_database_choice,
+)
+from .repository import MaintainPlanRepository
 from .runtime_matching_decision import DecisionStatus
 
 
@@ -18,7 +26,8 @@ def _artifact_details(review, prescription_id: str, session_id: str):
                  and item["session_id"] == session_id), {})
 
 
-def render_page(subject_ref: str = "", *, review=None, message: str = "") -> str:
+def render_page(subject_ref: str = "", *, review=None, message: str = "",
+                action_token: str = "") -> str:
     body = ["<h1>IronCoach · Revisione piano</h1>",
             "<p>Confronta gli allenamenti previsti con le attività importate già disponibili.</p>",
             '<form method="get"><label>ID atleta <input name="subject" required value="' +
@@ -32,6 +41,15 @@ def render_page(subject_ref: str = "", *, review=None, message: str = "") -> str
                 '<section class="warning"><strong>Attività sospesa:</strong> '
                 f'{escape(pair.prescription_snapshot_id)} ← {escape(pair.session_id)}<br>'
                 f'{escape(suspended_message)}</section>')
+            if suspended_message.startswith("Valutazione non completata"):
+                body.append(
+                    '<form method="post">'
+                    f'<input type="hidden" name="action_token" value="{escape(action_token, quote=True)}">'
+                    f'<input type="hidden" name="subject" value="{escape(subject_ref, quote=True)}">'
+                    f'<input type="hidden" name="prescription" value="{escape(pair.prescription_snapshot_id, quote=True)}">'
+                    f'<input type="hidden" name="session" value="{escape(pair.session_id, quote=True)}">'
+                    '<input type="hidden" name="operation" value="retry_evaluation">'
+                    '<button>Riprova valutazione</button></form>')
         body.append(f"<h2>Esito: {escape(decision.status.value)}</h2>")
         if review.saved_pair is not None:
             pair = review.saved_pair
@@ -39,14 +57,20 @@ def render_page(subject_ref: str = "", *, review=None, message: str = "") -> str
                         f"{escape(pair.prescription_snapshot_id)} ← {escape(pair.session_id)}</p>")
             if review.evaluation_message:
                 body.append(f'<p class="warning">{escape(review.evaluation_message)}</p>')
-        elif decision.status is DecisionStatus.CONFIRMATION_REQUIRED:
-            body.append("<p><strong>Quale attività corrisponde all’allenamento previsto?</strong> "
-                        "Scegli soltanto se lo riconosci. Nessuna seduta è considerata saltata.</p>")
+        elif decision.status in {DecisionStatus.MATCHED,
+                                DecisionStatus.CONFIRMATION_REQUIRED}:
+            if decision.status is DecisionStatus.MATCHED:
+                body.append("<p><strong>Corrispondenza univoca proposta.</strong> "
+                            "Controllala e salvala esplicitamente.</p>")
+            else:
+                body.append("<p><strong>Quale attività corrisponde all’allenamento previsto?</strong> "
+                            "Scegli soltanto se lo riconosci. Nessuna seduta è considerata saltata.</p>")
             for index, candidate in enumerate(decision.candidates):
                 detail = _artifact_details(review, candidate.prescription_snapshot_id,
                                            candidate.session_id)
                 body.append(
                     '<form method="post" class="candidate">'
+                    f'<input type="hidden" name="action_token" value="{escape(action_token, quote=True)}">'
                     f'<input type="hidden" name="subject" value="{escape(subject_ref, quote=True)}">'
                     f'<input type="hidden" name="prescription" value="{escape(candidate.prescription_snapshot_id, quote=True)}">'
                     f'<input type="hidden" name="session" value="{escape(candidate.session_id, quote=True)}">'
@@ -74,13 +98,24 @@ def render_page(subject_ref: str = "", *, review=None, message: str = "") -> str
            f"<style>{style}</style><body>{''.join(body)}</body></html>"
 
 
-def make_handler(database_path: str):
+def _valid_action(origin: str | None, expected_origin: str, cookie: str,
+                  submitted_token: str, server_token: str) -> bool:
+    cookies = dict(item.strip().split("=", 1) for item in cookie.split(";") if "=" in item)
+    cookie_token = cookies.get("ironcoach_action", "")
+    return (origin == expected_origin and
+            hmac.compare_digest(cookie_token, server_token) and
+            hmac.compare_digest(submitted_token, server_token))
+
+
+def make_handler(database_path: str, *, action_token: str | None = None):
+    token = action_token or secrets.token_urlsafe(32)
     class CoachHandler(BaseHTTPRequestHandler):
         def _send(self, page: str, status: int = 200):
             payload = page.encode("utf-8")
             self.send_response(status)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Content-Length", str(len(payload)))
+            self.send_header("Set-Cookie", f"ironcoach_action={token}; SameSite=Strict; HttpOnly")
             self.end_headers()
             self.wfile.write(payload)
 
@@ -88,7 +123,7 @@ def make_handler(database_path: str):
             subject = parse_qs(urlparse(self.path).query).get("subject", [""])[0]
             try:
                 review = review_database(database_path, subject) if subject else None
-                self._send(render_page(subject, review=review))
+                self._send(render_page(subject, review=review, action_token=token))
             except Exception as error:
                 self._send(render_page(subject, message=f"Dati non utilizzabili: {error}"), 400)
 
@@ -97,12 +132,29 @@ def make_handler(database_path: str):
             values = parse_qs(self.rfile.read(length).decode("utf-8"))
             subject = values.get("subject", [""])[0]
             try:
-                review = resolve_database_choice(database_path, subject,
-                    values.get("prescription", [""])[0], values.get("session", [""])[0])
+                expected_origin = f"http://{self.headers.get('Host', '')}"
+                if not _valid_action(
+                        self.headers.get("Origin"), expected_origin,
+                        self.headers.get("Cookie", ""),
+                        values.get("action_token", [""])[0], token):
+                    self._send(render_page(subject,
+                        message="Azione respinta: origine o autorizzazione non valida.",
+                        action_token=token), 403)
+                    return
+                prescription = values.get("prescription", [""])[0]
+                session = values.get("session", [""])[0]
+                if values.get("operation", [""])[0] == "retry_evaluation":
+                    review = retry_saved_evaluation(
+                        MaintainPlanRepository(database_path), subject,
+                        prescription, session)
+                else:
+                    review = resolve_database_choice(
+                        database_path, subject, prescription, session)
                 message = ("Scelta del coach salvata e piano valutato."
                            if review.evaluation is not None
                            else "Scelta del coach salvata.")
-                self._send(render_page(subject, review=review, message=message))
+                self._send(render_page(subject, review=review, message=message,
+                                       action_token=token))
             except Exception as error:
                 self._send(render_page(subject, message=f"Scelta non salvata: {error}"), 400)
 
@@ -111,10 +163,30 @@ def make_handler(database_path: str):
     return CoachHandler
 
 
+def configured_database_path(project_root: str | Path | None = None) -> str:
+    root = Path(project_root) if project_root is not None else Path(__file__).parents[2]
+    added = []
+    for name, value in dotenv_values(root / ".env").items():
+        if value is not None and name not in os.environ:
+            os.environ[name] = value
+            added.append(name)
+    try:
+        config = get_runtime_config()
+    finally:
+        for name in added:
+            os.environ.pop(name, None)
+    database = Path(config.maintain_plan_database_path)
+    if not database.is_absolute():
+        database = root / database
+    if not database.is_file():
+        raise FileNotFoundError(
+            f"Archivio MAINTAIN_PLAN configurato non trovato: {database}")
+    return str(database)
+
+
 def run(open_browser: bool = True) -> None:
-    config = get_runtime_config()
-    server = ThreadingHTTPServer(("127.0.0.1", 8765),
-                                 make_handler(config.maintain_plan_database_path))
+    database_path = configured_database_path()
+    server = ThreadingHTTPServer(("127.0.0.1", 8765), make_handler(database_path))
     if open_browser:
         webbrowser.open("http://127.0.0.1:8765/")
     server.serve_forever()

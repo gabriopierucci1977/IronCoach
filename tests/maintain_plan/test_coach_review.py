@@ -1,13 +1,22 @@
 from dataclasses import replace
 from datetime import timedelta
 import sqlite3
+import http.client
+from http.server import ThreadingHTTPServer
+from threading import Thread
+from urllib.parse import urlencode
+
+import pytest
 
 import backend.maintain_plan.coach_review as coach_review_module
 
 from backend.maintain_plan.coach_review import (
-    format_coach_review, resolve_coach_choice, review_subject,
+    format_coach_review, resolve_coach_choice, retry_saved_evaluation,
+    review_subject,
 )
-from backend.maintain_plan.coach_web import render_page
+from backend.maintain_plan.coach_web import (
+    configured_database_path, make_handler, render_page,
+)
 from backend.maintain_plan.matching_service import build_mapping
 from backend.maintain_plan.models import Requiredness, ResolutionMethod
 from backend.maintain_plan.repository import MaintainPlanRepository
@@ -29,6 +38,9 @@ def test_unique_match_is_saved_and_its_plan_consequence_is_visible(tmp_path):
     review = review_subject(repository, "athlete-1", now=NOW)
 
     assert review.decision.status is DecisionStatus.MATCHED
+    assert repository.list_prescription_mappings() == ()
+    review = resolve_coach_choice(repository, "athlete-1", "snapshot-1",
+                                  "session-1", now=NOW)
     assert review.evaluation is not None
     assert repository.get_prescription_mapping(
         review.evaluation.prescription_mapping_ref) is not None
@@ -129,12 +141,14 @@ def test_evaluation_failure_is_retried_without_duplicate_mapping(
 
     monkeypatch.setattr(coach_review_module, "evaluate", interrupted)
 
-    first = review_subject(repository, "athlete-1", now=NOW)
+    first = resolve_coach_choice(repository, "athlete-1", "snapshot-1",
+                                 "session-1", now=NOW)
     assert first.evaluation is None
     assert "Collegamento salvato; valutazione non completata" in first.evaluation_message
     assert len(repository.list_prescription_mappings()) == 1
 
-    retry = review_subject(repository, "athlete-1", now=NOW)
+    retry = retry_saved_evaluation(repository, "athlete-1", "snapshot-1",
+                                   "session-1", now=NOW)
     assert retry.evaluation is not None
     assert retry.saved_pair.session_id == "session-1"
     assert len(repository.list_prescription_mappings()) == 1
@@ -173,6 +187,9 @@ def test_suspended_conflict_does_not_block_a_new_independent_review(tmp_path):
     repository.create_actual_session(second_session)
 
     review = review_subject(repository, "athlete-1", now=later)
+    assert review.saved_pair is None
+    review = resolve_coach_choice(repository, "athlete-1", "snapshot-2",
+                                  "session-2", now=later)
     page = render_page("athlete-1", review=review)
 
     assert review.saved_pair.session_id == "session-2"
@@ -222,11 +239,15 @@ def test_evaluation_without_overall_is_saved_and_rendered_without_inventing_outc
     repository.create_actual_session(RUN_SESSION)
 
     review = review_subject(repository, "athlete-1", now=NOW)
+    assert review.evaluation is None
+    review = resolve_coach_choice(repository, "athlete-1", "snapshot-1",
+                                  "session-1", now=NOW)
 
     assert review.evaluation is not None
     assert review.evaluation.overall is None
     assert repository.get_execution_evaluation(
         review.evaluation.evaluation_id) == review.evaluation
+
     page = render_page("athlete-1", review=review)
     text_summary = format_coach_review(review)
     expected = "giudizio complessivo non disponibile per questa prescrizione"
@@ -248,3 +269,96 @@ def test_evaluation_without_overall_is_saved_and_rendered_without_inventing_outc
         ).fetchone()[0] == 1
     assert repository.get_execution_evaluation(
         review.evaluation.evaluation_id) == review.evaluation
+
+
+def test_new_activity_before_atomic_save_prevents_automatic_choice(
+        tmp_path, monkeypatch):
+    repository = _repository(tmp_path)
+    proposed = review_subject(repository, "athlete-1", now=NOW)
+    assert proposed.decision.status is DecisionStatus.MATCHED
+    original = repository.persist_prescription_mapping
+    inserted = False
+
+    def insert_concurrent_activity(*args, **kwargs):
+        nonlocal inserted
+        if not inserted:
+            inserted = True
+            repository.create_actual_session(
+                replace(RUN_SESSION, session_id="late-session"))
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(repository, "persist_prescription_mapping",
+                        insert_concurrent_activity)
+
+    with pytest.raises(ValueError, match="actual-session scope changed"):
+        resolve_coach_choice(repository, "athlete-1", "snapshot-1",
+                             "session-1", now=NOW)
+
+    assert repository.list_prescription_mappings() == ()
+    refreshed = review_subject(repository, "athlete-1", now=NOW)
+    assert refreshed.decision.status is DecisionStatus.CONFIRMATION_REQUIRED
+    assert {item.session_id for item in refreshed.decision.candidates} == {
+        "session-1", "late-session"}
+
+
+def test_browser_get_is_read_only_and_cross_origin_post_is_rejected(tmp_path):
+    repository = _repository(tmp_path)
+    token = "test-action-token"
+    server = ThreadingHTTPServer(
+        ("127.0.0.1", 0), make_handler(str(repository.database_path),
+                                       action_token=token))
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    host, port = server.server_address
+    try:
+        connection = http.client.HTTPConnection(host, port)
+        connection.request("GET", "/?subject=athlete-1")
+        response = connection.getresponse()
+        page = response.read().decode()
+        assert response.status == 200
+        assert "Corrispondenza univoca proposta" in page
+        assert repository.list_prescription_mappings() == ()
+
+        payload = urlencode({"subject": "athlete-1",
+                             "prescription": "snapshot-1",
+                             "session": "session-1",
+                             "action_token": token})
+        headers = {"Content-Type": "application/x-www-form-urlencoded",
+                   "Cookie": f"ironcoach_action={token}",
+                   "Origin": "https://pagina-estranea.example"}
+        connection.request("POST", "/", payload, headers)
+        rejected = connection.getresponse()
+        rejected.read()
+        assert rejected.status == 403
+        assert repository.list_prescription_mappings() == ()
+
+        headers["Origin"] = f"http://{host}:{port}"
+        connection.request("POST", "/", payload, headers)
+        accepted = connection.getresponse()
+        accepted_page = accepted.read().decode()
+        assert accepted.status == 200
+        assert "Corrispondenza salvata" in accepted_page
+        assert len(repository.list_prescription_mappings()) == 1
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join()
+
+
+def test_launcher_loads_project_dotenv_and_requires_configured_archive(
+        tmp_path, monkeypatch):
+    project = tmp_path / "project"
+    project.mkdir()
+    database = project / "configured" / "coach.db"
+    database.parent.mkdir()
+    MaintainPlanRepository(database)
+    (project / ".env").write_text(
+        "IRONCOACH_MAINTAIN_PLAN_DATABASE_PATH=configured/coach.db\n")
+    monkeypatch.delenv("IRONCOACH_MAINTAIN_PLAN_DATABASE_PATH", raising=False)
+
+    assert configured_database_path(project) == str(database)
+
+    database.unlink()
+    with pytest.raises(FileNotFoundError, match="configurato non trovato"):
+        configured_database_path(project)
+    assert not database.exists()

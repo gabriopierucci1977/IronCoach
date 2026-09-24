@@ -13,7 +13,6 @@ from .repository import MaintainPlanRepository
 from .runtime_matching_decision import (
     CandidatePair, MatchingDecision, DecisionStatus, decide_runtime_matching,
 )
-from .runtime_matching_persistence import persist_runtime_matching_decision
 from .runtime_matching_scope import validate_runtime_matching_scope
 
 
@@ -79,7 +78,7 @@ def _evaluate_saved(repository, snapshot, session, mapping, timestamp):
 
 def review_subject(repository: MaintainPlanRepository, subject_ref: str,
                    *, now: datetime | None = None) -> CoachReview:
-    """Match every still-unmapped persisted artifact, then evaluate a unique pair.
+    """Inspect every still-unmapped artifact without modifying the repository.
 
     Corrupt storage is deliberately allowed to raise. Ambiguous and empty scopes
     are returned without a write: absence in imported data is not non-completion.
@@ -105,13 +104,9 @@ def review_subject(repository: MaintainPlanRepository, subject_ref: str,
                 suspended.append((pair,
                     "Valutazione ancora da chiarire: l’attività contiene dati in conflitto."))
                 continue
-            scope = validate_runtime_matching_scope(subject_ref, (), ())
-            decision = decide_runtime_matching(scope)
-            evaluation, pair, message = _evaluate_saved(
-                repository, snapshot, session, mapping, now or datetime.now(timezone.utc))
-            return CoachReview(decision, evaluation, saved_pair=pair,
-                               evaluation_message=message,
-                               suspended_evaluations=tuple(suspended))
+            suspended.append((pair,
+                "Valutazione non completata: usa l’azione esplicita per riprovare."))
+            continue
     mapped_prescriptions = {item.prescription_snapshot_ref for item in mappings}
     mapped_sessions = {item.actual_session_ref for item in mappings}
     snapshots = tuple(item for item in snapshots_all
@@ -126,28 +121,12 @@ def review_subject(repository: MaintainPlanRepository, subject_ref: str,
                            suspended_evaluations=tuple(suspended))
 
     pair = decision.selected_pair
-    timestamp = now or datetime.now(timezone.utc)
-    snapshot = next(item for item in snapshots
-                    if item.prescription_snapshot_id == pair.prescription_snapshot_id)
     session = next(item for item in sessions if item.session_id == pair.session_id)
-    # A canonical source conflict may affect the predicates used by automatic
-    # matching. It must be clarified before any automatic mapping is written.
     if session.source_conflicts:
         suspended.append((pair,
             "Abbinamento automatico sospeso: l’attività contiene dati in conflitto."))
-        return CoachReview(decision, candidate_details=details,
-                           suspended_evaluations=tuple(suspended))
-    mapping = persist_runtime_matching_decision(
-        repository, scope, decision,
-        mapping_id=_stable_id("mapping", pair.prescription_snapshot_id, pair.session_id),
-        created_at=timestamp,
-        provenance={"source": "coach-review"},
-    )
-    assert mapping is not None
-    evaluation, saved_pair, message = _evaluate_saved(
-        repository, snapshot, session, mapping, timestamp)
-    return CoachReview(decision, evaluation, details, saved_pair, message,
-                       tuple(suspended))
+    return CoachReview(decision, candidate_details=details,
+                       suspended_evaluations=tuple(suspended))
 
 
 def resolve_coach_choice(repository: MaintainPlanRepository, subject_ref: str,
@@ -155,6 +134,17 @@ def resolve_coach_choice(repository: MaintainPlanRepository, subject_ref: str,
                          now: datetime | None = None) -> CoachReview:
     """Persist an explicit coach choice only if it is still a current candidate."""
     mappings = repository.list_prescription_mappings()
+    suspended = []
+    for existing_mapping in mappings:
+        existing_session = repository.get_actual_session(
+            existing_mapping.actual_session_ref)
+        if (existing_session is not None and
+                existing_session.subject_ref == subject_ref and
+                existing_session.source_conflicts):
+            suspended.append((CandidatePair(
+                existing_mapping.prescription_snapshot_ref,
+                existing_mapping.actual_session_ref),
+                "Valutazione ancora da chiarire: l’attività contiene dati in conflitto."))
     used_prescriptions = {item.prescription_snapshot_ref for item in mappings}
     used_sessions = {item.actual_session_ref for item in mappings}
     snapshots = tuple(item for item in repository.list_prescription_snapshots(subject_ref)
@@ -172,17 +162,25 @@ def resolve_coach_choice(repository: MaintainPlanRepository, subject_ref: str,
     snapshot = next(item for item in snapshots
                     if item.prescription_snapshot_id == prescription_id)
     session = next(item for item in sessions if item.session_id == session_id)
+    if decision.status is DecisionStatus.MATCHED and session.source_conflicts:
+        raise ValueError("i dati in conflitto impediscono l’abbinamento automatico")
     timestamp = now or datetime.now(timezone.utc)
+    automatic = decision.status is DecisionStatus.MATCHED
     mapping = build_mapping(
         snapshot, session,
         mapping_id=_stable_id("mapping", prescription_id, session_id),
-        created_at=timestamp, resolution_method=ResolutionMethod.ATHLETE_CONFIRMATION,
-        actor="coach", provenance={"source": "coach-review", "answer": "selected"},
+        created_at=timestamp,
+        resolution_method=(ResolutionMethod.AUTOMATIC if automatic
+                           else ResolutionMethod.ATHLETE_CONFIRMATION),
+        actor=None if automatic else "coach",
+        provenance={"source": "coach-review", "action": "explicit-save"},
     )
-    repository.create_prescription_mapping(mapping)
+    repository.persist_prescription_mapping(
+        mapping, expected_scope=scope, expected_decision=decision)
     evaluation, saved_pair, message = _evaluate_saved(
         repository, snapshot, session, mapping, timestamp)
-    return CoachReview(decision, evaluation, details, saved_pair, message)
+    return CoachReview(decision, evaluation, details, saved_pair, message,
+                       tuple(suspended))
 
 
 def review_database(database_path: str, subject_ref: str) -> CoachReview:
@@ -194,6 +192,26 @@ def resolve_database_choice(database_path: str, subject_ref: str,
                             prescription_id: str, session_id: str) -> CoachReview:
     return resolve_coach_choice(MaintainPlanRepository(database_path), subject_ref,
                                 prescription_id, session_id)
+
+
+def retry_saved_evaluation(repository: MaintainPlanRepository, subject_ref: str,
+                           prescription_id: str, session_id: str, *,
+                           now: datetime | None = None) -> CoachReview:
+    """Explicitly retry one already-saved mapping without creating a new one."""
+    mapping = next((item for item in repository.list_prescription_mappings()
+                    if item.prescription_snapshot_ref == prescription_id
+                    and item.actual_session_ref == session_id), None)
+    snapshot = repository.get_prescription_snapshot(prescription_id)
+    session = repository.get_actual_session(session_id)
+    if (mapping is None or snapshot is None or session is None or
+            snapshot.subject_ref != subject_ref or session.subject_ref != subject_ref):
+        raise ValueError("collegamento da valutare non disponibile per l’atleta")
+    scope = validate_runtime_matching_scope(subject_ref, (), ())
+    decision = decide_runtime_matching(scope)
+    evaluation, pair, message = _evaluate_saved(
+        repository, snapshot, session, mapping, now or datetime.now(timezone.utc))
+    return CoachReview(decision, evaluation, saved_pair=pair,
+                       evaluation_message=message)
 
 
 def format_coach_review(review: CoachReview) -> str:

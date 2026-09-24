@@ -355,6 +355,30 @@ class MaintainPlanRepository:
                 if tuple(stored_sessions) != expected_scope.sessions:
                     raise ValueError("actual-session scope changed since matching decision")
 
+                # The caller's scope must still be the complete unmapped scope
+                # for this subject. Detect artifacts inserted after the first
+                # read while the same BEGIN IMMEDIATE lock is held.
+                mapped_snapshot_ids = {row[0] for row in connection.execute(
+                    "SELECT prescription_snapshot_ref FROM maintain_plan_prescription_mappings"
+                ).fetchall()}
+                mapped_session_ids = {row[0] for row in connection.execute(
+                    "SELECT actual_session_ref FROM maintain_plan_prescription_mappings"
+                ).fetchall()}
+                current_snapshot_ids = {row[0] for row in connection.execute(
+                    "SELECT prescription_snapshot_id FROM maintain_plan_prescription_snapshots "
+                    "WHERE subject_ref = ?", (expected_scope.subject_ref,),
+                ).fetchall() if row[0] not in mapped_snapshot_ids or row[0] == value.prescription_snapshot_ref}
+                current_session_ids = {row[0] for row in connection.execute(
+                    "SELECT session_id FROM maintain_plan_actual_sessions WHERE subject_ref = ?",
+                    (expected_scope.subject_ref,),
+                ).fetchall() if row[0] not in mapped_session_ids or row[0] == value.actual_session_ref}
+                if current_snapshot_ids != {
+                        item.prescription_snapshot_id for item in expected_scope.snapshots}:
+                    raise ValueError("prescription scope changed since matching decision")
+                if current_session_ids != {
+                        item.session_id for item in expected_scope.sessions}:
+                    raise ValueError("actual-session scope changed since matching decision")
+
                 persisted_scope = validate_runtime_matching_scope(
                     expected_scope.subject_ref,
                     stored_snapshots,
