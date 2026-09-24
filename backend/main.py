@@ -149,8 +149,8 @@ def _build_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--maintain-plan-review",
         metavar="SUBJECT_REF",
-        help=("Confronta piano e attività importate già persistiti per l'atleta, "
-              "salvando solo una corrispondenza univoca e la sua valutazione."),
+        help=("Consulta senza scrivere il confronto tra piano e attività. "
+              "Per confermare e salvare usare la pagina browser coach."),
     )
 
     return parser

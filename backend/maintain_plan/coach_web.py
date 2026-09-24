@@ -50,6 +50,13 @@ def render_page(subject_ref: str = "", *, review=None, message: str = "",
                     f'<input type="hidden" name="session" value="{escape(pair.session_id, quote=True)}">'
                     '<input type="hidden" name="operation" value="retry_evaluation">'
                     '<button>Riprova valutazione</button></form>')
+        for pair, evaluation in review.completed_evaluations:
+            overall = ("giudizio complessivo non disponibile"
+                       if evaluation.overall is None else evaluation.overall.value)
+            body.append(
+                '<section class="completed"><strong>Abbinamento completato:</strong> '
+                f'{escape(pair.prescription_snapshot_id)} ← {escape(pair.session_id)}<br>'
+                f'Conseguenza sul piano: {escape(overall)}</section>')
         body.append(f"<h2>Esito: {escape(decision.status.value)}</h2>")
         if review.saved_pair is not None:
             pair = review.saved_pair
@@ -93,7 +100,7 @@ def render_page(subject_ref: str = "", *, review=None, message: str = "",
                         f"<p>Copertura: {escape(review.evaluation.evaluation_coverage.status.value)}</p>")
     style = "body{font:18px system-ui;max-width:850px;margin:40px auto;padding:0 20px}" \
             "input,button{font:inherit;padding:8px;margin:6px}.candidate{border:1px solid #bbb;padding:16px;margin:12px 0}" \
-            ".message{background:#eef8ee;padding:12px}.warning{background:#fff3cd;padding:12px}"
+            ".message,.completed{background:#eef8ee;padding:12px}.warning{background:#fff3cd;padding:12px}"
     return "<!doctype html><html lang=it><meta charset=utf-8><title>IronCoach Coach</title>" \
            f"<style>{style}</style><body>{''.join(body)}</body></html>"
 

@@ -9,6 +9,7 @@ from urllib.parse import urlencode
 import pytest
 
 import backend.maintain_plan.coach_review as coach_review_module
+from backend import main as main_module
 
 from backend.maintain_plan.coach_review import (
     format_coach_review, resolve_coach_choice, retry_saved_evaluation,
@@ -18,7 +19,7 @@ from backend.maintain_plan.coach_web import (
     configured_database_path, make_handler, render_page,
 )
 from backend.maintain_plan.matching_service import build_mapping
-from backend.maintain_plan.models import Requiredness, ResolutionMethod
+from backend.maintain_plan.models import Requiredness, ResolutionMethod, SupportStatus
 from backend.maintain_plan.repository import MaintainPlanRepository
 from backend.maintain_plan.runtime_matching_decision import DecisionStatus
 from tests.maintain_plan.fixtures import NOW, RUN_PRESCRIPTION, RUN_SESSION
@@ -362,3 +363,54 @@ def test_launcher_loads_project_dotenv_and_requires_configured_archive(
     with pytest.raises(FileNotFoundError, match="configurato non trovato"):
         configured_database_path(project)
     assert not database.exists()
+
+
+def test_updated_not_evaluable_result_blocks_candidate_save(tmp_path):
+    repository = _repository(tmp_path)
+    proposed = review_subject(repository, "athlete-1", now=NOW)
+    assert proposed.decision.status is DecisionStatus.MATCHED
+
+    unsupported_component = replace(
+        RUN_PRESCRIPTION.components[0], support_status=SupportStatus.UNSUPPORTED)
+    unsupported = replace(
+        RUN_PRESCRIPTION, prescription_snapshot_id="unsupported-snapshot",
+        workout_id="unsupported-workout", decision_id="unsupported-decision",
+        components=(unsupported_component,))
+    repository.create_prescription_snapshot(unsupported)
+
+    updated = review_subject(repository, "athlete-1", now=NOW)
+    assert updated.decision.status is DecisionStatus.NOT_EVALUABLE
+    assert any(item.prescription_snapshot_id == "snapshot-1"
+               and item.session_id == "session-1"
+               for item in updated.decision.candidates)
+    with pytest.raises(ValueError, match="non è valutabile.*servono chiarimenti"):
+        resolve_coach_choice(repository, "athlete-1", "snapshot-1",
+                             "session-1", now=NOW)
+    assert repository.list_prescription_mappings() == ()
+
+
+def test_completed_mapping_and_evaluation_are_visible_after_reopen(tmp_path):
+    repository = _repository(tmp_path)
+    saved = resolve_coach_choice(repository, "athlete-1", "snapshot-1",
+                                 "session-1", now=NOW)
+    assert saved.evaluation is not None
+
+    reopened = review_subject(repository, "athlete-1", now=NOW)
+    page = render_page("athlete-1", review=reopened)
+    summary = format_coach_review(reopened)
+
+    assert len(reopened.completed_evaluations) == 1
+    pair, evaluation = reopened.completed_evaluations[0]
+    assert pair.prescription_snapshot_id == "snapshot-1"
+    assert pair.session_id == "session-1"
+    assert evaluation == saved.evaluation
+    assert "Abbinamento completato:</strong> snapshot-1 ← session-1" in page
+    assert "Abbinamento già completato: snapshot-1 ← session-1" in summary
+    assert "Nessuna corrispondenza è stata salvata" not in summary
+
+
+def test_cli_help_declares_review_read_only_and_points_to_browser():
+    help_text = " ".join(main_module._build_argument_parser().format_help().split())
+
+    assert "Consulta senza scrivere" in help_text
+    assert "pagina browser coach" in help_text

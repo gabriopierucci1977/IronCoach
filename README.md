@@ -23,6 +23,10 @@ inserire l'ID atleta e premere
 python -m backend.main --maintain-plan-review ID_ATLETA
 ```
 
+Il comando è **di sola consultazione**: non salva abbinamenti né valutazioni.
+Per confermare e salvare una proposta usare la pagina browser avviata con
+uno dei file `Avvia revisione coach`.
+
 Una sola corrispondenza globale affidabile viene proposta; viene salvata e
 valutata soltanto quando il coach preme il pulsante di conferma. In quel
 momento IronCoach rilegge l'intero archivio dell'atleta. La valutazione può

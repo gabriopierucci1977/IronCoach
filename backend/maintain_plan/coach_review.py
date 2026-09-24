@@ -24,6 +24,7 @@ class CoachReview:
     saved_pair: CandidatePair | None = None
     evaluation_message: str | None = None
     suspended_evaluations: tuple[tuple[CandidatePair, str], ...] = ()
+    completed_evaluations: tuple[tuple[CandidatePair, object], ...] = ()
 
 
 def _details(decision, snapshots, sessions) -> tuple[dict[str, str], ...]:
@@ -91,6 +92,7 @@ def review_subject(repository: MaintainPlanRepository, subject_ref: str,
     # A mapping is committed before its evaluation. Recover that second step on
     # every later visit, making a process interruption safe and retryable.
     suspended = []
+    completed = []
     for mapping in mappings:
         snapshot = snapshots_by_id.get(mapping.prescription_snapshot_ref)
         session = sessions_by_id.get(mapping.actual_session_ref)
@@ -98,7 +100,12 @@ def review_subject(repository: MaintainPlanRepository, subject_ref: str,
             continue
         evaluation_id = _stable_id("evaluation", snapshot.prescription_snapshot_id,
                                    session.session_id)
-        if repository.get_execution_evaluation(evaluation_id) is None:
+        existing_evaluation = repository.get_execution_evaluation(evaluation_id)
+        if existing_evaluation is not None:
+            completed.append((CandidatePair(
+                snapshot.prescription_snapshot_id, session.session_id),
+                existing_evaluation))
+        else:
             pair = CandidatePair(snapshot.prescription_snapshot_id, session.session_id)
             if session.source_conflicts:
                 suspended.append((pair,
@@ -118,7 +125,8 @@ def review_subject(repository: MaintainPlanRepository, subject_ref: str,
     details = _details(decision, snapshots, sessions)
     if decision.status is not DecisionStatus.MATCHED or decision.selected_pair is None:
         return CoachReview(decision, candidate_details=details,
-                           suspended_evaluations=tuple(suspended))
+                           suspended_evaluations=tuple(suspended),
+                           completed_evaluations=tuple(completed))
 
     pair = decision.selected_pair
     session = next(item for item in sessions if item.session_id == pair.session_id)
@@ -126,7 +134,8 @@ def review_subject(repository: MaintainPlanRepository, subject_ref: str,
         suspended.append((pair,
             "Abbinamento automatico sospeso: l’attività contiene dati in conflitto."))
     return CoachReview(decision, candidate_details=details,
-                       suspended_evaluations=tuple(suspended))
+                       suspended_evaluations=tuple(suspended),
+                       completed_evaluations=tuple(completed))
 
 
 def resolve_coach_choice(repository: MaintainPlanRepository, subject_ref: str,
@@ -154,6 +163,9 @@ def resolve_coach_choice(repository: MaintainPlanRepository, subject_ref: str,
     scope = validate_runtime_matching_scope(subject_ref, snapshots, sessions)
     decision = decide_runtime_matching(scope)
     details = _details(decision, snapshots, sessions)
+    if decision.status is DecisionStatus.NOT_EVALUABLE:
+        raise ValueError(
+            "il confronto aggiornato non è valutabile: servono chiarimenti prima di salvare")
     selected = next((item for item in decision.candidates
                      if item.prescription_snapshot_id == prescription_id
                      and item.session_id == session_id), None)
@@ -221,6 +233,13 @@ def format_coach_review(review: CoachReview) -> str:
         lines.append(
             f"Attività sospesa: {pair.prescription_snapshot_id} ← {pair.session_id}. {message}"
         )
+    for pair, evaluation in review.completed_evaluations:
+        overall = ("giudizio complessivo non disponibile"
+                   if evaluation.overall is None else evaluation.overall.value)
+        lines.append(
+            f"Abbinamento già completato: {pair.prescription_snapshot_id} ← "
+            f"{pair.session_id}. Conseguenza sul piano: {overall}."
+        )
     for candidate in decision.candidates:
         lines.append(
             f"Possibile corrispondenza: {candidate.prescription_snapshot_id} ← {candidate.session_id}"
@@ -246,7 +265,8 @@ def format_coach_review(review: CoachReview) -> str:
         lines.append("Nessuna corrispondenza è stata salvata.")
     else:
         lines.append("Dati mostrati ma non conclusivi: nessun allenamento è considerato saltato.")
-        lines.append("Nessuna corrispondenza è stata salvata.")
+        if not review.completed_evaluations and not review.suspended_evaluations:
+            lines.append("Nessuna corrispondenza è stata salvata.")
     if decision.reasons:
         lines.append("Motivi: " + ", ".join(item.value for item in decision.reasons))
     return "\n".join(lines)
