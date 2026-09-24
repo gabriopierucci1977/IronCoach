@@ -17,7 +17,7 @@ from __future__ import annotations
 import json
 import os
 from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -37,6 +37,7 @@ from backend.importers.garmin_live_activity_adapter import (
 DEFAULT_SYNC_STATE_PATH = Path(
     "data/garmin/garmin_live_sync_state.json"
 )
+DEFAULT_INITIAL_LOOKBACK_DAYS = 30
 
 
 class GarminLiveSyncError(Exception):
@@ -70,6 +71,7 @@ class GarminLiveSync:
         state_path: str = str(DEFAULT_SYNC_STATE_PATH),
         tokenstore: Optional[str] = None,
         client=None,
+        initial_lookback_days: int = DEFAULT_INITIAL_LOOKBACK_DAYS,
     ):
         self.archive_path = Path(archive_path)
         self.state_path = Path(state_path)
@@ -85,6 +87,9 @@ class GarminLiveSync:
             if client is not None
             else Garmin()
         )
+        if initial_lookback_days < 1:
+            raise ValueError("initial_lookback_days deve essere positivo")
+        self.initial_lookback_days = initial_lookback_days
 
     def sync(
         self,
@@ -97,30 +102,29 @@ class GarminLiveSync:
             )
         )
 
-        existing = exporter.load(
-            validate_manifest=True
-        )
-
-        last_existing_at = self._latest_start_time(
-            existing
-        )
-
-        if last_existing_at is None:
-            raise GarminLiveSyncError(
-                "Archivio Garmin esistente senza "
-                "una data attività utilizzabile."
-            )
-
-        start_date = self._date_part(
-            last_existing_at
-        )
-
         resolved_end_date = (
             end_date
             or datetime.now(
                 timezone.utc
             ).date().isoformat()
         )
+
+        archive_exists = self.archive_path.is_file()
+        if archive_exists:
+            existing = exporter.load(validate_manifest=True)
+            last_existing_at = self._latest_start_time(existing)
+            if last_existing_at is None:
+                raise GarminLiveSyncError(
+                    "Archivio Garmin esistente senza una data attività utilizzabile."
+                )
+            start_date = self._date_part(last_existing_at)
+        else:
+            existing = []
+            try:
+                end = datetime.strptime(resolved_end_date, "%Y-%m-%d").date()
+            except ValueError as exc:
+                raise GarminLiveSyncError("Data finale Garmin non valida.") from exc
+            start_date = (end - timedelta(days=self.initial_lookback_days)).isoformat()
 
         self.client.login(
             tokenstore=self.tokenstore
@@ -142,11 +146,21 @@ class GarminLiveSync:
             for record in raw_activities
         ]
 
-        export_result = (
-            exporter.export_incremental(
-                live_activities
-            )
-        )
+        if archive_exists:
+            export_result = exporter.export_incremental(live_activities)
+            existing_count = export_result.existing_count
+            added_count = export_result.added_count
+            skipped_existing = export_result.skipped_existing
+        else:
+            if not live_activities:
+                raise GarminLiveSyncError(
+                    "Garmin non ha restituito attività negli ultimi "
+                    f"{self.initial_lookback_days} giorni; archivio non inizializzato."
+                )
+            export_result = exporter.export(live_activities)
+            existing_count = 0
+            added_count = export_result.activity_count
+            skipped_existing = 0
 
         updated = exporter.load(
             validate_manifest=True
@@ -181,15 +195,9 @@ class GarminLiveSync:
             fetched_count=len(
                 live_activities
             ),
-            existing_count=(
-                export_result.existing_count
-            ),
-            added_count=(
-                export_result.added_count
-            ),
-            skipped_existing=(
-                export_result.skipped_existing
-            ),
+            existing_count=existing_count,
+            added_count=added_count,
+            skipped_existing=skipped_existing,
             activity_count=(
                 export_result.activity_count
             ),

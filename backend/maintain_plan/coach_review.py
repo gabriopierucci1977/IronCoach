@@ -31,6 +31,43 @@ class CoachReview:
     completed_evaluations: tuple[tuple[CandidatePair, object], ...] = ()
 
 
+@dataclass(frozen=True)
+class CoachReviewReadiness:
+    subject_ref: str
+    prescription_count: int
+    activity_count: int
+
+    @property
+    def ready(self) -> bool:
+        return self.prescription_count > 0 and self.activity_count > 0
+
+    def message(self) -> str:
+        if self.ready:
+            return ("Revisione pronta per " + self.subject_ref + ": "
+                    f"{self.prescription_count} prescrizione/i e "
+                    f"{self.activity_count} attività acquisita/e.")
+        missing = []
+        if self.prescription_count == 0:
+            missing.append("una prescrizione MAINTAIN_PLAN")
+        if self.activity_count == 0:
+            missing.append("un’attività Garmin acquisita")
+        return "Revisione non pronta per " + self.subject_ref + ": manca " + " e ".join(missing) + "."
+
+
+def review_readiness(repository: MaintainPlanRepository,
+                     subject_ref: str) -> CoachReviewReadiness:
+    """Report whether one subject has both required persisted artifact types."""
+    return CoachReviewReadiness(
+        subject_ref,
+        len(repository.list_prescription_snapshots(subject_ref)),
+        len(repository.list_actual_sessions(subject_ref)),
+    )
+
+
+def database_review_readiness(database_path: str, subject_ref: str) -> CoachReviewReadiness:
+    return review_readiness(_existing_repository(database_path), subject_ref)
+
+
 def _details(decision, snapshots, sessions) -> tuple[dict[str, str], ...]:
     by_snapshot = {item.prescription_snapshot_id: item for item in snapshots}
     by_session = {item.session_id: item for item in sessions}

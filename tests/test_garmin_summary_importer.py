@@ -26,6 +26,7 @@ from backend.importers.garmin_live_activity_adapter import (
 )
 from backend.importers.garmin_live_sync import (
     GarminLiveSync,
+    GarminLiveSyncError,
 )
 from backend.importers.garmin_activity_exporter import (
     GarminActivityExporter,
@@ -656,3 +657,62 @@ def test_live_sync_updates_archive_and_records_source_check(
     ][
         "vo2_max"
     ] == pytest.approx(57.0)
+
+
+def test_live_sync_bootstraps_missing_codespace_archive_from_garmin(tmp_path):
+    archive_path = tmp_path / "garmin_activities_merged.jsonl.gz"
+    state_path = tmp_path / "garmin_live_sync_state.json"
+
+    class FakeGarmin:
+        def __init__(self):
+            self.login_tokenstore = None
+            self.fetch_args = None
+
+        def login(self, tokenstore=None):
+            self.login_tokenstore = tokenstore
+
+        def get_activities_by_date(self, **kwargs):
+            self.fetch_args = kwargs
+            return [{
+                "activityId": 901,
+                "activityType": {"typeKey": "running"},
+                "startTimeGMT": "2026-08-20 07:00:00",
+                "duration": 3600.0,
+                "distance": 10000.0,
+            }]
+
+    client = FakeGarmin()
+    result = GarminLiveSync(
+        archive_path=str(archive_path), state_path=str(state_path),
+        tokenstore=str(tmp_path / "auth"), client=client,
+    ).sync(end_date="2026-08-28")
+
+    assert client.login_tokenstore == str(tmp_path / "auth")
+    assert client.fetch_args == {
+        "startdate": "2026-07-29", "enddate": "2026-08-28",
+        "sortorder": "asc",
+    }
+    assert result.existing_count == 0
+    assert result.added_count == result.activity_count == 1
+    assert archive_path.is_file()
+    assert GarminActivityExporter(str(archive_path)).load()[0].source_id == "901"
+
+
+def test_live_sync_does_not_create_empty_archive_when_bootstrap_finds_nothing(
+        tmp_path):
+    class FakeGarmin:
+        def login(self, tokenstore=None):
+            return None
+
+        def get_activities_by_date(self, **kwargs):
+            return []
+
+    archive_path = tmp_path / "garmin_activities_merged.jsonl.gz"
+    with pytest.raises(GarminLiveSyncError, match="archivio non inizializzato"):
+        GarminLiveSync(
+            archive_path=str(archive_path),
+            state_path=str(tmp_path / "state.json"),
+            client=FakeGarmin(),
+        ).sync(end_date="2026-08-28")
+
+    assert not archive_path.exists()

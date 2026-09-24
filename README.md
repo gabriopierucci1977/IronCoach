@@ -42,18 +42,33 @@ IRONCOACH_MAINTAIN_PLAN_TIMEZONE=Europe/Rome
 
 Poi, nel terminale del Codespace:
 
-1. Eseguire `python -m backend.main` con le credenziali Airtable e Garmin già
-   configurate. È la normale esecuzione IronCoach: legge i dati reali e salva
-   nello stesso archivio isolato sia le attività Garmin supportate sia il piano,
+1. Verificare che `GARMINTOKENS` punti alla token store Garmin valida (il
+   default è `data/garmin/auth`), quindi eseguire `python -m backend.main` con
+   le credenziali Airtable e Garmin configurate. Se l'archivio Garmin non
+   esiste ancora, `GarminLiveSync` importa da Garmin Connect le attività reali
+   degli ultimi 30 giorni e crea archivio e manifest; non crea un archivio
+   vuoto quando Garmin non restituisce attività. La normale esecuzione legge i
+   dati reali e salva nello stesso archivio isolato sia le attività Garmin
+   supportate sia il piano,
    ma salva il piano soltanto se la decisione risultante è
    `MAINTAIN_PLAN` / `KEEP_PLAN`.
 2. Verificare che l'esecuzione sia terminata senza errori e che esista
    `data/ironcoach_maintain_plan.db`. Non usare `--dry-run`: per definizione non
    scrive gli artefatti MAINTAIN_PLAN.
-3. Eseguire `./Avvia\ revisione\ coach.sh`.
+3. Eseguire `./Avvia\ revisione\ coach.sh ID_ATLETA`. Il controllo iniziale
+   stampa `Revisione pronta` soltanto se, per quello stesso atleta, trova almeno
+   una prescrizione MAINTAIN_PLAN e un'attività Garmin acquisita; altrimenti
+   indica precisamente quale dei due elementi manca e non avvia la pagina.
 4. Aprire **Porte**, lasciare la porta `8765` su **Privata** e scegliere
    **Apri nel browser**. Inserire come ID atleta il `record_id` del profilo
    atleta Airtable (il valore `source_id` mostrato dal runtime).
+
+Se compare un warning di sincronizzazione Garmin, se manca la token store o se
+l'importazione termina con errore, **non** considerare riuscita la preparazione:
+correggere `GARMINTOKENS`/l'autenticazione Garmin e ripetere
+`python -m backend.main`. Anche un'importazione valida con zero attività negli
+ultimi 30 giorni interrompe l'inizializzazione; in tal caso sincronizzare dopo
+aver registrato un'attività supportata recente, senza creare file vuoti a mano.
 
 La pagina accetta esclusivamente l'indirizzo inoltrato assegnato da GitHub al
 Codespace corrente. Non copiare la porta su **Pubblica**. Usa l'archivio già
