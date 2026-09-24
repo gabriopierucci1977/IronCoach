@@ -1,8 +1,10 @@
 from dataclasses import replace
 from datetime import timedelta
-import sqlite3
 import http.client
 from http.server import ThreadingHTTPServer
+from pathlib import Path
+import sqlite3
+import subprocess
 from threading import Thread
 from urllib.parse import urlencode
 
@@ -12,8 +14,8 @@ import backend.maintain_plan.coach_review as coach_review_module
 from backend import main as main_module
 
 from backend.maintain_plan.coach_review import (
-    format_coach_review, resolve_coach_choice, retry_saved_evaluation,
-    review_database, review_subject,
+    database_review_readiness, format_coach_review, resolve_coach_choice,
+    retry_saved_evaluation, review_database, review_subject,
 )
 from backend.maintain_plan.coach_web import (
     _trusted_origins, configured_database_path, make_handler, render_page,
@@ -128,6 +130,62 @@ def test_browser_page_offers_every_candidate_and_a_no_write_exit(tmp_path):
     assert page.count("Conferma questa corrispondenza") == 2
     assert "Non lo so: non salvare nulla" in page
     assert repository.list_prescription_mappings() == ()
+
+
+def test_browser_checks_readiness_after_subject_is_entered(tmp_path):
+    repository = MaintainPlanRepository(tmp_path / "plan-only.db")
+    repository.create_prescription_snapshot(RUN_PRESCRIPTION)
+    server = ThreadingHTTPServer(
+        ("127.0.0.1", 0), make_handler(str(repository.database_path)))
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    host, port = server.server_address
+    try:
+        connection = http.client.HTTPConnection(host, port)
+        connection.request("GET", "/")
+        initial = connection.getresponse()
+        initial_page = initial.read().decode()
+        assert initial.status == 200
+        assert "ID atleta" in initial_page
+        assert "Revisione pronta" not in initial_page
+
+        connection.request("GET", "/?subject=athlete-1")
+        checked = connection.getresponse()
+        checked_page = checked.read().decode()
+        assert checked.status == 200
+        assert "Revisione non pronta per athlete-1" in checked_page
+        assert "un’attività Garmin acquisita" in checked_page
+        assert "Esito:" not in checked_page
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join()
+
+
+def test_shell_launcher_supports_no_argument_and_athlete_mode(tmp_path):
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    calls = tmp_path / "calls"
+    python = fake_bin / "python"
+    python.write_text(
+        "#!/bin/sh\nprintf '%s\\n' \"$#:$*\" >> \"$CALLS\"\n",
+        encoding="utf-8",
+    )
+    python.chmod(0o755)
+    environment = {
+        "PATH": f"{fake_bin}:/usr/bin:/bin",
+        "CALLS": str(calls),
+    }
+    launcher = str(Path(__file__).parents[2] / "Avvia revisione coach.sh")
+
+    subprocess.run([launcher], env=environment, check=True)
+    subprocess.run([launcher, "athlete-1"], env=environment, check=True)
+
+    no_argument, with_athlete = calls.read_text(encoding="utf-8").splitlines()
+    assert no_argument.startswith("2:-c ")
+    assert no_argument.endswith("run()")
+    assert with_athlete.startswith("3:-c ")
+    assert with_athlete.endswith(" athlete-1")
 
 
 def test_saved_match_with_conflicting_data_is_explicitly_not_evaluated(tmp_path):
@@ -464,6 +522,33 @@ def test_launcher_loads_project_dotenv_and_requires_configured_archive(
     with pytest.raises(FileNotFoundError, match="configurato non trovato"):
         configured_database_path(project)
     assert not database.exists()
+
+
+@pytest.mark.parametrize(("with_plan", "with_activity", "ready", "missing"), [
+    (True, False, False, "un’attività Garmin acquisita"),
+    (False, True, False, "una prescrizione MAINTAIN_PLAN"),
+    (True, True, True, None),
+])
+def test_review_readiness_requires_both_artifact_types_for_same_athlete(
+        tmp_path, with_plan, with_activity, ready, missing):
+    repository = MaintainPlanRepository(tmp_path / "readiness.db")
+    if with_plan:
+        repository.create_prescription_snapshot(RUN_PRESCRIPTION)
+    if with_activity:
+        repository.create_actual_session(RUN_SESSION)
+
+    result = database_review_readiness(
+        str(repository.database_path), "athlete-1")
+
+    assert result.ready is ready
+    assert result.prescription_count == int(with_plan)
+    assert result.activity_count == int(with_activity)
+    if missing is None:
+        assert result.message() == (
+            "Revisione pronta per athlete-1: 1 prescrizione/i e "
+            "1 attività acquisita/e.")
+    else:
+        assert missing in result.message()
 
 
 def test_updated_not_evaluable_result_blocks_candidate_save(tmp_path):
