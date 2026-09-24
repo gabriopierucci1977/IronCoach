@@ -776,19 +776,23 @@ class MaintainPlanRepository:
         return value
 
     def get_execution_evaluation_by_mapping(
-        self, mapping_id: str,
+        self, mapping_id: str, *, applicable_policy: Any,
     ) -> ExecutionEvaluation | None:
-        """Resolve the persisted evaluation by its authoritative mapping link."""
+        """Return the latest publication for the applicable policy version.
+
+        Older publications and evaluations produced by other policy versions
+        remain immutable history; rowid is the append-only publication order.
+        """
         with self._connect() as connection:
             rows = connection.execute(
                 "SELECT evaluation_id FROM maintain_plan_execution_evaluations "
-                "WHERE prescription_mapping_ref = ? ORDER BY evaluation_id",
-                (mapping_id,),
+                "WHERE prescription_mapping_ref = ? AND policy_id = ? "
+                "AND policy_version = ? ORDER BY rowid DESC",
+                (mapping_id, applicable_policy.policy_id,
+                 applicable_policy.policy_version),
             ).fetchall()
         if not rows:
             return None
-        if len(rows) > 1:
-            raise ValueError("multiple execution evaluations reference one mapping")
         return self.get_execution_evaluation(rows[0][0])
 
     def create_source_conflict_impact_evaluation(self, value: SourceConflictImpactEvaluation) -> None:

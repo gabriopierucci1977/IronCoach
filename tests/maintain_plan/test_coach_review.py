@@ -19,7 +19,9 @@ from backend.maintain_plan.coach_web import (
     configured_database_path, make_handler, render_page,
 )
 from backend.maintain_plan.matching_service import build_mapping
-from backend.maintain_plan.models import Requiredness, ResolutionMethod, SupportStatus
+from backend.maintain_plan.models import (
+    PolicyRef, Requiredness, ResolutionMethod, SupportStatus,
+)
 from backend.maintain_plan.repository import MaintainPlanRepository
 from backend.maintain_plan.runtime_matching_decision import DecisionStatus
 from tests.maintain_plan.fixtures import NOW, RUN_PRESCRIPTION, RUN_SESSION
@@ -528,6 +530,10 @@ def test_global_candidates_across_prescriptions_can_each_be_confirmed(
     assert saved.saved_pair.session_id == chosen_session
     mapping = repository.list_prescription_mappings()[0]
     answered = repository.get_confirmation(mapping.confirmation_ref)
+    assert answered.candidate_session_refs == (chosen_session,)
+    assert tuple(item.get("session_id") for item in answered.interpretations
+                 if item.get("answer_type") == "SELECT_CANDIDATE") == (
+                     chosen_session,)
     assert answered.selected_session_ref == chosen_session
     assert answered.prescription_snapshot_ref == chosen_prescription
     assert {(item["prescription_snapshot_id"], item["session_id"])
@@ -546,28 +552,36 @@ def test_read_only_database_open_rejects_missing_path_without_creating_it(tmp_pa
     assert not missing.parent.exists()
 
 
-def test_existing_evaluation_is_found_by_mapping_not_generated_id(tmp_path):
+def test_applicable_evaluation_version_is_selected_without_losing_history(tmp_path):
     repository = _repository(tmp_path)
     mapping = build_mapping(
         RUN_PRESCRIPTION, RUN_SESSION, mapping_id="external-mapping",
         created_at=NOW, resolution_method=ResolutionMethod.AUTOMATIC)
     repository.create_prescription_mapping(mapping)
-    external = coach_review_module.evaluate(
+    applicable = coach_review_module.evaluate(
         RUN_PRESCRIPTION, RUN_SESSION, mapping,
-        evaluation_id="evaluation-created-elsewhere", evaluated_at=NOW)
-    repository.create_execution_evaluation(external)
+        evaluation_id="evaluation-current-policy", evaluated_at=NOW)
+    historical = replace(
+        applicable, evaluation_id="evaluation-old-policy",
+        policy=PolicyRef("maintain-plan-execution-aggregation", "0.9.0-draft"))
+    repository.create_execution_evaluation(applicable)
+    repository.create_execution_evaluation(historical)
 
     review = review_subject(repository, "athlete-1", now=NOW)
     page = render_page("athlete-1", review=review)
 
     assert review.completed_evaluations == ((
-        coach_review_module.CandidatePair("snapshot-1", "session-1"), external),)
+        coach_review_module.CandidatePair("snapshot-1", "session-1"), applicable),)
     assert review.suspended_evaluations == ()
     assert "Riprova valutazione" not in page
     retried = retry_saved_evaluation(
         repository, "athlete-1", "snapshot-1", "session-1", now=NOW)
-    assert retried.evaluation == external
+    assert retried.evaluation == applicable
     with sqlite3.connect(repository.database_path) as connection:
         assert connection.execute(
             "SELECT count(*) FROM maintain_plan_execution_evaluations"
-        ).fetchone()[0] == 1
+        ).fetchone()[0] == 2
+    assert repository.get_execution_evaluation(
+        "evaluation-current-policy") == applicable
+    assert repository.get_execution_evaluation(
+        "evaluation-old-policy") == historical

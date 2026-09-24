@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from uuid import NAMESPACE_URL, uuid5
 
-from .execution_evaluation_service import evaluate
+from .execution_evaluation_service import EXECUTION, evaluate
 from .confirmation_service import answer_confirmation, request_confirmation
 from .matching_service import build_mapping
 from .models import (
@@ -65,7 +65,8 @@ def _evaluate_saved(repository, snapshot, session, mapping, timestamp):
         )
     evaluation_id = _stable_id("evaluation", snapshot.prescription_snapshot_id,
                                session.session_id)
-    existing = repository.get_execution_evaluation_by_mapping(mapping.mapping_id)
+    existing = repository.get_execution_evaluation_by_mapping(
+        mapping.mapping_id, applicable_policy=EXECUTION)
     if existing is not None:
         return existing, pair, None
     try:
@@ -103,7 +104,7 @@ def review_subject(repository: MaintainPlanRepository, subject_ref: str,
         if snapshot is None or session is None:
             continue
         existing_evaluation = repository.get_execution_evaluation_by_mapping(
-            mapping.mapping_id)
+            mapping.mapping_id, applicable_policy=EXECUTION)
         if existing_evaluation is not None:
             completed.append((CandidatePair(
                 snapshot.prescription_snapshot_id, session.session_id),
@@ -194,8 +195,10 @@ def resolve_coach_choice(repository: MaintainPlanRepository, subject_ref: str,
             "prescription_snapshot_id": item.prescription_snapshot_id,
             "session_id": item.session_id,
         } for item in decision.candidates)
-        candidate_sessions = tuple(sorted(
-            {item.session_id for item in decision.candidates}))
+        candidate_sessions = tuple(sorted({
+            item.session_id for item in decision.candidates
+            if item.prescription_snapshot_id == prescription_id
+        }))
         result = MatchingResult(
             _stable_id("matching", prescription_id, subject_ref),
             MatchingStatus.CONFIRMATION_REQUIRED, None, snapshot.matching_policy,
