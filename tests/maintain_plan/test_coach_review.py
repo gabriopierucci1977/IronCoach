@@ -464,25 +464,76 @@ def test_cli_help_declares_review_read_only_and_points_to_browser():
     assert "pagina browser coach" in help_text
 
 
-def test_manual_mapping_is_not_saved_when_confirmation_persistence_fails(
-        tmp_path, monkeypatch):
+def test_manual_confirmation_bundle_rolls_back_and_can_be_retried(tmp_path):
     repository = _repository(
         tmp_path, (RUN_SESSION, replace(RUN_SESSION, session_id="session-2")))
-    original = repository.create_confirmation
-    calls = 0
+    with sqlite3.connect(repository.database_path) as connection:
+        connection.execute(
+            "CREATE TRIGGER interrupt_confirmation BEFORE INSERT ON "
+            "maintain_plan_confirmations WHEN NEW.status = 'ANSWERED' "
+            "BEGIN SELECT RAISE(ABORT, 'simulated interruption'); END")
 
-    def fail_answer(value):
-        nonlocal calls
-        calls += 1
-        if calls == 2:
-            raise RuntimeError("confirmation storage unavailable")
-        return original(value)
-
-    monkeypatch.setattr(repository, "create_confirmation", fail_answer)
-    with pytest.raises(RuntimeError, match="confirmation storage unavailable"):
+    with pytest.raises(sqlite3.IntegrityError, match="simulated interruption"):
         resolve_coach_choice(repository, "athlete-1", "snapshot-1",
                              "session-2", now=NOW)
-    assert repository.list_prescription_mappings() == ()
+    with sqlite3.connect(repository.database_path) as connection:
+        assert connection.execute(
+            "SELECT count(*) FROM maintain_plan_confirmations").fetchone()[0] == 0
+        assert connection.execute(
+            "SELECT count(*) FROM maintain_plan_matching_results").fetchone()[0] == 0
+        assert connection.execute(
+            "SELECT count(*) FROM maintain_plan_prescription_mappings").fetchone()[0] == 0
+        connection.execute("DROP TRIGGER interrupt_confirmation")
+
+    resolved = resolve_coach_choice(
+        repository, "athlete-1", "snapshot-1", "session-2", now=NOW)
+    assert resolved.saved_pair.session_id == "session-2"
+    with sqlite3.connect(repository.database_path) as connection:
+        assert connection.execute(
+            "SELECT count(*) FROM maintain_plan_confirmations").fetchone()[0] == 2
+        assert connection.execute(
+            "SELECT count(*) FROM maintain_plan_matching_results").fetchone()[0] == 2
+        assert connection.execute(
+            "SELECT count(*) FROM maintain_plan_prescription_mappings").fetchone()[0] == 1
+
+
+@pytest.mark.parametrize("chosen_prescription,chosen_session", [
+    ("snapshot-1", "session-1"),
+    ("snapshot-2", "session-2"),
+])
+def test_global_candidates_across_prescriptions_can_each_be_confirmed(
+        tmp_path, chosen_prescription, chosen_session):
+    repository = MaintainPlanRepository(
+        tmp_path / f"global-{chosen_prescription}.db")
+    later = NOW + timedelta(days=1)
+    second_snapshot = replace(
+        RUN_PRESCRIPTION, prescription_snapshot_id="snapshot-2",
+        workout_id="workout-2", decision_id="decision-2",
+        scheduled_window=replace(RUN_PRESCRIPTION.scheduled_window,
+                                 start=later, end=later))
+    second_session = replace(RUN_SESSION, session_id="session-2", start=later)
+    for snapshot in (RUN_PRESCRIPTION, second_snapshot):
+        repository.create_prescription_snapshot(snapshot)
+    for session in (RUN_SESSION, second_session):
+        repository.create_actual_session(session)
+
+    review = review_subject(repository, "athlete-1", now=NOW)
+    page = render_page("athlete-1", review=review)
+    assert review.decision.status is DecisionStatus.CONFIRMATION_REQUIRED
+    assert page.count("Conferma questa corrispondenza") == 2
+
+    saved = resolve_coach_choice(
+        repository, "athlete-1", chosen_prescription, chosen_session, now=NOW)
+    assert saved.saved_pair.prescription_snapshot_id == chosen_prescription
+    assert saved.saved_pair.session_id == chosen_session
+    mapping = repository.list_prescription_mappings()[0]
+    answered = repository.get_confirmation(mapping.confirmation_ref)
+    assert answered.selected_session_ref == chosen_session
+    assert answered.prescription_snapshot_ref == chosen_prescription
+    assert {(item["prescription_snapshot_id"], item["session_id"])
+            for item in answered.ambiguous_data} == {
+        ("snapshot-1", "session-1"), ("snapshot-2", "session-2")}
+    assert len(repository.list_prescription_mappings()) == 1
 
 
 def test_read_only_database_open_rejects_missing_path_without_creating_it(tmp_path):

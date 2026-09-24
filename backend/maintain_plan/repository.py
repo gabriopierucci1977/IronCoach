@@ -420,6 +420,101 @@ class MaintainPlanRepository:
         finally:
             connection.close()
 
+    def persist_confirmation_bundle(
+        self, result: MatchingResult, request: Confirmation, answered: Confirmation,
+        resolved: MatchingResult, mapping: PrescriptionMapping, *,
+        expected_scope: "RuntimeMatchingScope",
+        expected_decision: "MatchingDecision",
+    ) -> PrescriptionMapping:
+        """Atomically persist a global coach confirmation and its mapping."""
+        from .runtime_matching_decision import decide_runtime_matching
+        from .runtime_matching_scope import validate_runtime_matching_scope
+
+        self._require_valid(validate_matching_result(result))
+        self._require_valid(validate_confirmation(request))
+        self._require_valid(validate_confirmation(answered))
+        self._require_valid(validate_mapping(mapping))
+        self._require_valid(validate_matching_result(resolved))
+        if (request.matching_result_ref != result.matching_result_id or
+                answered.matching_result_ref != result.matching_result_id or
+                mapping.confirmation_ref != answered.confirmation_id or
+                resolved.prescription_mapping != mapping or
+                resolved.confirmation_ref != answered.confirmation_id):
+            raise ValueError("confirmation bundle references are incoherent")
+
+        connection = self._connect()
+        connection.row_factory = sqlite3.Row
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            snapshot_rows = connection.execute(
+                "SELECT * FROM maintain_plan_prescription_snapshots "
+                "WHERE subject_ref = ? ORDER BY prescription_snapshot_id",
+                (expected_scope.subject_ref,),
+            ).fetchall()
+            session_rows = connection.execute(
+                "SELECT * FROM maintain_plan_actual_sessions "
+                "WHERE subject_ref = ? ORDER BY session_id",
+                (expected_scope.subject_ref,),
+            ).fetchall()
+            mapped_snapshot_ids = {row[0] for row in connection.execute(
+                "SELECT prescription_snapshot_ref FROM maintain_plan_prescription_mappings"
+            ).fetchall()}
+            mapped_session_ids = {row[0] for row in connection.execute(
+                "SELECT actual_session_ref FROM maintain_plan_prescription_mappings"
+            ).fetchall()}
+            snapshots = tuple(self._decode_prescription_snapshot_row(row)
+                              for row in snapshot_rows
+                              if row["prescription_snapshot_id"] not in mapped_snapshot_ids)
+            sessions = tuple(self._decode_actual_session_row(row)
+                             for row in session_rows
+                             if row["session_id"] not in mapped_session_ids)
+            persisted_scope = validate_runtime_matching_scope(
+                expected_scope.subject_ref, snapshots, sessions,
+                expected_scope.direct_id_evidence)
+            if persisted_scope != expected_scope or (
+                    decide_runtime_matching(persisted_scope) != expected_decision):
+                raise ValueError("matching scope changed before confirmation save")
+            snapshot = next((item for item in snapshots
+                             if item.prescription_snapshot_id ==
+                             mapping.prescription_snapshot_ref), None)
+            session = next((item for item in sessions
+                            if item.session_id == mapping.actual_session_ref), None)
+            if snapshot is None or session is None:
+                raise ValueError("confirmed mapping artifacts are no longer available")
+            self._validate_mapping_refs(mapping, snapshot, session)
+
+            connection.execute(
+                "INSERT INTO maintain_plan_matching_results VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (result.matching_result_id, result.status.value, None,
+                 result.policy.policy_id, result.policy.policy_version,
+                 PAYLOAD_SCHEMA_VERSION, serialize_contract(result)))
+            for confirmation in (request, answered):
+                connection.execute(
+                    "INSERT INTO maintain_plan_confirmations VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    (confirmation.confirmation_id, confirmation.matching_result_ref,
+                     confirmation.prescription_snapshot_ref, confirmation.status.value,
+                     None if confirmation.answer_type is None else
+                     confirmation.answer_type.value,
+                     confirmation.selected_session_ref, PAYLOAD_SCHEMA_VERSION,
+                     serialize_contract(confirmation)))
+            connection.execute(
+                "INSERT INTO maintain_plan_prescription_mappings VALUES (?, ?, ?, ?, ?, ?)",
+                (mapping.mapping_id, mapping.prescription_snapshot_ref,
+                 mapping.actual_session_ref, mapping.resolution_method.value,
+                 PAYLOAD_SCHEMA_VERSION, serialize_contract(mapping)))
+            connection.execute(
+                "INSERT INTO maintain_plan_matching_results VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (resolved.matching_result_id, resolved.status.value, mapping.mapping_id,
+                 resolved.policy.policy_id, resolved.policy.policy_version,
+                 PAYLOAD_SCHEMA_VERSION, serialize_contract(resolved)))
+            connection.commit()
+            return mapping
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+
     def _decode_prescription_mapping_row(self, row: sqlite3.Row) -> PrescriptionMapping:
         if row["payload_schema_version"] != PAYLOAD_SCHEMA_VERSION:
             raise ValueError("unsupported stored MAINTAIN_PLAN payload schema version")
