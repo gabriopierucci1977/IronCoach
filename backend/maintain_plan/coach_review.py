@@ -24,6 +24,7 @@ class CoachReview:
     candidate_details: tuple[dict[str, str], ...] = ()
     saved_pair: CandidatePair | None = None
     evaluation_message: str | None = None
+    suspended_evaluations: tuple[tuple[CandidatePair, str], ...] = ()
 
 
 def _details(decision, snapshots, sessions) -> tuple[dict[str, str], ...]:
@@ -90,6 +91,7 @@ def review_subject(repository: MaintainPlanRepository, subject_ref: str,
     sessions_by_id = {item.session_id: item for item in sessions_all}
     # A mapping is committed before its evaluation. Recover that second step on
     # every later visit, making a process interruption safe and retryable.
+    suspended = []
     for mapping in mappings:
         snapshot = snapshots_by_id.get(mapping.prescription_snapshot_ref)
         session = sessions_by_id.get(mapping.actual_session_ref)
@@ -98,12 +100,18 @@ def review_subject(repository: MaintainPlanRepository, subject_ref: str,
         evaluation_id = _stable_id("evaluation", snapshot.prescription_snapshot_id,
                                    session.session_id)
         if repository.get_execution_evaluation(evaluation_id) is None:
+            pair = CandidatePair(snapshot.prescription_snapshot_id, session.session_id)
+            if session.source_conflicts:
+                suspended.append((pair,
+                    "Valutazione ancora da chiarire: l’attività contiene dati in conflitto."))
+                continue
             scope = validate_runtime_matching_scope(subject_ref, (), ())
             decision = decide_runtime_matching(scope)
             evaluation, pair, message = _evaluate_saved(
                 repository, snapshot, session, mapping, now or datetime.now(timezone.utc))
             return CoachReview(decision, evaluation, saved_pair=pair,
-                               evaluation_message=message)
+                               evaluation_message=message,
+                               suspended_evaluations=tuple(suspended))
     mapped_prescriptions = {item.prescription_snapshot_ref for item in mappings}
     mapped_sessions = {item.actual_session_ref for item in mappings}
     snapshots = tuple(item for item in snapshots_all
@@ -114,10 +122,21 @@ def review_subject(repository: MaintainPlanRepository, subject_ref: str,
     decision = decide_runtime_matching(scope)
     details = _details(decision, snapshots, sessions)
     if decision.status is not DecisionStatus.MATCHED or decision.selected_pair is None:
-        return CoachReview(decision, candidate_details=details)
+        return CoachReview(decision, candidate_details=details,
+                           suspended_evaluations=tuple(suspended))
 
     pair = decision.selected_pair
     timestamp = now or datetime.now(timezone.utc)
+    snapshot = next(item for item in snapshots
+                    if item.prescription_snapshot_id == pair.prescription_snapshot_id)
+    session = next(item for item in sessions if item.session_id == pair.session_id)
+    # A canonical source conflict may affect the predicates used by automatic
+    # matching. It must be clarified before any automatic mapping is written.
+    if session.source_conflicts:
+        suspended.append((pair,
+            "Abbinamento automatico sospeso: l’attività contiene dati in conflitto."))
+        return CoachReview(decision, candidate_details=details,
+                           suspended_evaluations=tuple(suspended))
     mapping = persist_runtime_matching_decision(
         repository, scope, decision,
         mapping_id=_stable_id("mapping", pair.prescription_snapshot_id, pair.session_id),
@@ -125,12 +144,10 @@ def review_subject(repository: MaintainPlanRepository, subject_ref: str,
         provenance={"source": "coach-review"},
     )
     assert mapping is not None
-    snapshot = next(item for item in snapshots
-                    if item.prescription_snapshot_id == pair.prescription_snapshot_id)
-    session = next(item for item in sessions if item.session_id == pair.session_id)
     evaluation, saved_pair, message = _evaluate_saved(
         repository, snapshot, session, mapping, timestamp)
-    return CoachReview(decision, evaluation, details, saved_pair, message)
+    return CoachReview(decision, evaluation, details, saved_pair, message,
+                       tuple(suspended))
 
 
 def resolve_coach_choice(repository: MaintainPlanRepository, subject_ref: str,
@@ -182,6 +199,10 @@ def resolve_database_choice(database_path: str, subject_ref: str,
 def format_coach_review(review: CoachReview) -> str:
     decision = review.decision
     lines = ["MAINTAIN PLAN — REVISIONE COACH", f"Esito confronto: {decision.status.value}"]
+    for pair, message in review.suspended_evaluations:
+        lines.append(
+            f"Attività sospesa: {pair.prescription_snapshot_id} ← {pair.session_id}. {message}"
+        )
     for candidate in decision.candidates:
         lines.append(
             f"Possibile corrispondenza: {candidate.prescription_snapshot_id} ← {candidate.session_id}"

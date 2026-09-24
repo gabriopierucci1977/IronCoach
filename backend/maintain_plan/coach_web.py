@@ -27,6 +27,11 @@ def render_page(subject_ref: str = "", *, review=None, message: str = "") -> str
         body.append(f'<p class="message">{escape(message)}</p>')
     if review is not None:
         decision = review.decision
+        for pair, suspended_message in review.suspended_evaluations:
+            body.append(
+                '<section class="warning"><strong>Attività sospesa:</strong> '
+                f'{escape(pair.prescription_snapshot_id)} ← {escape(pair.session_id)}<br>'
+                f'{escape(suspended_message)}</section>')
         body.append(f"<h2>Esito: {escape(decision.status.value)}</h2>")
         if review.saved_pair is not None:
             pair = review.saved_pair
