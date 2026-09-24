@@ -188,3 +188,24 @@ def test_suspended_conflict_does_not_block_a_new_independent_review(tmp_path):
     assert "Attività sospesa:</strong> snapshot-1 ← session-1" in page
     assert "Valutazione ancora da chiarire" in page
     assert "Corrispondenza salvata:</strong> snapshot-2 ← session-2" in page
+
+    # Reopening the same archive must keep skipping the deliberately suspended
+    # evaluation instead of returning early or re-evaluating either mapping.
+    for _ in range(2):
+        repeated = review_subject(repository, "athlete-1", now=later)
+        repeated_page = render_page("athlete-1", review=repeated)
+        assert repeated.evaluation is None
+        assert any(pair.session_id == "session-1"
+                   for pair, _ in repeated.suspended_evaluations)
+        assert "Attività sospesa:</strong> snapshot-1 ← session-1" in repeated_page
+
+    with sqlite3.connect(repository.database_path) as connection:
+        assert connection.execute(
+            "SELECT count(*) FROM maintain_plan_execution_evaluations "
+            "WHERE actual_session_ref = 'session-1'"
+        ).fetchone()[0] == 0
+        assert connection.execute(
+            "SELECT count(*) FROM maintain_plan_execution_evaluations "
+            "WHERE actual_session_ref = 'session-2'"
+        ).fetchone()[0] == 1
+    assert len(repository.list_prescription_mappings()) == 2
