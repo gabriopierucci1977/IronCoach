@@ -8,6 +8,7 @@ from urllib.parse import parse_qs, urlparse
 from pathlib import Path
 import hmac
 import os
+import re
 import secrets
 import webbrowser
 
@@ -116,15 +117,35 @@ def _valid_action(origin: str | None, expected_origin: str, cookie: str,
             hmac.compare_digest(submitted_token, server_token))
 
 
-def make_handler(database_path: str, *, action_token: str | None = None):
+def _trusted_origins(port: int, environment=None) -> dict[str, str]:
+    """Return origins derived from the process environment, never the request."""
+    environment = os.environ if environment is None else environment
+    codespace = environment.get("CODESPACE_NAME")
+    if not codespace:
+        return {
+            f"127.0.0.1:{port}": f"http://127.0.0.1:{port}",
+            f"localhost:{port}": f"http://localhost:{port}",
+        }
+
+    forwarding_domain = environment.get(
+        "GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN", "")
+    hostname_part = re.compile(
+        r"^[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?$")
+    if (not hostname_part.fullmatch(codespace)
+            or not hostname_part.fullmatch(forwarding_domain)):
+        raise RuntimeError("Ambiente Codespaces incompleto o non valido.")
+    host = f"{codespace}-{port}.{forwarding_domain}".lower()
+    return {host: f"https://{host}"}
+
+
+def make_handler(database_path: str, *, action_token: str | None = None,
+                 environment=None):
     token = action_token or secrets.token_urlsafe(32)
+    environment = dict(os.environ if environment is None else environment)
     class CoachHandler(BaseHTTPRequestHandler):
         def _trusted_request_origin(self) -> str | None:
             port = self.server.server_address[1]
-            allowed = {
-                f"127.0.0.1:{port}": f"http://127.0.0.1:{port}",
-                f"localhost:{port}": f"http://localhost:{port}",
-            }
+            allowed = _trusted_origins(port, environment)
             return allowed.get(self.headers.get("Host", ""))
 
         def _reject_untrusted_host(self) -> bool:
@@ -143,7 +164,14 @@ def make_handler(database_path: str, *, action_token: str | None = None):
             self.send_response(status)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Content-Length", str(len(payload)))
-            self.send_header("Set-Cookie", f"ironcoach_action={token}; SameSite=Strict; HttpOnly")
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Content-Security-Policy", "frame-ancestors 'none'")
+            self.send_header("X-Frame-Options", "DENY")
+            secure = ("; Secure" if self._trusted_request_origin().startswith(
+                "https://") else "")
+            self.send_header(
+                "Set-Cookie",
+                f"ironcoach_action={token}; SameSite=Strict; HttpOnly{secure}")
             self.end_headers()
             self.wfile.write(payload)
 
@@ -218,6 +246,8 @@ def configured_database_path(project_root: str | Path | None = None) -> str:
 def run(open_browser: bool = True) -> None:
     database_path = configured_database_path()
     server = ThreadingHTTPServer(("127.0.0.1", 8765), make_handler(database_path))
-    if open_browser:
-        webbrowser.open("http://127.0.0.1:8765/")
+    origin = next(iter(_trusted_origins(server.server_address[1]).values()))
+    print(f"Revisione coach pronta: {origin}")
+    if open_browser and not os.environ.get("CODESPACE_NAME"):
+        webbrowser.open(origin + "/")
     server.serve_forever()
