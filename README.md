@@ -4,6 +4,52 @@ Sistema di coaching intelligente per analisi atleta, valutazione dello stato fis
 
 Versione corrente: Beta 0.3.1 hardening candidate
 
+## Primo percorso coach MAINTAIN_PLAN (Beta 0.4)
+
+Dopo aver abilitato la cattura con le variabili `IRONCOACH_MAINTAIN_PLAN_*`
+di `.env.example` ed eseguito normalmente IronCoach, le attività Garmin lette
+dal `ContextBuilder` vengono trasformate in sessioni MAINTAIN_PLAN. Il runtime
+attuale **non importa ancora attività Strava**: la presenza del normalizzatore
+Strava non equivale a una sorgente Strava collegata e questa schermata non la
+presenta come tale.
+
+Per provarlo senza terminale, fare doppio clic su `Avvia revisione coach.pyw`
+in Windows oppure su `Avvia revisione coach.sh` in macOS/Linux (se il sistema
+chiede cosa fare, scegliere **Esegui**). Si apre nel browser una pagina locale:
+inserire l'ID atleta e premere
+**Esamina**. In alternativa resta disponibile il comando:
+
+```bash
+python -m backend.main --maintain-plan-review ID_ATLETA
+```
+
+Il comando è **di sola consultazione**: non salva abbinamenti né valutazioni.
+Per confermare e salvare una proposta usare la pagina browser avviata con
+uno dei file `Avvia revisione coach`.
+
+Una sola corrispondenza globale affidabile viene proposta; viene salvata e
+valutata soltanto quando il coach preme il pulsante di conferma. In quel
+momento IronCoach rilegge l'intero archivio dell'atleta. La valutazione può
+essere `IN_LINE`, `PARTIALLY_IN_LINE`, `DIFFERENT` o `INSUFFICIENT_DATA`.
+Più candidati vengono mostrati e sottoposti al coach,
+senza scegliere per ordine o somiglianza. Con zero candidati, dati incompleti
+o corrotti, il comando non dichiara mai automaticamente saltata la seduta.
+
+### Esempio concreto
+
+Con due corse compatibili vedrai due schede, per esempio:
+
+```text
+Quale attività corrisponde all’allenamento previsto?
+Previsto: snapshot-10   Attività: garmin-session-42
+Previsto: snapshot-10   Attività: garmin-session-43
+```
+
+Puoi scegliere **Conferma questa corrispondenza**, oppure **Non lo so: non
+salvare nulla**. La conferma viene salvata nel mapping con metodo
+`ATHLETE_CONFIRMATION` e attore `coach`; subito dopo la stessa pagina mostra
+la conseguenza sul piano. Se non scegli, il database non viene modificato.
+
 Architettura
 
 IronCoach utilizza una pipeline modulare:
