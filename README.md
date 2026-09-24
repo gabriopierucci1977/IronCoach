@@ -59,6 +59,11 @@ Poi, nel terminale del Codespace:
    stampa `Revisione pronta` soltanto se, per quello stesso atleta, trova almeno
    una prescrizione MAINTAIN_PLAN e un'attività Garmin acquisita; altrimenti
    indica precisamente quale dei due elementi manca e non avvia la pagina.
+   In alternativa, eseguire `./Avvia\ revisione\ coach.sh` senza argomenti
+   (anche con doppio clic): si apre la pagina iniziale e il medesimo controllo
+   viene eseguito dopo che il coach inserisce l'ID. Finché piano e attività non
+   sono entrambi presenti, la pagina indica cosa manca e non dichiara pronta la
+   revisione.
 4. Aprire **Porte**, lasciare la porta `8765` su **Privata** e scegliere
    **Apri nel browser**. Inserire come ID atleta il `record_id` del profilo
    atleta Airtable (il valore `source_id` mostrato dal runtime).

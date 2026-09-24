@@ -1,8 +1,10 @@
 from dataclasses import replace
 from datetime import timedelta
-import sqlite3
 import http.client
 from http.server import ThreadingHTTPServer
+from pathlib import Path
+import sqlite3
+import subprocess
 from threading import Thread
 from urllib.parse import urlencode
 
@@ -128,6 +130,62 @@ def test_browser_page_offers_every_candidate_and_a_no_write_exit(tmp_path):
     assert page.count("Conferma questa corrispondenza") == 2
     assert "Non lo so: non salvare nulla" in page
     assert repository.list_prescription_mappings() == ()
+
+
+def test_browser_checks_readiness_after_subject_is_entered(tmp_path):
+    repository = MaintainPlanRepository(tmp_path / "plan-only.db")
+    repository.create_prescription_snapshot(RUN_PRESCRIPTION)
+    server = ThreadingHTTPServer(
+        ("127.0.0.1", 0), make_handler(str(repository.database_path)))
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    host, port = server.server_address
+    try:
+        connection = http.client.HTTPConnection(host, port)
+        connection.request("GET", "/")
+        initial = connection.getresponse()
+        initial_page = initial.read().decode()
+        assert initial.status == 200
+        assert "ID atleta" in initial_page
+        assert "Revisione pronta" not in initial_page
+
+        connection.request("GET", "/?subject=athlete-1")
+        checked = connection.getresponse()
+        checked_page = checked.read().decode()
+        assert checked.status == 200
+        assert "Revisione non pronta per athlete-1" in checked_page
+        assert "un’attività Garmin acquisita" in checked_page
+        assert "Esito:" not in checked_page
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join()
+
+
+def test_shell_launcher_supports_no_argument_and_athlete_mode(tmp_path):
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    calls = tmp_path / "calls"
+    python = fake_bin / "python"
+    python.write_text(
+        "#!/bin/sh\nprintf '%s\\n' \"$#:$*\" >> \"$CALLS\"\n",
+        encoding="utf-8",
+    )
+    python.chmod(0o755)
+    environment = {
+        "PATH": f"{fake_bin}:/usr/bin:/bin",
+        "CALLS": str(calls),
+    }
+    launcher = str(Path(__file__).parents[2] / "Avvia revisione coach.sh")
+
+    subprocess.run([launcher], env=environment, check=True)
+    subprocess.run([launcher, "athlete-1"], env=environment, check=True)
+
+    no_argument, with_athlete = calls.read_text(encoding="utf-8").splitlines()
+    assert no_argument.startswith("2:-c ")
+    assert no_argument.endswith("run()")
+    assert with_athlete.startswith("3:-c ")
+    assert with_athlete.endswith(" athlete-1")
 
 
 def test_saved_match_with_conflicting_data_is_explicitly_not_evaluated(tmp_path):

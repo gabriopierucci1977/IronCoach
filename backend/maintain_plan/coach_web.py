@@ -181,8 +181,18 @@ def make_handler(database_path: str, *, action_token: str | None = None,
                 return
             subject = parse_qs(urlparse(self.path).query).get("subject", [""])[0]
             try:
-                review = review_database(database_path, subject) if subject else None
-                self._send(render_page(subject, review=review, action_token=token))
+                if not subject:
+                    self._send(render_page(action_token=token))
+                    return
+                readiness = database_review_readiness(database_path, subject)
+                if not readiness.ready:
+                    self._send(render_page(
+                        subject, message=readiness.message(), action_token=token))
+                    return
+                review = review_database(database_path, subject)
+                self._send(render_page(
+                    subject, review=review, message=readiness.message(),
+                    action_token=token))
             except Exception as error:
                 self._send(render_page(subject, message=f"Dati non utilizzabili: {error}"), 400)
 
@@ -253,7 +263,9 @@ def run(open_browser: bool = True, subject_ref: str | None = None) -> None:
             raise RuntimeError(readiness.message())
     server = ThreadingHTTPServer(("127.0.0.1", 8765), make_handler(database_path))
     origin = next(iter(_trusted_origins(server.server_address[1]).values()))
-    print(f"Revisione coach pronta: {origin}")
+    label = ("Revisione coach pronta" if subject_ref is not None
+             else "Pagina coach pronta per il controllo atleta")
+    print(f"{label}: {origin}")
     if open_browser and not os.environ.get("CODESPACE_NAME"):
         webbrowser.open(origin + "/")
     server.serve_forever()
