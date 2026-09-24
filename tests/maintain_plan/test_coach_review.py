@@ -124,6 +124,7 @@ def test_saved_match_with_conflicting_data_is_explicitly_not_evaluated(tmp_path)
     assert repository.list_prescription_mappings() == ()
     assert review.evaluation is None
     assert "Abbinamento automatico sospeso" in page
+    assert "Conferma questa corrispondenza" not in page
     assert "piano valutato" not in page
 
 
@@ -313,6 +314,30 @@ def test_browser_get_is_read_only_and_cross_origin_post_is_rejected(tmp_path):
     host, port = server.server_address
     try:
         connection = http.client.HTTPConnection(host, port)
+        connection.request("GET", "/?subject=athlete-1",
+                           headers={"Host": "evil.example"})
+        foreign_get = connection.getresponse()
+        foreign_page = foreign_get.read().decode()
+        assert foreign_get.status == 400
+        assert token not in foreign_page
+        assert foreign_get.getheader("Set-Cookie") is None
+        assert repository.list_prescription_mappings() == ()
+
+        foreign_payload = urlencode({"subject": "athlete-1",
+                                     "prescription": "snapshot-1",
+                                     "session": "session-1",
+                                     "action_token": token})
+        connection.request("POST", "/", foreign_payload, {
+            "Host": "evil.example",
+            "Origin": "http://evil.example",
+            "Cookie": f"ironcoach_action={token}",
+            "Content-Type": "application/x-www-form-urlencoded",
+        })
+        foreign_post = connection.getresponse()
+        foreign_post.read()
+        assert foreign_post.status == 400
+        assert repository.list_prescription_mappings() == ()
+
         connection.request("GET", "/?subject=athlete-1")
         response = connection.getresponse()
         page = response.read().decode()
@@ -414,3 +439,30 @@ def test_cli_help_declares_review_read_only_and_points_to_browser():
 
     assert "Consulta senza scrivere" in help_text
     assert "pagina browser coach" in help_text
+
+
+def test_existing_evaluation_is_found_by_mapping_not_generated_id(tmp_path):
+    repository = _repository(tmp_path)
+    mapping = build_mapping(
+        RUN_PRESCRIPTION, RUN_SESSION, mapping_id="external-mapping",
+        created_at=NOW, resolution_method=ResolutionMethod.AUTOMATIC)
+    repository.create_prescription_mapping(mapping)
+    external = coach_review_module.evaluate(
+        RUN_PRESCRIPTION, RUN_SESSION, mapping,
+        evaluation_id="evaluation-created-elsewhere", evaluated_at=NOW)
+    repository.create_execution_evaluation(external)
+
+    review = review_subject(repository, "athlete-1", now=NOW)
+    page = render_page("athlete-1", review=review)
+
+    assert review.completed_evaluations == ((
+        coach_review_module.CandidatePair("snapshot-1", "session-1"), external),)
+    assert review.suspended_evaluations == ()
+    assert "Riprova valutazione" not in page
+    retried = retry_saved_evaluation(
+        repository, "athlete-1", "snapshot-1", "session-1", now=NOW)
+    assert retried.evaluation == external
+    with sqlite3.connect(repository.database_path) as connection:
+        assert connection.execute(
+            "SELECT count(*) FROM maintain_plan_execution_evaluations"
+        ).fetchone()[0] == 1

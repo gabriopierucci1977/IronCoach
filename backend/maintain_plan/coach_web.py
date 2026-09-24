@@ -72,7 +72,10 @@ def render_page(subject_ref: str = "", *, review=None, message: str = "",
             else:
                 body.append("<p><strong>Quale attività corrisponde all’allenamento previsto?</strong> "
                             "Scegli soltanto se lo riconosci. Nessuna seduta è considerata saltata.</p>")
-            for index, candidate in enumerate(decision.candidates):
+            suspended_pairs = {pair for pair, _ in review.suspended_evaluations}
+            for candidate in decision.candidates:
+                if candidate in suspended_pairs:
+                    continue
                 detail = _artifact_details(review, candidate.prescription_snapshot_id,
                                            candidate.session_id)
                 body.append(
@@ -117,6 +120,25 @@ def _valid_action(origin: str | None, expected_origin: str, cookie: str,
 def make_handler(database_path: str, *, action_token: str | None = None):
     token = action_token or secrets.token_urlsafe(32)
     class CoachHandler(BaseHTTPRequestHandler):
+        def _trusted_request_origin(self) -> str | None:
+            port = self.server.server_address[1]
+            allowed = {
+                f"127.0.0.1:{port}": f"http://127.0.0.1:{port}",
+                f"localhost:{port}": f"http://localhost:{port}",
+            }
+            return allowed.get(self.headers.get("Host", ""))
+
+        def _reject_untrusted_host(self) -> bool:
+            if self._trusted_request_origin() is not None:
+                return False
+            payload = b"Indirizzo locale non valido."
+            self.send_response(400)
+            self.send_header("Content-Type", "text/plain; charset=utf-8")
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+            return True
+
         def _send(self, page: str, status: int = 200):
             payload = page.encode("utf-8")
             self.send_response(status)
@@ -127,6 +149,8 @@ def make_handler(database_path: str, *, action_token: str | None = None):
             self.wfile.write(payload)
 
         def do_GET(self):
+            if self._reject_untrusted_host():
+                return
             subject = parse_qs(urlparse(self.path).query).get("subject", [""])[0]
             try:
                 review = review_database(database_path, subject) if subject else None
@@ -135,11 +159,13 @@ def make_handler(database_path: str, *, action_token: str | None = None):
                 self._send(render_page(subject, message=f"Dati non utilizzabili: {error}"), 400)
 
         def do_POST(self):
+            if self._reject_untrusted_host():
+                return
             length = int(self.headers.get("Content-Length", "0"))
             values = parse_qs(self.rfile.read(length).decode("utf-8"))
             subject = values.get("subject", [""])[0]
             try:
-                expected_origin = f"http://{self.headers.get('Host', '')}"
+                expected_origin = self._trusted_request_origin()
                 if not _valid_action(
                         self.headers.get("Origin"), expected_origin,
                         self.headers.get("Cookie", ""),

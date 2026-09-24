@@ -61,7 +61,7 @@ def _evaluate_saved(repository, snapshot, session, mapping, timestamp):
         )
     evaluation_id = _stable_id("evaluation", snapshot.prescription_snapshot_id,
                                session.session_id)
-    existing = repository.get_execution_evaluation(evaluation_id)
+    existing = repository.get_execution_evaluation_by_mapping(mapping.mapping_id)
     if existing is not None:
         return existing, pair, None
     try:
@@ -98,9 +98,8 @@ def review_subject(repository: MaintainPlanRepository, subject_ref: str,
         session = sessions_by_id.get(mapping.actual_session_ref)
         if snapshot is None or session is None:
             continue
-        evaluation_id = _stable_id("evaluation", snapshot.prescription_snapshot_id,
-                                   session.session_id)
-        existing_evaluation = repository.get_execution_evaluation(evaluation_id)
+        existing_evaluation = repository.get_execution_evaluation_by_mapping(
+            mapping.mapping_id)
         if existing_evaluation is not None:
             completed.append((CandidatePair(
                 snapshot.prescription_snapshot_id, session.session_id),
