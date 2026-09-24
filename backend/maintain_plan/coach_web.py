@@ -28,7 +28,13 @@ def render_page(subject_ref: str = "", *, review=None, message: str = "") -> str
     if review is not None:
         decision = review.decision
         body.append(f"<h2>Esito: {escape(decision.status.value)}</h2>")
-        if decision.status is DecisionStatus.CONFIRMATION_REQUIRED:
+        if review.saved_pair is not None:
+            pair = review.saved_pair
+            body.append(f"<p><strong>Corrispondenza salvata:</strong> "
+                        f"{escape(pair.prescription_snapshot_id)} ← {escape(pair.session_id)}</p>")
+            if review.evaluation_message:
+                body.append(f'<p class="warning">{escape(review.evaluation_message)}</p>')
+        elif decision.status is DecisionStatus.CONFIRMATION_REQUIRED:
             body.append("<p><strong>Quale attività corrisponde all’allenamento previsto?</strong> "
                         "Scegli soltanto se lo riconosci. Nessuna seduta è considerata saltata.</p>")
             for index, candidate in enumerate(decision.candidates):
@@ -47,10 +53,6 @@ def render_page(subject_ref: str = "", *, review=None, message: str = "") -> str
                     f'<b>Sorgente:</b> {escape(detail.get("source", ""))}<br>'
                     '<button>Conferma questa corrispondenza</button></form>')
             body.append('<p><a href="/">Non lo so: non salvare nulla</a></p>')
-        elif decision.status is DecisionStatus.MATCHED and decision.selected_pair:
-            pair = decision.selected_pair
-            body.append(f"<p><strong>Corrispondenza salvata:</strong> "
-                        f"{escape(pair.prescription_snapshot_id)} ← {escape(pair.session_id)}</p>")
         else:
             body.append("<p>I dati non consentono una conclusione affidabile. "
                         "Non è stato segnato alcun allenamento come saltato.</p>")
@@ -59,7 +61,7 @@ def render_page(subject_ref: str = "", *, review=None, message: str = "") -> str
                         f"<p>Copertura: {escape(review.evaluation.evaluation_coverage.status.value)}</p>")
     style = "body{font:18px system-ui;max-width:850px;margin:40px auto;padding:0 20px}" \
             "input,button{font:inherit;padding:8px;margin:6px}.candidate{border:1px solid #bbb;padding:16px;margin:12px 0}" \
-            ".message{background:#eef8ee;padding:12px}"
+            ".message{background:#eef8ee;padding:12px}.warning{background:#fff3cd;padding:12px}"
     return "<!doctype html><html lang=it><meta charset=utf-8><title>IronCoach Coach</title>" \
            f"<style>{style}</style><body>{''.join(body)}</body></html>"
 
@@ -89,8 +91,10 @@ def make_handler(database_path: str):
             try:
                 review = resolve_database_choice(database_path, subject,
                     values.get("prescription", [""])[0], values.get("session", [""])[0])
-                self._send(render_page(subject, review=review,
-                                       message="Scelta del coach salvata e piano valutato."))
+                message = ("Scelta del coach salvata e piano valutato."
+                           if review.evaluation is not None
+                           else "Scelta del coach salvata.")
+                self._send(render_page(subject, review=review, message=message))
             except Exception as error:
                 self._send(render_page(subject, message=f"Scelta non salvata: {error}"), 400)
 

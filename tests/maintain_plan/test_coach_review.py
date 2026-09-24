@@ -1,5 +1,7 @@
 from dataclasses import replace
 
+import backend.maintain_plan.coach_review as coach_review_module
+
 from backend.maintain_plan.coach_review import (
     format_coach_review, resolve_coach_choice, review_subject,
 )
@@ -71,6 +73,8 @@ def test_coach_can_answer_ambiguity_and_get_the_evaluation(tmp_path):
                        message="Scelta del coach salvata e piano valutato.")
     assert "Scelta del coach salvata" in page
     assert f"Conseguenza sul piano: {review.evaluation.overall.value}" in page
+    assert "Corrispondenza salvata:</strong> snapshot-1 ← session-2" in page
+    assert "Conferma questa corrispondenza" not in page
 
 
 def test_browser_page_offers_every_candidate_and_a_no_write_exit(tmp_path):
@@ -83,3 +87,54 @@ def test_browser_page_offers_every_candidate_and_a_no_write_exit(tmp_path):
     assert page.count("Conferma questa corrispondenza") == 2
     assert "Non lo so: non salvare nulla" in page
     assert repository.list_prescription_mappings() == ()
+
+
+def test_saved_match_with_conflicting_data_is_explicitly_not_evaluated(tmp_path):
+    conflict = {
+        "conflict_id": "conflict-1",
+        "schema_version": "maintain-plan-source-conflict/1.0.0-draft",
+        "field_path": "components.run.quantity_observation",
+        "values": ({"value": 59, "source": "Garmin"},
+                   {"value": 60, "source": "Strava"}),
+        "provenance": {}, "captured_at": NOW,
+        "missing_fields": (), "warnings": (),
+    }
+    session = replace(RUN_SESSION, source_conflicts=(conflict,))
+    repository = _repository(tmp_path, (session,))
+
+    review = review_subject(repository, "athlete-1", now=NOW)
+    page = render_page("athlete-1", review=review,
+                       message="Scelta del coach salvata.")
+
+    assert len(repository.list_prescription_mappings()) == 1
+    assert review.evaluation is None
+    assert "Valutazione non eseguita" in page
+    assert "piano valutato" not in page
+
+
+def test_evaluation_failure_is_retried_without_duplicate_mapping(
+        tmp_path, monkeypatch):
+    repository = _repository(tmp_path)
+    original_evaluate = coach_review_module.evaluate
+    attempts = 0
+
+    def interrupted(*args, **kwargs):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise RuntimeError("interruzione simulata")
+        return original_evaluate(*args, **kwargs)
+
+    monkeypatch.setattr(coach_review_module, "evaluate", interrupted)
+
+    first = review_subject(repository, "athlete-1", now=NOW)
+    assert first.evaluation is None
+    assert "Collegamento salvato; valutazione non completata" in first.evaluation_message
+    assert len(repository.list_prescription_mappings()) == 1
+
+    retry = review_subject(repository, "athlete-1", now=NOW)
+    assert retry.evaluation is not None
+    assert retry.saved_pair.session_id == "session-1"
+    assert len(repository.list_prescription_mappings()) == 1
+    assert repository.get_execution_evaluation(retry.evaluation.evaluation_id) == retry.evaluation
+    assert attempts == 2

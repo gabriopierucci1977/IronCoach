@@ -10,7 +10,9 @@ from .execution_evaluation_service import evaluate
 from .matching_service import build_mapping
 from .models import ResolutionMethod
 from .repository import MaintainPlanRepository
-from .runtime_matching_decision import MatchingDecision, DecisionStatus, decide_runtime_matching
+from .runtime_matching_decision import (
+    CandidatePair, MatchingDecision, DecisionStatus, decide_runtime_matching,
+)
 from .runtime_matching_persistence import persist_runtime_matching_decision
 from .runtime_matching_scope import validate_runtime_matching_scope
 
@@ -20,6 +22,8 @@ class CoachReview:
     decision: MatchingDecision
     evaluation: object | None = None
     candidate_details: tuple[dict[str, str], ...] = ()
+    saved_pair: CandidatePair | None = None
+    evaluation_message: str | None = None
 
 
 def _details(decision, snapshots, sessions) -> tuple[dict[str, str], ...]:
@@ -46,6 +50,32 @@ def _stable_id(kind: str, prescription_id: str, session_id: str) -> str:
     return f"coach-{kind}-{uuid5(NAMESPACE_URL, f'ironcoach:{kind}:{prescription_id}:{session_id}')}"
 
 
+def _evaluate_saved(repository, snapshot, session, mapping, timestamp):
+    """Finish an evaluation idempotently after its mapping has been committed."""
+    pair = CandidatePair(snapshot.prescription_snapshot_id, session.session_id)
+    if session.source_conflicts:
+        return None, pair, (
+            "Valutazione non eseguita: l’attività contiene dati in conflitto "
+            "che devono essere chiariti dal coach."
+        )
+    evaluation_id = _stable_id("evaluation", snapshot.prescription_snapshot_id,
+                               session.session_id)
+    existing = repository.get_execution_evaluation(evaluation_id)
+    if existing is not None:
+        return existing, pair, None
+    try:
+        value = evaluate(snapshot, session, mapping, evaluation_id=evaluation_id,
+                         evaluated_at=timestamp,
+                         provenance={"source": "coach-review"})
+        repository.create_execution_evaluation(value)
+        return value, pair, None
+    except Exception as error:
+        return None, pair, (
+            "Collegamento salvato; valutazione non completata. "
+            f"Riprova la revisione: {type(error).__name__}: {error}"
+        )
+
+
 def review_subject(repository: MaintainPlanRepository, subject_ref: str,
                    *, now: datetime | None = None) -> CoachReview:
     """Match every still-unmapped persisted artifact, then evaluate a unique pair.
@@ -54,11 +84,31 @@ def review_subject(repository: MaintainPlanRepository, subject_ref: str,
     are returned without a write: absence in imported data is not non-completion.
     """
     mappings = repository.list_prescription_mappings()
+    snapshots_all = repository.list_prescription_snapshots(subject_ref)
+    sessions_all = repository.list_actual_sessions(subject_ref)
+    snapshots_by_id = {item.prescription_snapshot_id: item for item in snapshots_all}
+    sessions_by_id = {item.session_id: item for item in sessions_all}
+    # A mapping is committed before its evaluation. Recover that second step on
+    # every later visit, making a process interruption safe and retryable.
+    for mapping in mappings:
+        snapshot = snapshots_by_id.get(mapping.prescription_snapshot_ref)
+        session = sessions_by_id.get(mapping.actual_session_ref)
+        if snapshot is None or session is None:
+            continue
+        evaluation_id = _stable_id("evaluation", snapshot.prescription_snapshot_id,
+                                   session.session_id)
+        if repository.get_execution_evaluation(evaluation_id) is None:
+            scope = validate_runtime_matching_scope(subject_ref, (), ())
+            decision = decide_runtime_matching(scope)
+            evaluation, pair, message = _evaluate_saved(
+                repository, snapshot, session, mapping, now or datetime.now(timezone.utc))
+            return CoachReview(decision, evaluation, saved_pair=pair,
+                               evaluation_message=message)
     mapped_prescriptions = {item.prescription_snapshot_ref for item in mappings}
     mapped_sessions = {item.actual_session_ref for item in mappings}
-    snapshots = tuple(item for item in repository.list_prescription_snapshots(subject_ref)
+    snapshots = tuple(item for item in snapshots_all
                       if item.prescription_snapshot_id not in mapped_prescriptions)
-    sessions = tuple(item for item in repository.list_actual_sessions(subject_ref)
+    sessions = tuple(item for item in sessions_all
                      if item.session_id not in mapped_sessions)
     scope = validate_runtime_matching_scope(subject_ref, snapshots, sessions)
     decision = decide_runtime_matching(scope)
@@ -78,15 +128,9 @@ def review_subject(repository: MaintainPlanRepository, subject_ref: str,
     snapshot = next(item for item in snapshots
                     if item.prescription_snapshot_id == pair.prescription_snapshot_id)
     session = next(item for item in sessions if item.session_id == pair.session_id)
-    if session.source_conflicts:
-        return CoachReview(decision, candidate_details=details)
-    evaluation_id = _stable_id("evaluation", pair.prescription_snapshot_id, pair.session_id)
-    existing = repository.get_execution_evaluation(evaluation_id)
-    if existing is None:
-        existing = evaluate(snapshot, session, mapping, evaluation_id=evaluation_id,
-                            evaluated_at=timestamp, provenance={"source": "coach-review"})
-        repository.create_execution_evaluation(existing)
-    return CoachReview(decision, existing, details)
+    evaluation, saved_pair, message = _evaluate_saved(
+        repository, snapshot, session, mapping, timestamp)
+    return CoachReview(decision, evaluation, details, saved_pair, message)
 
 
 def resolve_coach_choice(repository: MaintainPlanRepository, subject_ref: str,
@@ -119,14 +163,9 @@ def resolve_coach_choice(repository: MaintainPlanRepository, subject_ref: str,
         actor="coach", provenance={"source": "coach-review", "answer": "selected"},
     )
     repository.create_prescription_mapping(mapping)
-    if session.source_conflicts:
-        return CoachReview(decision, candidate_details=details)
-    evaluation_id = _stable_id("evaluation", prescription_id, session_id)
-    evaluation = evaluate(snapshot, session, mapping, evaluation_id=evaluation_id,
-                          evaluated_at=timestamp,
-                          provenance={"source": "coach-review", "answer": "selected"})
-    repository.create_execution_evaluation(evaluation)
-    return CoachReview(decision, evaluation, details)
+    evaluation, saved_pair, message = _evaluate_saved(
+        repository, snapshot, session, mapping, timestamp)
+    return CoachReview(decision, evaluation, details, saved_pair, message)
 
 
 def review_database(database_path: str, subject_ref: str) -> CoachReview:
@@ -147,11 +186,13 @@ def format_coach_review(review: CoachReview) -> str:
         lines.append(
             f"Possibile corrispondenza: {candidate.prescription_snapshot_id} ← {candidate.session_id}"
         )
-    if decision.status is DecisionStatus.MATCHED and decision.selected_pair:
-        pair = decision.selected_pair
+    if review.saved_pair is not None:
+        pair = review.saved_pair
         lines.append(f"Corrispondenza affidabile salvata: {pair.prescription_snapshot_id} ← {pair.session_id}")
-        if review.evaluation is None:
-            lines.append("Valutazione sospesa: i dati contengono conflitti da risolvere con il coach.")
+        if review.evaluation_message:
+            lines.append(review.evaluation_message)
+        elif review.evaluation is None:
+            lines.append("Valutazione non completata.")
         else:
             lines.append(f"Conseguenza sul piano: {review.evaluation.overall.value}")
             lines.append(f"Copertura valutazione: {review.evaluation.evaluation_coverage.status.value}")
