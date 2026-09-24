@@ -215,7 +215,13 @@ def format_coach_review(review: CoachReview) -> str:
         elif review.evaluation is None:
             lines.append("Valutazione non completata.")
         else:
-            lines.append(f"Conseguenza sul piano: {review.evaluation.overall.value}")
+            if review.evaluation.overall is None:
+                lines.append(
+                    "Conseguenza sul piano: giudizio complessivo non disponibile "
+                    "per questa prescrizione."
+                )
+            else:
+                lines.append(f"Conseguenza sul piano: {review.evaluation.overall.value}")
             lines.append(f"Copertura valutazione: {review.evaluation.evaluation_coverage.status.value}")
     elif decision.status is DecisionStatus.CONFIRMATION_REQUIRED:
         lines.append("Scelta richiesta al coach: quale attività corrisponde all'allenamento previsto?")

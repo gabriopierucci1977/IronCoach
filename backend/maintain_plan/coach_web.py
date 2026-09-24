@@ -62,7 +62,10 @@ def render_page(subject_ref: str = "", *, review=None, message: str = "") -> str
             body.append("<p>I dati non consentono una conclusione affidabile. "
                         "Non è stato segnato alcun allenamento come saltato.</p>")
         if review.evaluation is not None:
-            body.append(f"<h2>Conseguenza sul piano: {escape(review.evaluation.overall.value)}</h2>"
+            overall = review.evaluation.overall
+            consequence = ("giudizio complessivo non disponibile per questa prescrizione"
+                           if overall is None else overall.value)
+            body.append(f"<h2>Conseguenza sul piano: {escape(consequence)}</h2>"
                         f"<p>Copertura: {escape(review.evaluation.evaluation_coverage.status.value)}</p>")
     style = "body{font:18px system-ui;max-width:850px;margin:40px auto;padding:0 20px}" \
             "input,button{font:inherit;padding:8px;margin:6px}.candidate{border:1px solid #bbb;padding:16px;margin:12px 0}" \

@@ -9,7 +9,7 @@ from backend.maintain_plan.coach_review import (
 )
 from backend.maintain_plan.coach_web import render_page
 from backend.maintain_plan.matching_service import build_mapping
-from backend.maintain_plan.models import ResolutionMethod
+from backend.maintain_plan.models import Requiredness, ResolutionMethod
 from backend.maintain_plan.repository import MaintainPlanRepository
 from backend.maintain_plan.runtime_matching_decision import DecisionStatus
 from tests.maintain_plan.fixtures import NOW, RUN_PRESCRIPTION, RUN_SESSION
@@ -178,6 +178,8 @@ def test_suspended_conflict_does_not_block_a_new_independent_review(tmp_path):
     assert review.saved_pair.session_id == "session-2"
     assert review.evaluation is not None
     assert len(repository.list_prescription_mappings()) == 2
+
+
     with sqlite3.connect(repository.database_path) as connection:
         assert connection.execute(
             "SELECT count(*) FROM maintain_plan_execution_evaluations "
@@ -209,3 +211,40 @@ def test_suspended_conflict_does_not_block_a_new_independent_review(tmp_path):
             "WHERE actual_session_ref = 'session-2'"
         ).fetchone()[0] == 1
     assert len(repository.list_prescription_mappings()) == 2
+
+def test_evaluation_without_overall_is_saved_and_rendered_without_inventing_outcome(
+        tmp_path):
+    optional_component = replace(
+        RUN_PRESCRIPTION.components[0], requiredness=Requiredness.OPTIONAL)
+    optional_snapshot = replace(RUN_PRESCRIPTION, components=(optional_component,))
+    repository = MaintainPlanRepository(tmp_path / "optional-review.db")
+    repository.create_prescription_snapshot(optional_snapshot)
+    repository.create_actual_session(RUN_SESSION)
+
+    review = review_subject(repository, "athlete-1", now=NOW)
+
+    assert review.evaluation is not None
+    assert review.evaluation.overall is None
+    assert repository.get_execution_evaluation(
+        review.evaluation.evaluation_id) == review.evaluation
+    page = render_page("athlete-1", review=review)
+    text_summary = format_coach_review(review)
+    expected = "giudizio complessivo non disponibile per questa prescrizione"
+    assert expected in page
+    assert expected in text_summary
+    assert "Conseguenza sul piano: None" not in page
+    assert "Conseguenza sul piano: None" not in text_summary
+
+    # A later read leaves both persisted records intact and does not duplicate
+    # the evaluation even though it has no overall status.
+    repeated = review_subject(repository, "athlete-1", now=NOW)
+    assert repeated.evaluation is None
+    with sqlite3.connect(repository.database_path) as connection:
+        assert connection.execute(
+            "SELECT count(*) FROM maintain_plan_prescription_mappings"
+        ).fetchone()[0] == 1
+        assert connection.execute(
+            "SELECT count(*) FROM maintain_plan_execution_evaluations"
+        ).fetchone()[0] == 1
+    assert repository.get_execution_evaluation(
+        review.evaluation.evaluation_id) == review.evaluation
