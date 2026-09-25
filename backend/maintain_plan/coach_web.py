@@ -113,7 +113,12 @@ def _valid_action(origin: str | None, expected_origin: str, cookie: str,
                   submitted_token: str, server_token: str) -> bool:
     cookies = dict(item.strip().split("=", 1) for item in cookie.split(";") if "=" in item)
     cookie_token = cookies.get("ironcoach_action", "")
-    return (origin == expected_origin and
+    allowed_origins = {expected_origin}
+    if expected_origin.startswith("https://"):
+        # Origin serialisation normally elides HTTPS's default port, while
+        # clients and proxies may also send the equivalent explicit form.
+        allowed_origins.add(f"{expected_origin}:443")
+    return (origin in allowed_origins and
             hmac.compare_digest(cookie_token, server_token) and
             hmac.compare_digest(submitted_token, server_token))
 
@@ -136,7 +141,12 @@ def _trusted_origins(port: int, environment=None) -> dict[str, str]:
             or not hostname_part.fullmatch(forwarding_domain)):
         raise RuntimeError("Ambiente Codespaces incompleto o non valido.")
     host = f"{codespace}-{port}.{forwarding_domain}".lower()
-    return {host: f"https://{host}"}
+    origin = f"https://{host}"
+    # The private Codespaces proxy can preserve the explicit HTTPS port in
+    # Host even though browsers omit it when displaying the forwarded URL.
+    # Both authorities identify the same environment-derived origin; no
+    # forwarding header is needed (or trusted) to make this decision.
+    return {host: origin, f"{host}:443": origin}
 
 
 def make_handler(database_path: str, *, action_token: str | None = None,
