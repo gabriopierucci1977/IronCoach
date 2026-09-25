@@ -6,6 +6,28 @@ Versione corrente: Beta 0.3.1 hardening candidate
 
 ## Primo percorso coach MAINTAIN_PLAN (Beta 0.4)
 
+### Scenario ipotetico con attività storiche (Codespace)
+
+Quando l'archivio contiene attività Garmin ma non prescrizioni, avviare il
+percorso di prova con:
+
+```bash
+./Avvia\ scenario\ coach.sh
+```
+
+In **Porte**, mantenere la porta `8765` privata e aprirla nel browser. La pagina
+mostra le attività disponibili di nuoto, bici e corsa per
+`recO4aHGKSTexpXUC`: selezionare quelle da usare e compilare esplicitamente
+durata prevista e RPE. Questi obiettivi non sono ricavati dall'attività svolta.
+
+Il percorso legge l'archivio configurato da
+`IRONCOACH_MAINTAIN_PLAN_DATABASE_PATH`, ma scrive piano, copie delle sole
+attività scelte, abbinamenti e valutazioni nel database separato
+`<nome-base>.coach-trial.<estensione>`. Ogni nuovo scenario sostituisce soltanto quel
+database di prova; non scrive nell'archivio reale e non contatta Airtable. Il
+piano e ogni esito mostrati sono sempre etichettati come ipotetici. L'assenza
+di un'attività non viene trasformata in una seduta saltata.
+
 Dopo aver abilitato la cattura con le variabili `IRONCOACH_MAINTAIN_PLAN_*`
 di `.env.example` ed eseguito normalmente IronCoach, le attività Garmin lette
 dal `ContextBuilder` vengono trasformate in sessioni MAINTAIN_PLAN. Il runtime
