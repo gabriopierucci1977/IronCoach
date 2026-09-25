@@ -3,6 +3,7 @@ from datetime import timedelta
 import http.client
 from http.server import ThreadingHTTPServer
 from pathlib import Path
+import re
 import sqlite3
 import subprocess
 from threading import Thread
@@ -454,7 +455,9 @@ def test_browser_get_is_read_only_and_cross_origin_post_is_rejected(tmp_path):
         thread.join()
 
 
-def test_codespaces_accepts_only_forwarded_address_from_environment(tmp_path):
+@pytest.mark.parametrize("origin_has_default_port", [False, True])
+def test_codespaces_confirmation_through_forwarded_https_address(
+        tmp_path, origin_has_default_port):
     repository = _repository(tmp_path)
     environment = {
         "CODESPACE_NAME": "sturdy-space-123",
@@ -470,7 +473,7 @@ def test_codespaces_accepts_only_forwarded_address_from_environment(tmp_path):
     try:
         connection = http.client.HTTPConnection(host, port)
         connection.request("GET", "/?subject=athlete-1", headers={
-            "Host": forwarded_host,
+            "Host": f"{forwarded_host}:443",
             "X-Forwarded-Host": "attacker.example",
         })
         accepted = connection.getresponse()
@@ -481,6 +484,75 @@ def test_codespaces_accepts_only_forwarded_address_from_environment(tmp_path):
         assert accepted.getheader("X-Frame-Options") == "DENY"
         assert repository.list_prescription_mappings() == ()
 
+        action_token = re.search(
+            r'name="action_token" value="([^"]+)"', page).group(1)
+        cookie = accepted.getheader("Set-Cookie").split(";", 1)[0]
+        payload = urlencode({
+            "subject": "athlete-1",
+            "prescription": "snapshot-1",
+            "session": "session-1",
+            "action_token": action_token,
+        })
+        origin = f"https://{forwarded_host}"
+        if origin_has_default_port:
+            origin += ":443"
+        connection.request("POST", "/", payload, headers={
+            "Host": f"{forwarded_host}:443",
+            "Origin": origin,
+            "Cookie": cookie,
+            "Content-Type": "application/x-www-form-urlencoded",
+        })
+        confirmed = connection.getresponse()
+        confirmed_page = confirmed.read().decode()
+        assert confirmed.status == 200
+        assert "Corrispondenza salvata" in confirmed_page
+        assert len(repository.list_prescription_mappings()) == 1
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join()
+
+
+def test_codespaces_rejects_foreign_host_despite_forwarding_header(tmp_path):
+    repository = _repository(tmp_path)
+    environment = {
+        "CODESPACE_NAME": "sturdy-space-123",
+        "GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN": "app.github.dev",
+    }
+    server = ThreadingHTTPServer(
+        ("127.0.0.1", 0), make_handler(
+            str(repository.database_path), environment=environment))
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    host, port = server.server_address
+    forwarded_host = f"sturdy-space-123-{port}.app.github.dev"
+    try:
+        connection = http.client.HTTPConnection(host, port)
+        connection.request("GET", "/?subject=athlete-1", headers={
+            "Host": f"{forwarded_host}:443",
+        })
+        accepted = connection.getresponse()
+        page = accepted.read().decode()
+        action_token = re.search(
+            r'name="action_token" value="([^"]+)"', page).group(1)
+        cookie = accepted.getheader("Set-Cookie").split(";", 1)[0]
+        payload = urlencode({
+            "subject": "athlete-1",
+            "prescription": "snapshot-1",
+            "session": "session-1",
+            "action_token": action_token,
+        })
+        connection.request("POST", "/", payload, headers={
+            "Host": f"{forwarded_host}:443",
+            "Origin": "https://address-chosen-by-request.example",
+            "Cookie": cookie,
+            "Content-Type": "application/x-www-form-urlencoded",
+        })
+        rejected_origin = connection.getresponse()
+        rejected_origin.read()
+        assert rejected_origin.status == 403
+        assert repository.list_prescription_mappings() == ()
+
         connection.request("GET", "/?subject=athlete-1", headers={
             "Host": "address-chosen-by-request.example",
             "X-Forwarded-Host": forwarded_host,
@@ -488,6 +560,7 @@ def test_codespaces_accepts_only_forwarded_address_from_environment(tmp_path):
         rejected = connection.getresponse()
         rejected.read()
         assert rejected.status == 400
+        assert rejected.getheader("Set-Cookie") is None
         assert repository.list_prescription_mappings() == ()
     finally:
         server.shutdown()
@@ -501,6 +574,8 @@ def test_codespaces_origin_is_derived_from_trusted_environment():
         "GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN": "app.github.dev",
     }) == {
         "sturdy-space-123-8765.app.github.dev":
+            "https://sturdy-space-123-8765.app.github.dev",
+        "sturdy-space-123-8765.app.github.dev:443":
             "https://sturdy-space-123-8765.app.github.dev",
     }
 
