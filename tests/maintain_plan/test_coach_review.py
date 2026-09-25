@@ -473,7 +473,7 @@ def test_codespaces_confirmation_through_forwarded_https_address(
     try:
         connection = http.client.HTTPConnection(host, port)
         connection.request("GET", "/?subject=athlete-1", headers={
-            "Host": f"{forwarded_host}:443",
+            "Host": f"localhost:{port}",
             "X-Forwarded-Host": "attacker.example",
         })
         accepted = connection.getresponse()
@@ -497,7 +497,7 @@ def test_codespaces_confirmation_through_forwarded_https_address(
         if origin_has_default_port:
             origin += ":443"
         connection.request("POST", "/", payload, headers={
-            "Host": f"{forwarded_host}:443",
+            "Host": f"localhost:{port}",
             "Origin": origin,
             "Cookie": cookie,
             "Content-Type": "application/x-www-form-urlencoded",
@@ -529,7 +529,7 @@ def test_codespaces_rejects_foreign_host_despite_forwarding_header(tmp_path):
     try:
         connection = http.client.HTTPConnection(host, port)
         connection.request("GET", "/?subject=athlete-1", headers={
-            "Host": f"{forwarded_host}:443",
+            "Host": f"localhost:{port}",
         })
         accepted = connection.getresponse()
         page = accepted.read().decode()
@@ -543,7 +543,7 @@ def test_codespaces_rejects_foreign_host_despite_forwarding_header(tmp_path):
             "action_token": action_token,
         })
         connection.request("POST", "/", payload, headers={
-            "Host": f"{forwarded_host}:443",
+            "Host": f"localhost:{port}",
             "Origin": "https://address-chosen-by-request.example",
             "Cookie": cookie,
             "Content-Type": "application/x-www-form-urlencoded",
@@ -573,6 +573,10 @@ def test_codespaces_origin_is_derived_from_trusted_environment():
         "CODESPACE_NAME": "sturdy-space-123",
         "GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN": "app.github.dev",
     }) == {
+        "127.0.0.1:8765":
+            "https://sturdy-space-123-8765.app.github.dev",
+        "localhost:8765":
+            "https://sturdy-space-123-8765.app.github.dev",
         "sturdy-space-123-8765.app.github.dev":
             "https://sturdy-space-123-8765.app.github.dev",
         "sturdy-space-123-8765.app.github.dev:443":

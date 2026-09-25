@@ -142,11 +142,18 @@ def _trusted_origins(port: int, environment=None) -> dict[str, str]:
         raise RuntimeError("Ambiente Codespaces incompleto o non valido.")
     host = f"{codespace}-{port}.{forwarding_domain}".lower()
     origin = f"https://{host}"
-    # The private Codespaces proxy can preserve the explicit HTTPS port in
-    # Host even though browsers omit it when displaying the forwarded URL.
-    # Both authorities identify the same environment-derived origin; no
-    # forwarding header is needed (or trusted) to make this decision.
-    return {host: origin, f"{host}:443": origin}
+    # The private Codespaces proxy terminates HTTPS and currently sends the
+    # loopback authority to the application.  Associate that authority with
+    # the public browser origin derived above: request headers (including
+    # X-Forwarded-Host) must never be able to choose the accepted origin.
+    # Keep the environment-derived authorities for proxies which preserve the
+    # original Host, including its equivalent explicit HTTPS default port.
+    return {
+        f"127.0.0.1:{port}": origin,
+        f"localhost:{port}": origin,
+        host: origin,
+        f"{host}:443": origin,
+    }
 
 
 def make_handler(database_path: str, *, action_token: str | None = None,
