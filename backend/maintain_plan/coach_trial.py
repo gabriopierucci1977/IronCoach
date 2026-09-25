@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
+import os
 
 from .models import (
     ActualSession, Applicability, BlockType, Composition, Discipline,
@@ -112,25 +113,33 @@ def create_trial(archive_path: str | Path, trial_path: str | Path, subject_ref: 
     trial_path = Path(trial_path)
     if trial_path.resolve() == Path(archive_path).resolve():
         raise ValueError("l’archivio di prova deve essere separato dall’archivio reale")
-    if trial_path.exists():
-        trial_path.unlink()
-    trial = MaintainPlanRepository(trial_path)
-    seen = set()
-    for index, choice in enumerate(choices):
-        session_id = str(choice["session_id"])
-        if session_id in seen:
-            raise ValueError("un’attività può essere scelta una sola volta")
-        seen.add(session_id)
-        session = archive.get_actual_session(session_id)
-        if session is None or session.subject_ref != subject_ref:
-            raise ValueError("attività non disponibile per l’atleta")
-        sport = str(choice["sport"])
-        if sport not in {item.discipline.value for item in session.components
-                         if item.discipline is not None}:
-            raise ValueError("lo sport scelto non corrisponde all’attività selezionata")
-        trial.create_actual_session(session)
-        trial.create_prescription_snapshot(hypothetical_prescription(
-            subject_ref, session, sport=sport,
-            duration_minutes=float(choice["duration_minutes"]),
-            rpe=float(choice["rpe"]), now=now, identifier=str(index + 1)))
-    return trial
+    temporary_path = trial_path.with_name(f".{trial_path.name}.{uuid4().hex}.tmp")
+    try:
+        trial = MaintainPlanRepository(temporary_path)
+        seen = set()
+        for index, choice in enumerate(choices):
+            session_id = str(choice["session_id"])
+            if session_id in seen:
+                raise ValueError("un’attività può essere scelta una sola volta")
+            seen.add(session_id)
+            session = archive.get_actual_session(session_id)
+            if session is None or session.subject_ref != subject_ref:
+                raise ValueError("attività non disponibile per l’atleta")
+            sport = str(choice["sport"])
+            if sport not in {item.discipline.value for item in session.components
+                             if item.discipline is not None}:
+                raise ValueError("lo sport scelto non corrisponde all’attività selezionata")
+            trial.create_actual_session(session)
+            trial.create_prescription_snapshot(hypothetical_prescription(
+                subject_ref, session, sport=sport,
+                duration_minutes=float(choice["duration_minutes"]),
+                rpe=float(choice["rpe"]), now=now, identifier=str(index + 1)))
+        # Publish only a fully validated scenario. os.replace also makes retries
+        # replace the prior trial instead of accumulating duplicate artifacts.
+        os.replace(temporary_path, trial_path)
+    except Exception:
+        temporary_path.unlink(missing_ok=True)
+        for sidecar in temporary_path.parent.glob(f"{temporary_path.name}-*"):
+            sidecar.unlink(missing_ok=True)
+        raise
+    return MaintainPlanRepository(trial_path)

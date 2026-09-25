@@ -6,6 +6,7 @@ from html import escape
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
+import hmac
 import os
 import secrets
 import webbrowser
@@ -23,6 +24,26 @@ DEFAULT_SUBJECT = "recO4aHGKSTexpXUC"
 def trial_database_path(archive_path: str | Path) -> Path:
     archive = Path(archive_path)
     return archive.with_name(f"{archive.stem}.coach-trial{archive.suffix}")
+
+
+def _action_rejection_reason(origin: str | None, expected_origin: str,
+                             cookie: str, submitted_token: str,
+                             server_token: str) -> str | None:
+    """Explain a strict request rejection without exposing either CSRF token."""
+    allowed_origins = {expected_origin}
+    if expected_origin.startswith("https://"):
+        allowed_origins.add(f"{expected_origin}:443")
+    if origin not in allowed_origins:
+        return "origine HTTPS inattesa"
+    cookies = dict(item.strip().split("=", 1) for item in cookie.split(";") if "=" in item)
+    cookie_token = cookies.get("ironcoach_action", "")
+    if not cookie_token:
+        return "cookie di autorizzazione mancante; ricarica la pagina e riprova"
+    if not hmac.compare_digest(cookie_token, server_token):
+        return "cookie di autorizzazione scaduto; ricarica la pagina e riprova"
+    if not submitted_token or not hmac.compare_digest(submitted_token, server_token):
+        return "pagina scaduta; ricaricala e riprova"
+    return None
 
 
 def render_trial_page(subject: str, *, activities=(), review=None,
@@ -137,11 +158,21 @@ def make_trial_handler(archive_path: str, trial_path: str, *,
                 return
             values = parse_qs(self.rfile.read(int(self.headers.get("Content-Length", "0"))).decode())
             subject = values.get("subject", [DEFAULT_SUBJECT])[0]
-            if not _valid_action(self.headers.get("Origin"), self._origin(),
-                                 self.headers.get("Cookie", ""),
-                                 values.get("action_token", [""])[0], token):
-                self._send(render_trial_page(subject, message="Azione respinta.",
-                                             action_token=token), 403)
+            origin = self._origin()
+            submitted_token = values.get("action_token", [""])[0]
+            rejection = _action_rejection_reason(
+                self.headers.get("Origin"), origin,
+                self.headers.get("Cookie", ""), submitted_token, token)
+            # Keep the shared, hardened coach_web guard authoritative as well;
+            # the detailed helper only supplies a safe explanation to the coach.
+            if rejection is not None or not _valid_action(
+                    self.headers.get("Origin"), origin,
+                    self.headers.get("Cookie", ""), submitted_token, token):
+                activities = available_activities(archive_path, subject)
+                reason = rejection or "origine o autorizzazione non valida"
+                self._send(render_trial_page(
+                    subject, activities=activities,
+                    message=f"Azione respinta: {reason}.", action_token=token), 403)
                 return
             try:
                 if values.get("operation", [""])[0] == "create":
