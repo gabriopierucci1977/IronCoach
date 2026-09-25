@@ -1,12 +1,13 @@
 from dataclasses import replace
 from hashlib import sha256
 import http.client
+import re
 from http.server import ThreadingHTTPServer
 from threading import Thread
 from urllib.parse import urlencode
 from pathlib import Path
 
-from backend.maintain_plan.coach_review import review_subject
+from backend.maintain_plan.coach_review import resolve_coach_choice, review_subject
 from backend.maintain_plan.coach_trial import available_activities, create_trial
 from backend.maintain_plan.coach_trial_web import make_trial_handler, render_trial_page
 from backend.maintain_plan.models import Discipline
@@ -87,9 +88,25 @@ def test_browser_flow_writes_only_trial_database(tmp_path):
         })
         created = connection.getresponse()
         body = created.read().decode()
+        cookie = created.getheader("Set-Cookie").split(";", 1)[0]
         assert created.status == 200
         assert "Scenario ipotetico creato" in body
         assert "Conferma abbinamento nello scenario di prova" in body
+        prescription = re.search(r'name="prescription" value="([^"]+)"', body).group(1)
+        session = re.search(r'name="session" value="([^"]+)"', body).group(1)
+        confirmation = urlencode({
+            "operation": "confirm", "action_token": "secret", "subject": "athlete-1",
+            "prescription": prescription, "session": session,
+        })
+        connection.request("POST", "/", confirmation, {
+            "Content-Type": "application/x-www-form-urlencoded",
+            "Origin": f"http://{host}:{port}", "Cookie": cookie,
+        })
+        evaluated = connection.getresponse()
+        evaluated_page = evaluated.read().decode()
+        assert evaluated.status == 200
+        assert "Valutazione appena salvata" in evaluated_page
+        assert "Conferma abbinamento nello scenario di prova" not in evaluated_page
     finally:
         server.shutdown()
         server.server_close()
@@ -217,3 +234,56 @@ def test_failed_trial_is_atomic_and_retry_replaces_without_duplicates(tmp_path):
     retried = create_trial(archive, trial_path, "athlete-1", good, now=NOW)
     assert len(retried.list_actual_sessions("athlete-1")) == 1
     assert len(retried.list_prescription_snapshots("athlete-1")) == 1
+
+
+def test_confirmed_post_shows_saved_evaluation_not_expired_confirmation(tmp_path):
+    archive = _archive(tmp_path)
+    trial = create_trial(archive, tmp_path / "trial.db", "athlete-1", ({
+        "session_id": "session-1", "sport": "RUN",
+        "duration_minutes": 50, "rpe": 8,
+    },), now=NOW)
+    initial = review_subject(trial, "athlete-1", now=NOW)
+    candidate = initial.decision.candidates[0]
+
+    confirmed = resolve_coach_choice(
+        trial, "athlete-1", candidate.prescription_snapshot_id,
+        candidate.session_id, now=NOW)
+    page = render_trial_page("athlete-1", review=confirmed,
+                             action_token="no-longer-actionable")
+
+    assert "Valutazione appena salvata" in page
+    assert "Conferma abbinamento nello scenario di prova" not in page
+    assert trial.get_execution_evaluation(confirmed.evaluation.evaluation_id) == confirmed.evaluation
+
+
+def test_secondary_garmin_duration_and_missing_rpe_remain_insufficient(tmp_path):
+    archive = tmp_path / "real-maintain-plan.db"
+    repository = MaintainPlanRepository(archive)
+    component = replace(
+        RUN_SESSION.components[0], quantity_observation=None,
+        quantity_primary_metric=None, quantity_unit=None,
+        secondary_metrics=({"metric": "duration", "value": 50, "unit": "min"},),
+        intensity_methods=(), intensity_observations=None,
+        missing_fields=("quantity_primary_metric", "intensity_methods"),
+    )
+    repository.create_actual_session(replace(RUN_SESSION, components=(component,)))
+    before = sha256(archive.read_bytes()).digest()
+    trial = create_trial(archive, tmp_path / "trial.db", "athlete-1", ({
+        "session_id": "session-1", "sport": "RUN",
+        "duration_minutes": 50, "rpe": 8,
+    },), now=NOW)
+    candidate = review_subject(trial, "athlete-1", now=NOW).decision.candidates[0]
+
+    confirmed = resolve_coach_choice(
+        trial, "athlete-1", candidate.prescription_snapshot_id,
+        candidate.session_id, now=NOW)
+    result = confirmed.evaluation.component_results[0]
+    page = render_trial_page("athlete-1", review=confirmed)
+
+    assert result.quantity.status.value == "INSUFFICIENT_DATA"
+    assert result.intensity.status.value == "INSUFFICIENT_DATA"
+    assert confirmed.evaluation.overall.value == "INSUFFICIENT_DATA"
+    assert "Dati insufficienti" in page
+    assert "metriche secondarie non è trattata come equivalente" in page
+    assert "RPE osservato assente" in page
+    assert sha256(archive.read_bytes()).digest() == before

@@ -85,11 +85,18 @@ def render_trial_page(subject: str, *, activities=(), review=None,
     else:
         body.append("<h2>Valutazione del solo scenario di prova</h2>")
         for pair, evaluation in review.completed_evaluations:
-            overall = "non disponibile" if evaluation.overall is None else evaluation.overall.value
             body.append(f'<section><b>Scenario valutato:</b> {escape(pair.prescription_snapshot_id)} '
-                        f'← {escape(pair.session_id)} · {escape(overall)}</section>')
+                        f'← {escape(pair.session_id)} · {_evaluation_summary(evaluation)}</section>')
+        if review.saved_pair is not None and review.evaluation is not None:
+            pair = review.saved_pair
+            body.append(f'<section><b>Valutazione appena salvata:</b> '
+                        f'{escape(pair.prescription_snapshot_id)} ← {escape(pair.session_id)} · '
+                        f'{_evaluation_summary(review.evaluation)}</section>')
         decision = review.decision
-        for candidate in decision.candidates:
+        # resolve_coach_choice retains the decision that authorised the write.
+        # Once that write succeeded its candidates are historical, not live forms.
+        candidates = () if review.saved_pair is not None else decision.candidates
+        for candidate in candidates:
             detail = _artifact_details(review, candidate.prescription_snapshot_id,
                                        candidate.session_id)
             body.append(
@@ -114,6 +121,24 @@ def render_trial_page(subject: str, *, activities=(), review=None,
     return ("<!doctype html><html lang=it><meta charset=utf-8>"
             "<title>IronCoach · Scenario ipotetico</title>"
             f"<style>{style}</style><body>{''.join(body)}</body></html>")
+
+
+def _evaluation_summary(evaluation) -> str:
+    """Render only conclusions supported by canonical observed dimensions."""
+    overall = "dati insufficienti" if evaluation.overall is None else evaluation.overall.value
+    insufficient = []
+    for result in evaluation.component_results:
+        if result.quantity is not None and result.quantity.status.value == "INSUFFICIENT_DATA":
+            insufficient.append(
+                "durata primaria osservata assente; l’eventuale durata Garmin nelle "
+                "metriche secondarie non è trattata come equivalente")
+        if result.intensity is not None and result.intensity.status.value == "INSUFFICIENT_DATA":
+            insufficient.append("RPE osservato assente")
+    details = ""
+    if insufficient:
+        details = ". <strong>Dati insufficienti:</strong> " + "; ".join(
+            dict.fromkeys(insufficient))
+    return escape(overall) + details
 
 
 def make_trial_handler(archive_path: str, trial_path: str, *,
