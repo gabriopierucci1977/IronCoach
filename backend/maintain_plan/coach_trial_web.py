@@ -84,6 +84,12 @@ def render_trial_page(subject: str, *, activities=(), review=None,
         body.append("</form>")
     else:
         body.append("<h2>Valutazione del solo scenario di prova</h2>")
+        suspended_pairs = {pair for pair, _message in review.suspended_evaluations}
+        for pair, suspended_message in review.suspended_evaluations:
+            body.append(
+                '<section class="warning"><b>Valutazione sospesa:</b> '
+                f'{escape(pair.prescription_snapshot_id)} ← {escape(pair.session_id)} · '
+                f'{escape(suspended_message)}</section>')
         for pair, evaluation in review.completed_evaluations:
             body.append(f'<section><b>Valutazione salvata:</b> {escape(pair.prescription_snapshot_id)} '
                         f'← {escape(pair.session_id)} · {_evaluation_summary(evaluation)}</section>')
@@ -95,7 +101,9 @@ def render_trial_page(subject: str, *, activities=(), review=None,
         decision = review.decision
         # resolve_coach_choice retains the decision that authorised the write.
         # Once that write succeeded its candidates are historical, not live forms.
-        candidates = () if review.saved_pair is not None else decision.candidates
+        candidates = (() if review.saved_pair is not None else tuple(
+            candidate for candidate in decision.candidates
+            if candidate not in suspended_pairs))
         for candidate in candidates:
             detail = _artifact_details(review, candidate.prescription_snapshot_id,
                                        candidate.session_id)
@@ -117,7 +125,8 @@ def render_trial_page(subject: str, *, activities=(), review=None,
     style = ("body{font:17px system-ui;max-width:920px;margin:32px auto;padding:0 18px}"
              "aside{background:#fff3cd;border:2px solid #d99b00;padding:16px}"
              "fieldset,.candidate,section{margin:14px 0;padding:14px;border:1px solid #bbb}"
-             "input,select,button{font:inherit;padding:6px;margin:5px}.message{background:#eef8ee;padding:10px}")
+             "input,select,button{font:inherit;padding:6px;margin:5px}.message{background:#eef8ee;padding:10px}"
+             ".warning{background:#fff3cd}")
     return ("<!doctype html><html lang=it><meta charset=utf-8>"
             "<title>IronCoach · Scenario ipotetico</title>"
             f"<style>{style}</style><body>{''.join(body)}</body></html>")
@@ -214,13 +223,15 @@ def make_trial_handler(archive_path: str, trial_path: str, *,
                 else:
                     resolved = resolve_database_choice(
                         trial_path, subject, values["prescription"][0], values["session"][0])
-                    if resolved.evaluation is None:
-                        raise RuntimeError("valutazione confermata non disponibile")
                     # Re-read authoritative persisted state: completed evaluations
                     # and every still-live candidate get freshly rendered forms.
                     review = review_database(trial_path, subject)
                     token_state["value"] = secrets.token_urlsafe(32)
-                    message = "Abbinamento e valutazione salvati soltanto nello scenario di prova."
+                    if resolved.evaluation is None:
+                        detail = resolved.evaluation_message or "valutazione non completata"
+                        message = f"Abbinamento salvato nello scenario di prova; {detail}"
+                    else:
+                        message = "Abbinamento e valutazione salvati soltanto nello scenario di prova."
                 self._send(render_trial_page(subject, review=review, message=message,
                                              action_token=token_state["value"]))
             except Exception as error:

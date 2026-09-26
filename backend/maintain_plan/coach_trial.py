@@ -49,8 +49,17 @@ def _readonly_archive_sessions(archive_path: str | Path,
                     "payload_schema_version", "payload_json"}
         if not required <= columns:
             raise ValueError("schema storico privo della tabella attività compatibile")
-        rows = connection.execute(
-            "SELECT * FROM maintain_plan_actual_sessions ORDER BY session_id").fetchall()
+        if "subject_ref" in columns:
+            # Filter ownership before payload decoding: corrupt data belonging to
+            # another athlete must not poison this athlete's read-only journey.
+            rows = connection.execute(
+                "SELECT * FROM maintain_plan_actual_sessions "
+                "WHERE subject_ref = ? ORDER BY session_id", (subject_ref,)).fetchall()
+        else:
+            # Legacy schemas predate the indexed ownership column. Their payload
+            # ownership is checked conservatively after decoding below.
+            rows = connection.execute(
+                "SELECT * FROM maintain_plan_actual_sessions ORDER BY session_id").fetchall()
     finally:
         connection.close()
     sessions = []

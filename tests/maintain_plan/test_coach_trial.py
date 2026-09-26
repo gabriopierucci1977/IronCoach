@@ -9,11 +9,12 @@ from urllib.parse import urlencode
 from pathlib import Path
 
 from backend.maintain_plan.coach_review import resolve_coach_choice, review_subject
+import backend.maintain_plan.coach_review as coach_review_module
 from backend.maintain_plan.coach_trial import available_activities, create_trial
 from backend.maintain_plan.coach_trial_web import make_trial_handler, render_trial_page
 from backend.maintain_plan.models import Discipline
 from backend.maintain_plan.repository import MaintainPlanRepository
-from tests.maintain_plan.fixtures import NOW, RUN_SESSION
+from tests.maintain_plan.fixtures import NOW, RUN_PRESCRIPTION, RUN_SESSION
 
 
 def _archive(tmp_path):
@@ -360,3 +361,105 @@ def test_get_reads_previous_schema_without_migrating_real_archive(tmp_path):
     assert "idx_mp_mappings_snapshot_unique" not in indexes
     assert "idx_mp_mappings_session_unique" not in indexes
     assert not trial.exists()
+
+
+def test_subject_query_ignores_corrupt_payload_owned_by_another_athlete(tmp_path):
+    archive = tmp_path / "real-maintain-plan.db"
+    repository = MaintainPlanRepository(archive)
+    repository.create_actual_session(RUN_SESSION)
+    repository.create_actual_session(replace(
+        RUN_SESSION, session_id="foreign-session", subject_ref="athlete-2"))
+    with sqlite3.connect(archive) as connection:
+        connection.execute(
+            "UPDATE maintain_plan_actual_sessions SET payload_json = ? "
+            "WHERE session_id = ?", ("{corrupt", "foreign-session"))
+    before = sha256(archive.read_bytes()).digest()
+
+    activities = available_activities(archive, "athlete-1")
+
+    assert [item.session_id for item in activities] == ["session-1"]
+    assert sha256(archive.read_bytes()).digest() == before
+
+
+def test_suspended_candidate_shows_reason_without_confirmation_form(tmp_path):
+    repository = MaintainPlanRepository(tmp_path / "trial.db")
+    conflict = {
+        "conflict_id": "conflict-1",
+        "schema_version": "maintain-plan-source-conflict/1.0.0-draft",
+        "field_path": "components.run.quantity_observation",
+        "values": ({"value": 59, "source": "Garmin"},
+                   {"value": 60, "source": "other"}),
+        "provenance": {}, "captured_at": NOW,
+        "missing_fields": (), "warnings": (),
+    }
+    repository.create_prescription_snapshot(RUN_PRESCRIPTION)
+    repository.create_actual_session(replace(RUN_SESSION, source_conflicts=(conflict,)))
+
+    review = review_subject(repository, "athlete-1", now=NOW)
+    page = render_trial_page("athlete-1", review=review, action_token="token")
+
+    assert "Valutazione sospesa" in page
+    assert "dati in conflitto" in page
+    assert "Conferma abbinamento nello scenario di prova" not in page
+    assert repository.list_prescription_mappings() == ()
+
+
+def test_mapping_saved_evaluation_failure_is_rendered_after_database_reread(
+        tmp_path, monkeypatch):
+    archive = _archive(tmp_path)
+    before = sha256(archive.read_bytes()).digest()
+    trial = tmp_path / "trial.db"
+    original_evaluate = coach_review_module.evaluate
+
+    def fail_evaluation(*_args, **_kwargs):
+        raise RuntimeError("interruzione simulata")
+
+    monkeypatch.setattr(coach_review_module, "evaluate", fail_evaluation)
+    server = ThreadingHTTPServer(("127.0.0.1", 0), make_trial_handler(
+        str(archive), str(trial), action_token="secret"))
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    host, port = server.server_address
+    try:
+        connection = http.client.HTTPConnection(host, port)
+        create = urlencode({
+            "operation": "create", "action_token": "secret", "subject": "athlete-1",
+            "selected": "0", "session_0": "swim-1", "sport_0": "SWIM",
+            "duration_0": "45", "rpe_0": "6",
+        })
+        connection.request("POST", "/", create, {
+            "Origin": f"http://{host}:{port}", "Cookie": "ironcoach_action=secret",
+            "Content-Type": "application/x-www-form-urlencoded",
+        })
+        created = connection.getresponse()
+        page = created.read().decode()
+        cookie = created.getheader("Set-Cookie").split(";", 1)[0]
+        prescription = re.search(r'name="prescription" value="([^"]+)"', page).group(1)
+        session = re.search(r'name="session" value="([^"]+)"', page).group(1)
+        confirm = urlencode({
+            "operation": "confirm", "action_token": "secret", "subject": "athlete-1",
+            "prescription": prescription, "session": session,
+        })
+        connection.request("POST", "/", confirm, {
+            "Origin": f"http://{host}:{port}", "Cookie": cookie,
+            "Content-Type": "application/x-www-form-urlencoded",
+        })
+        response = connection.getresponse()
+        result = response.read().decode()
+        assert response.status == 200
+        assert "Abbinamento salvato nello scenario di prova" in result
+        assert "Valutazione sospesa" in result
+        assert "Valutazione non completata" in result
+        assert "Scenario non salvato" not in result
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join()
+        monkeypatch.setattr(coach_review_module, "evaluate", original_evaluate)
+
+    trial_repository = MaintainPlanRepository(trial)
+    assert len(trial_repository.list_prescription_mappings()) == 1
+    with sqlite3.connect(trial) as connection:
+        assert connection.execute(
+            "SELECT count(*) FROM maintain_plan_execution_evaluations").fetchone()[0] == 0
+    assert sha256(archive.read_bytes()).digest() == before
