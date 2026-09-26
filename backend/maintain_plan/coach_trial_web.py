@@ -85,7 +85,7 @@ def render_trial_page(subject: str, *, activities=(), review=None,
     else:
         body.append("<h2>Valutazione del solo scenario di prova</h2>")
         for pair, evaluation in review.completed_evaluations:
-            body.append(f'<section><b>Scenario valutato:</b> {escape(pair.prescription_snapshot_id)} '
+            body.append(f'<section><b>Valutazione salvata:</b> {escape(pair.prescription_snapshot_id)} '
                         f'← {escape(pair.session_id)} · {_evaluation_summary(evaluation)}</section>')
         if review.saved_pair is not None and review.evaluation is not None:
             pair = review.saved_pair
@@ -143,7 +143,7 @@ def _evaluation_summary(evaluation) -> str:
 
 def make_trial_handler(archive_path: str, trial_path: str, *,
                        action_token: str | None = None, environment=None):
-    token = action_token or secrets.token_urlsafe(32)
+    token_state = {"value": action_token or secrets.token_urlsafe(32)}
     environment = dict(os.environ if environment is None else environment)
 
     class TrialHandler(BaseHTTPRequestHandler):
@@ -159,7 +159,7 @@ def make_trial_handler(archive_path: str, trial_path: str, *,
             self.send_header("Cache-Control", "no-store")
             secure = "; Secure" if (self._origin() or "").startswith("https://") else ""
             self.send_header("Set-Cookie",
-                             f"ironcoach_action={token}; SameSite=Strict; HttpOnly{secure}")
+                             f"ironcoach_action={token_state['value']}; SameSite=Strict; HttpOnly{secure}")
             self.end_headers()
             self.wfile.write(payload)
 
@@ -172,10 +172,10 @@ def make_trial_handler(archive_path: str, trial_path: str, *,
             try:
                 activities = available_activities(archive_path, subject)
                 self._send(render_trial_page(subject, activities=activities,
-                                             action_token=token))
+                                             action_token=token_state["value"]))
             except Exception as error:
                 self._send(render_trial_page(subject, message=f"Dati non utilizzabili: {error}",
-                                             action_token=token), 400)
+                                             action_token=token_state["value"]), 400)
 
         def do_POST(self):
             if self._origin() is None:
@@ -187,17 +187,18 @@ def make_trial_handler(archive_path: str, trial_path: str, *,
             submitted_token = values.get("action_token", [""])[0]
             rejection = _action_rejection_reason(
                 self.headers.get("Origin"), origin,
-                self.headers.get("Cookie", ""), submitted_token, token)
+                self.headers.get("Cookie", ""), submitted_token, token_state["value"])
             # Keep the shared, hardened coach_web guard authoritative as well;
             # the detailed helper only supplies a safe explanation to the coach.
             if rejection is not None or not _valid_action(
                     self.headers.get("Origin"), origin,
-                    self.headers.get("Cookie", ""), submitted_token, token):
+                    self.headers.get("Cookie", ""), submitted_token, token_state["value"]):
                 activities = available_activities(archive_path, subject)
                 reason = rejection or "origine o autorizzazione non valida"
                 self._send(render_trial_page(
                     subject, activities=activities,
-                    message=f"Azione respinta: {reason}.", action_token=token), 403)
+                    message=f"Azione respinta: {reason}.",
+                    action_token=token_state["value"]), 403)
                 return
             try:
                 if values.get("operation", [""])[0] == "create":
@@ -211,16 +212,22 @@ def make_trial_handler(archive_path: str, trial_path: str, *,
                     review = review_database(trial_path, subject)
                     message = "Scenario ipotetico creato nell’archivio di prova separato."
                 else:
-                    review = resolve_database_choice(
+                    resolved = resolve_database_choice(
                         trial_path, subject, values["prescription"][0], values["session"][0])
+                    if resolved.evaluation is None:
+                        raise RuntimeError("valutazione confermata non disponibile")
+                    # Re-read authoritative persisted state: completed evaluations
+                    # and every still-live candidate get freshly rendered forms.
+                    review = review_database(trial_path, subject)
+                    token_state["value"] = secrets.token_urlsafe(32)
                     message = "Abbinamento e valutazione salvati soltanto nello scenario di prova."
                 self._send(render_trial_page(subject, review=review, message=message,
-                                             action_token=token))
+                                             action_token=token_state["value"]))
             except Exception as error:
                 activities = available_activities(archive_path, subject)
                 self._send(render_trial_page(subject, activities=activities,
                                              message=f"Scenario non salvato: {error}",
-                                             action_token=token), 400)
+                                             action_token=token_state["value"]), 400)
 
         def log_message(self, *_args):
             return

@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
 import os
+import sqlite3
 
 from .models import (
     ActualSession, Applicability, BlockType, Composition, Discipline,
@@ -17,7 +18,8 @@ from .models import (
     ScheduledWindow, SessionType, StructureContract, SupportStatus, DoseContract,
 )
 from .repository import MaintainPlanRepository
-from .validators import validate_prescription
+from .serialization import PAYLOAD_SCHEMA_VERSION, deserialize_contract
+from .validators import validate_actual_session, validate_prescription
 
 
 POLICY_VERSION = "1.0.0-draft"
@@ -31,12 +33,52 @@ class TrialActivity:
     source: str
 
 
+def _readonly_archive_sessions(archive_path: str | Path,
+                               subject_ref: str) -> tuple[ActualSession, ...]:
+    """Decode archive sessions through a query-only connection, without migrations."""
+    path = Path(archive_path).resolve()
+    if not path.is_file():
+        raise FileNotFoundError(f"Archivio MAINTAIN_PLAN non trovato: {path}")
+    connection = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+    connection.row_factory = sqlite3.Row
+    try:
+        connection.execute("PRAGMA query_only = ON")
+        columns = {row[1] for row in connection.execute(
+            "PRAGMA table_info(maintain_plan_actual_sessions)")}
+        required = {"session_id", "start", "composition", "contract_version",
+                    "payload_schema_version", "payload_json"}
+        if not required <= columns:
+            raise ValueError("schema storico privo della tabella attività compatibile")
+        rows = connection.execute(
+            "SELECT * FROM maintain_plan_actual_sessions ORDER BY session_id").fetchall()
+    finally:
+        connection.close()
+    sessions = []
+    for row in rows:
+        if row["payload_schema_version"] != PAYLOAD_SCHEMA_VERSION:
+            raise ValueError("versione payload MAINTAIN_PLAN storica non supportata")
+        session = deserialize_contract(row["payload_json"], ActualSession)
+        stored_subject = row["subject_ref"] if "subject_ref" in columns else session.subject_ref
+        errors = validate_actual_session(session, allow_legacy_subject=stored_subject is None)
+        if errors:
+            raise ValueError("; ".join(errors))
+        metadata = (session.session_id, session.start.isoformat(),
+                    None if session.composition is None else session.composition.value,
+                    session.contract_version)
+        if metadata != (row["session_id"], row["start"], row["composition"],
+                        row["contract_version"]):
+            raise ValueError("metadati dell’attività archiviata incoerenti")
+        # A legacy artifact without ownership cannot safely be attributed.
+        if stored_subject == subject_ref and session.subject_ref == subject_ref:
+            sessions.append(session)
+    return tuple(sessions)
+
+
 def available_activities(archive_path: str | Path, subject_ref: str) -> tuple[TrialActivity, ...]:
     """Read supported historical activities without writing to the archive."""
-    repository = MaintainPlanRepository(archive_path)
     supported = {Discipline.SWIM, Discipline.BIKE, Discipline.RUN}
     result = []
-    for session in repository.list_actual_sessions(subject_ref):
+    for session in _readonly_archive_sessions(archive_path, subject_ref):
         sports = tuple(dict.fromkeys(
             component.discipline.value for component in session.components
             if component.discipline in supported))
@@ -109,7 +151,8 @@ def create_trial(archive_path: str | Path, trial_path: str | Path, subject_ref: 
     """Copy chosen activities and authored plans into a fresh, separate database."""
     if not choices:
         raise ValueError("scegli almeno un’attività")
-    archive = MaintainPlanRepository(archive_path)
+    archive_sessions = {item.session_id: item for item in
+                        _readonly_archive_sessions(archive_path, subject_ref)}
     trial_path = Path(trial_path)
     if trial_path.resolve() == Path(archive_path).resolve():
         raise ValueError("l’archivio di prova deve essere separato dall’archivio reale")
@@ -122,8 +165,8 @@ def create_trial(archive_path: str | Path, trial_path: str | Path, subject_ref: 
             if session_id in seen:
                 raise ValueError("un’attività può essere scelta una sola volta")
             seen.add(session_id)
-            session = archive.get_actual_session(session_id)
-            if session is None or session.subject_ref != subject_ref:
+            session = archive_sessions.get(session_id)
+            if session is None:
                 raise ValueError("attività non disponibile per l’atleta")
             sport = str(choice["sport"])
             if sport not in {item.discipline.value for item in session.components

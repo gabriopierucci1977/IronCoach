@@ -2,6 +2,7 @@ from dataclasses import replace
 from hashlib import sha256
 import http.client
 import re
+import sqlite3
 from http.server import ThreadingHTTPServer
 from threading import Thread
 from urllib.parse import urlencode
@@ -105,7 +106,7 @@ def test_browser_flow_writes_only_trial_database(tmp_path):
         evaluated = connection.getresponse()
         evaluated_page = evaluated.read().decode()
         assert evaluated.status == 200
-        assert "Valutazione appena salvata" in evaluated_page
+        assert "Valutazione salvata" in evaluated_page
         assert "Conferma abbinamento nello scenario di prova" not in evaluated_page
     finally:
         server.shutdown()
@@ -169,6 +170,42 @@ def test_private_codespaces_get_fill_post_creates_and_shows_scenario(tmp_path):
         repository = MaintainPlanRepository(trial)
         assert len(repository.list_actual_sessions("athlete-1")) == 3
         assert len(repository.list_prescription_snapshots("athlete-1")) == 3
+
+        current_page = result
+        used_tokens = set()
+        for completed in range(1, 4):
+            form = re.search(r'<form method="post" class="candidate">(.*?)</form>',
+                             current_page)
+            assert form is not None
+            prescription = re.search(
+                r'name="prescription" value="([^"]+)"', form.group(1)).group(1)
+            session = re.search(r'name="session" value="([^"]+)"',
+                                form.group(1)).group(1)
+            current_token = re.search(
+                r'name="action_token" value="([^"]+)"', form.group(1)).group(1)
+            assert current_token not in used_tokens
+            used_tokens.add(current_token)
+            confirmation = urlencode({
+                "operation": "confirm", "action_token": current_token,
+                "subject": "athlete-1", "prescription": prescription,
+                "session": session,
+            })
+            connection.request("POST", "/", confirmation, {
+                "Host": loopback_host, "Origin": public_origin, "Cookie": cookie,
+                "Content-Type": "application/x-www-form-urlencoded",
+            })
+            response = connection.getresponse()
+            current_page = response.read().decode()
+            cookie = response.getheader("Set-Cookie").split(";", 1)[0]
+            assert response.status == 200
+            assert current_page.count("Valutazione salvata:") == completed
+            assert current_page.count(
+                "Conferma abbinamento nello scenario di prova") == 3 - completed
+        with sqlite3.connect(trial) as connection_db:
+            assert connection_db.execute(
+                "SELECT count(*) FROM maintain_plan_prescription_mappings").fetchone()[0] == 3
+            assert connection_db.execute(
+                "SELECT count(*) FROM maintain_plan_execution_evaluations").fetchone()[0] == 3
     finally:
         server.shutdown()
         server.server_close()
@@ -287,3 +324,39 @@ def test_secondary_garmin_duration_and_missing_rpe_remain_insufficient(tmp_path)
     assert "metriche secondarie non è trattata come equivalente" in page
     assert "RPE osservato assente" in page
     assert sha256(archive.read_bytes()).digest() == before
+
+
+def test_get_reads_previous_schema_without_migrating_real_archive(tmp_path):
+    archive = _archive(tmp_path)
+    with sqlite3.connect(archive) as connection:
+        connection.execute("DROP INDEX idx_mp_mappings_snapshot_unique")
+        connection.execute("DROP INDEX idx_mp_mappings_session_unique")
+        connection.execute("DELETE FROM maintain_plan_schema_migrations WHERE version = 8")
+    before = sha256(archive.read_bytes()).digest()
+    trial = tmp_path / "trial.db"
+    server = ThreadingHTTPServer(("127.0.0.1", 0), make_trial_handler(
+        str(archive), str(trial), action_token="secret"))
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    host, port = server.server_address
+    try:
+        connection = http.client.HTTPConnection(host, port)
+        connection.request("GET", "/?subject=athlete-1")
+        response = connection.getresponse()
+        page = response.read().decode()
+        assert response.status == 200
+        assert page.count("Usa questa attività") == 3
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join()
+
+    assert sha256(archive.read_bytes()).digest() == before
+    with sqlite3.connect(f"file:{archive}?mode=ro", uri=True) as connection:
+        assert connection.execute(
+            "SELECT max(version) FROM maintain_plan_schema_migrations").fetchone()[0] == 7
+        indexes = {row[1] for row in connection.execute(
+            "PRAGMA index_list(maintain_plan_prescription_mappings)")}
+    assert "idx_mp_mappings_snapshot_unique" not in indexes
+    assert "idx_mp_mappings_session_unique" not in indexes
+    assert not trial.exists()
