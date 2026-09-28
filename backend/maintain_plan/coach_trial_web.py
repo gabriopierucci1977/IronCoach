@@ -73,6 +73,8 @@ def render_trial_page(subject: str, *, activities=(), review=None,
                 f'value="{index}"> Usa questa attività</label><br>'
                 f'<strong>{escape(activity.start.isoformat())}</strong> · '
                 f'{escape(sports)} · {escape(activity.source)}<br>'
+                '<b>Confronti disponibili prima di scrivere il piano:</b><ul>' + "".join(
+                    f'<li>{escape(note)}</li>' for note in activity.comparison_notes) + '</ul>'
                 f'<input type="hidden" name="session_{index}" value="{escape(activity.session_id, quote=True)}">'
                 f'<label>Sport del piano <select name="sport_{index}">' + "".join(
                     f'<option value="{escape(sport)}">{escape(sport)}</option>'

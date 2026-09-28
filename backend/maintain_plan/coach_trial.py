@@ -33,6 +33,49 @@ class TrialActivity:
     start: datetime
     sports: tuple[str, ...]
     source: str
+    comparison_notes: tuple[str, ...]
+
+
+def _comparison_notes(session: ActualSession, supported: set[Discipline]) -> tuple[str, ...]:
+    """Describe evaluability without reinterpreting secondary Garmin metrics."""
+    notes = []
+    for component in session.components:
+        if component.discipline not in supported:
+            continue
+        sport = component.discipline.value
+        quantity = component.quantity_observation
+        primary_duration = (
+            component.quantity_primary_metric == QuantityMetric.ACTIVE_DURATION.value
+            and component.quantity_unit == "minutes"
+            and quantity is not None
+            and isinstance(quantity.get("value"), (int, float))
+            and not isinstance(quantity.get("value"), bool))
+        secondary_duration = any(
+            metric.get("metric") == "duration"
+            for metric in component.secondary_metrics)
+        if primary_duration:
+            notes.append(f"{sport} · durata primaria: confronto quantitativo supportato")
+        elif secondary_duration:
+            notes.append(
+                f"{sport} · durata: non valutabile quantitativamente; Garmin la espone "
+                "solo nelle metriche secondarie, che non equivalgono alla durata primaria")
+        else:
+            notes.append(
+                f"{sport} · durata: non valutabile quantitativamente; durata primaria assente")
+
+        intensity = component.intensity_observations
+        rpe_supported = (
+            "RPE" in component.intensity_methods
+            and intensity is not None
+            and type(intensity.get("valid_coverage")) in (int, float)
+            and intensity.get("valid_coverage") >= .8
+            and type(intensity.get("time_in_target")) in (int, float))
+        if rpe_supported:
+            notes.append(f"{sport} · RPE: confronto quantitativo supportato")
+        else:
+            notes.append(
+                f"{sport} · RPE: non valutabile quantitativamente; RPE osservato assente")
+    return tuple(notes)
 
 
 def _readonly_archive_sessions(archive_path: str | Path,
@@ -106,8 +149,9 @@ def available_activities(archive_path: str | Path, subject_ref: str) -> tuple[Tr
         if not sports:
             continue
         sources = sorted({source.source for source in session.source_activities})
-        result.append(TrialActivity(session.session_id, session.start, sports,
-                                    ", ".join(sources) or "Garmin"))
+        result.append(TrialActivity(
+            session.session_id, session.start, sports,
+            ", ".join(sources) or "Garmin", _comparison_notes(session, supported)))
     return tuple(sorted(result, key=lambda item: (item.start, item.session_id), reverse=True))
 
 

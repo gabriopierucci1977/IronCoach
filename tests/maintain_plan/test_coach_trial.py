@@ -64,12 +64,38 @@ def test_page_always_labels_hypothesis_and_does_not_prepopulate_targets(tmp_path
         "athlete-1", activities=())
 
 
+def test_initial_page_warns_when_garmin_has_only_secondary_duration_and_no_rpe(
+        tmp_path):
+    archive = tmp_path / "real-maintain-plan.db"
+    repository = MaintainPlanRepository(archive)
+    component = replace(
+        RUN_SESSION.components[0], quantity_observation=None,
+        quantity_primary_metric=None, quantity_unit=None,
+        secondary_metrics=({"metric": "duration", "value": 50, "unit": "min"},),
+        intensity_methods=(), intensity_observations=None,
+        missing_fields=("quantity_primary_metric", "intensity_methods"),
+    )
+    repository.create_actual_session(replace(RUN_SESSION, components=(component,)))
+    before = sha256(archive.read_bytes()).digest()
+
+    page = render_trial_page(
+        "athlete-1", activities=available_activities(archive, "athlete-1"))
+
+    assert page.index("Confronti disponibili prima di scrivere il piano") < page.index(
+        "Durata prevista")
+    assert "solo nelle metriche secondarie" in page
+    assert "non equivalgono alla durata primaria" in page
+    assert "RPE osservato assente" in page
+    assert page.count("non valutabile quantitativamente") == 2
+    assert sha256(archive.read_bytes()).digest() == before
+
+
 def test_browser_flow_writes_only_trial_database(tmp_path):
     archive = _archive(tmp_path)
     trial = tmp_path / "trial.db"
     before = sha256(archive.read_bytes()).digest()
     server = ThreadingHTTPServer(("127.0.0.1", 0), make_trial_handler(
-        str(archive), str(trial), action_token="secret"))
+        str(archive), str(trial), action_token="secret", environment={}))
     thread = Thread(target=server.serve_forever, daemon=True)
     thread.start()
     host, port = server.server_address
@@ -336,7 +362,7 @@ def test_get_reads_previous_schema_without_migrating_real_archive(tmp_path):
     before = sha256(archive.read_bytes()).digest()
     trial = tmp_path / "trial.db"
     server = ThreadingHTTPServer(("127.0.0.1", 0), make_trial_handler(
-        str(archive), str(trial), action_token="secret"))
+        str(archive), str(trial), action_token="secret", environment={}))
     thread = Thread(target=server.serve_forever, daemon=True)
     thread.start()
     host, port = server.server_address
@@ -421,7 +447,7 @@ def test_mapping_saved_evaluation_failure_is_rendered_after_database_reread(
 
     monkeypatch.setattr(coach_review_module, "evaluate", fail_once)
     server = ThreadingHTTPServer(("127.0.0.1", 0), make_trial_handler(
-        str(archive), str(trial), action_token="secret"))
+        str(archive), str(trial), action_token="secret", environment={}))
     thread = Thread(target=server.serve_forever, daemon=True)
     thread.start()
     host, port = server.server_address
@@ -507,7 +533,7 @@ def test_get_reads_committed_wal_without_touching_real_sqlite_files(tmp_path):
 
         trial = tmp_path / "trial.db"
         server = ThreadingHTTPServer(("127.0.0.1", 0), make_trial_handler(
-            str(archive), str(trial), action_token="secret"))
+            str(archive), str(trial), action_token="secret", environment={}))
         thread = Thread(target=server.serve_forever, daemon=True)
         thread.start()
         host, port = server.server_address
