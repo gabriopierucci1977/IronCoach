@@ -4,17 +4,19 @@ import http.client
 import re
 import sqlite3
 from http.server import ThreadingHTTPServer
-from threading import Thread
+from threading import Event, Thread
 from urllib.parse import urlencode
 from pathlib import Path
 
 from backend.maintain_plan.coach_review import resolve_coach_choice, review_subject
 import backend.maintain_plan.coach_review as coach_review_module
+import backend.maintain_plan.coach_trial as coach_trial_module
 from backend.maintain_plan.coach_trial import available_activities, create_trial
 from backend.maintain_plan.coach_trial_web import make_trial_handler, render_trial_page
-from backend.maintain_plan.models import Discipline
+from backend.maintain_plan.models import Composition, Discipline
 from backend.maintain_plan.repository import MaintainPlanRepository
-from tests.maintain_plan.fixtures import NOW, RUN_PRESCRIPTION, RUN_SESSION
+from tests.maintain_plan.fixtures import (BRICK_SESSION, NOW, RUN_PRESCRIPTION,
+                                          RUN_SESSION)
 
 
 def _archive(tmp_path):
@@ -523,6 +525,8 @@ def test_get_reads_committed_wal_without_touching_real_sqlite_files(tmp_path):
     try:
         assert keeper.execute("PRAGMA journal_mode = WAL").fetchone()[0] == "wal"
         keeper.execute("PRAGMA wal_autocheckpoint = 0")
+        keeper.execute("BEGIN")
+        keeper.execute("SELECT count(*) FROM maintain_plan_actual_sessions").fetchone()
         wal_session = replace(RUN_SESSION, session_id="wal-session")
         # This committed row remains in WAL while the keeper connection prevents
         # the final close checkpoint/removal of the sidecars.
@@ -556,3 +560,108 @@ def test_get_reads_committed_wal_without_touching_real_sqlite_files(tmp_path):
         assert not trial.exists()
     finally:
         keeper.close()
+
+
+def test_application_lock_serializes_wal_writer_after_coherent_snapshot(
+        tmp_path, monkeypatch):
+    archive = _archive(tmp_path)
+    keeper = sqlite3.connect(archive)
+    try:
+        assert keeper.execute("PRAGMA journal_mode = WAL").fetchone()[0] == "wal"
+        keeper.execute("PRAGMA wal_autocheckpoint = 0")
+        keeper.execute("BEGIN")
+        keeper.execute("SELECT count(*) FROM maintain_plan_actual_sessions").fetchone()
+        original_copy = coach_trial_module.shutil.copy2
+        copying = Event()
+        writer_attempted = Event()
+        writer_done = Event()
+        checked_blocking = False
+
+        def slow_copy(source, destination):
+            nonlocal checked_blocking
+            if Path(source) == archive and not checked_blocking:
+                checked_blocking = True
+                copying.set()
+                assert writer_attempted.wait(2)
+                assert not writer_done.wait(.2)
+            return original_copy(source, destination)
+
+        def writer():
+            assert copying.wait(2)
+            writer_attempted.set()
+            MaintainPlanRepository(archive).create_actual_session(
+                replace(RUN_SESSION, session_id="concurrent-session"))
+            writer_done.set()
+
+        monkeypatch.setattr(coach_trial_module.shutil, "copy2", slow_copy)
+        thread = Thread(target=writer)
+        thread.start()
+        activities = available_activities(archive, "athlete-1")
+        thread.join(3)
+
+        assert writer_done.is_set()
+        assert "concurrent-session" not in {item.session_id for item in activities}
+        assert "concurrent-session" in {
+            item.session_id for item in available_activities(archive, "athlete-1")}
+    finally:
+        keeper.close()
+
+
+def test_brick_and_multisport_sessions_are_not_offered_to_single_plan_form(tmp_path):
+    archive = tmp_path / "real-maintain-plan.db"
+    repository = MaintainPlanRepository(archive)
+    repository.create_actual_session(RUN_SESSION)
+    repository.create_actual_session(replace(BRICK_SESSION, session_id="brick-session"))
+    repository.create_actual_session(replace(
+        BRICK_SESSION, session_id="multisport-session",
+        composition=Composition.MULTISPORT, transitions=()))
+    before = sha256(archive.read_bytes()).digest()
+
+    activities = available_activities(archive, "athlete-1")
+
+    assert [item.session_id for item in activities] == ["session-1"]
+    assert sha256(archive.read_bytes()).digest() == before
+
+
+def test_manual_post_cannot_create_single_plan_for_brick_or_multisport(tmp_path):
+    archive = tmp_path / "real-maintain-plan.db"
+    repository = MaintainPlanRepository(archive)
+    repository.create_actual_session(replace(BRICK_SESSION, session_id="brick-session"))
+    repository.create_actual_session(replace(
+        BRICK_SESSION, session_id="multisport-session",
+        composition=Composition.MULTISPORT, transitions=()))
+    before = sha256(archive.read_bytes()).digest()
+
+    for session_id, sport in (("brick-session", "RUN"),
+                              ("multisport-session", "BIKE")):
+        trial = tmp_path / f"{session_id}.trial.db"
+        try:
+            create_trial(archive, trial, "athlete-1", ({
+                "session_id": session_id, "sport": sport,
+                "duration_minutes": 60, "rpe": 6,
+            },), now=NOW)
+        except ValueError as error:
+            assert "soltanto attività SINGLE" in str(error)
+        else:
+            raise AssertionError(f"{session_id} must not produce a SINGLE prescription")
+        assert not trial.exists()
+
+    assert sha256(archive.read_bytes()).digest() == before
+
+
+def test_non_finite_duration_inputs_are_rejected_without_publishing_trial(tmp_path):
+    archive = _archive(tmp_path)
+    before = sha256(archive.read_bytes()).digest()
+    for index, duration in enumerate(("nan", "inf", "1e309")):
+        trial = tmp_path / f"trial-{index}.db"
+        try:
+            create_trial(archive, trial, "athlete-1", ({
+                "session_id": "session-1", "sport": "RUN",
+                "duration_minutes": duration, "rpe": 6,
+            },), now=NOW)
+        except ValueError as error:
+            assert "durata e RPE" in str(error)
+        else:
+            raise AssertionError(f"non-finite duration {duration} must be rejected")
+        assert not trial.exists()
+    assert sha256(archive.read_bytes()).digest() == before

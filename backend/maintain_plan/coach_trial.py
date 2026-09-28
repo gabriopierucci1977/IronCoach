@@ -4,8 +4,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from hashlib import sha256
 from pathlib import Path
 from uuid import uuid4
+import math
 import os
 import shutil
 import sqlite3
@@ -19,12 +21,42 @@ from .models import (
     QuantityContract, QuantityMetric, RecoveryContract, Requiredness,
     ScheduledWindow, SessionType, StructureContract, SupportStatus, DoseContract,
 )
+from .archive_lock import archive_lock, lock_path
 from .repository import MaintainPlanRepository
 from .serialization import PAYLOAD_SCHEMA_VERSION, deserialize_contract
 from .validators import validate_actual_session, validate_prescription
 
 
 POLICY_VERSION = "1.0.0-draft"
+
+
+def _archive_signature(path: Path) -> dict[str, tuple[int, str]]:
+    """Fingerprint the database set without opening it through SQLite."""
+    result = {}
+    for candidate in (path, Path(f"{path}-wal"), Path(f"{path}-shm")):
+        if candidate.exists():
+            payload = candidate.read_bytes()
+            result[candidate.name] = (len(payload), sha256(payload).hexdigest())
+    return result
+
+
+def _copy_stable_archive(path: Path, directory: str) -> Path:
+    """Copy one stable DB/WAL/SHM generation or fail instead of mixing generations."""
+    with archive_lock(path):
+        before = _archive_signature(path)
+        snapshot = Path(directory) / path.name
+        shutil.copy2(path, snapshot)
+        for suffix in ("-wal", "-shm"):
+            sidecar = Path(f"{path}{suffix}")
+            if sidecar.exists():
+                shutil.copy2(sidecar, Path(f"{snapshot}{suffix}"))
+        after = _archive_signature(path)
+        copied = _archive_signature(snapshot)
+    if before != after or copied != after:
+        raise RuntimeError(
+            "archivio MAINTAIN_PLAN cambiato durante la lettura; riprova quando "
+            "la scrittura concorrente è terminata")
+    return snapshot
 
 
 @dataclass(frozen=True)
@@ -88,12 +120,7 @@ def _readonly_archive_sessions(archive_path: str | Path,
     # database. Read a private byte-for-byte snapshot of the database and its
     # existing WAL sidecars instead, so recovery and shared memory stay private.
     with tempfile.TemporaryDirectory(prefix="ironcoach-archive-read-") as directory:
-        snapshot = Path(directory) / path.name
-        shutil.copy2(path, snapshot)
-        for suffix in ("-wal", "-shm"):
-            sidecar = Path(f"{path}{suffix}")
-            if sidecar.exists():
-                shutil.copy2(sidecar, Path(f"{snapshot}{suffix}"))
+        snapshot = _copy_stable_archive(path, directory)
         connection = sqlite3.connect(snapshot)
         connection.row_factory = sqlite3.Row
         try:
@@ -143,6 +170,10 @@ def available_activities(archive_path: str | Path, subject_ref: str) -> tuple[Tr
     supported = {Discipline.SWIM, Discipline.BIKE, Discipline.RUN}
     result = []
     for session in _readonly_archive_sessions(archive_path, subject_ref):
+        if session.composition is not Composition.SINGLE or len(session.components) != 1:
+            # This minimal authoring form creates exactly one planned component;
+            # offering BRICK/MULTISPORT here would guarantee an unmatchable plan.
+            continue
         sports = tuple(dict.fromkeys(
             component.discipline.value for component in session.components
             if component.discipline in supported))
@@ -165,7 +196,8 @@ def hypothetical_prescription(subject_ref: str, session: ActualSession, *,
                               identifier: str | None = None) -> PrescriptionSnapshot:
     """Create a coach-authored trial contract; observed metrics are never inputs."""
     discipline = Discipline(sport)
-    if duration_minutes <= 0 or not 1 <= rpe <= 10:
+    if (not math.isfinite(duration_minutes) or not math.isfinite(rpe)
+            or duration_minutes <= 0 or not 1 <= rpe <= 10):
         raise ValueError("durata e RPE del piano devono essere positivi (RPE 1–10)")
     timestamp = now or datetime.now(timezone.utc)
     identifier = identifier or uuid4().hex
@@ -233,6 +265,10 @@ def create_trial(archive_path: str | Path, trial_path: str | Path, subject_ref: 
             session = archive_sessions.get(session_id)
             if session is None:
                 raise ValueError("attività non disponibile per l’atleta")
+            if (session.composition is not Composition.SINGLE
+                    or len(session.components) != 1):
+                raise ValueError(
+                    "lo scenario di prova supporta soltanto attività SINGLE")
             sport = str(choice["sport"])
             if sport not in {item.discipline.value for item in session.components
                              if item.discipline is not None}:
@@ -244,9 +280,11 @@ def create_trial(archive_path: str | Path, trial_path: str | Path, subject_ref: 
                 rpe=float(choice["rpe"]), now=now, identifier=str(index + 1)))
         # Publish only a fully validated scenario. os.replace also makes retries
         # replace the prior trial instead of accumulating duplicate artifacts.
+        lock_path(temporary_path).unlink(missing_ok=True)
         os.replace(temporary_path, trial_path)
     except Exception:
         temporary_path.unlink(missing_ok=True)
+        lock_path(temporary_path).unlink(missing_ok=True)
         for sidecar in temporary_path.parent.glob(f"{temporary_path.name}-*"):
             sidecar.unlink(missing_ok=True)
         raise

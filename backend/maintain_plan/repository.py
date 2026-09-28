@@ -12,6 +12,7 @@ from .models import (ActualSession, Confirmation, ConfirmationAnswerType, Execut
                      PrescriptionSnapshot, SourceConflictProjection,
                      SourceConflictImpactEvaluation, SourceConflictResolutionEvent,
                      SourceConflictResolutionLog)
+from .archive_lock import locked_connect
 from .lifecycle_service import (project_feedback, project_source_conflict,
                                 structurally_equivalent, validate_feedback_payload,
                                 validate_feedback_event, validate_feedback_log,
@@ -98,7 +99,7 @@ class MaintainPlanRepository:
         run_migrations(self.database_path)
 
     def _connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self.database_path)
+        connection = locked_connect(self.database_path)
         connection.execute("PRAGMA foreign_keys = ON")
         return connection
 
