@@ -11,7 +11,8 @@ import os
 import secrets
 import webbrowser
 
-from .coach_review import review_database, resolve_database_choice
+from .coach_review import (retry_database_evaluation, review_database,
+                           resolve_database_choice)
 from .coach_trial import available_activities, create_trial
 from .coach_web import (_artifact_details, _trusted_origins, _valid_action,
                         configured_database_path)
@@ -90,6 +91,15 @@ def render_trial_page(subject: str, *, activities=(), review=None,
                 '<section class="warning"><b>Valutazione sospesa:</b> '
                 f'{escape(pair.prescription_snapshot_id)} ← {escape(pair.session_id)} · '
                 f'{escape(suspended_message)}</section>')
+            if suspended_message.startswith("Valutazione non completata"):
+                body.append(
+                    '<form method="post" class="retry">'
+                    f'<input type="hidden" name="action_token" value="{escape(action_token, quote=True)}">'
+                    f'<input type="hidden" name="subject" value="{escape(subject, quote=True)}">'
+                    '<input type="hidden" name="operation" value="retry_evaluation">'
+                    f'<input type="hidden" name="prescription" value="{escape(pair.prescription_snapshot_id, quote=True)}">'
+                    f'<input type="hidden" name="session" value="{escape(pair.session_id, quote=True)}">'
+                    '<button>Riprova valutazione dello scenario</button></form>')
         for pair, evaluation in review.completed_evaluations:
             body.append(f'<section><b>Valutazione salvata:</b> {escape(pair.prescription_snapshot_id)} '
                         f'← {escape(pair.session_id)} · {_evaluation_summary(evaluation)}</section>')
@@ -220,6 +230,16 @@ def make_trial_handler(archive_path: str, trial_path: str, *,
                     create_trial(archive_path, trial_path, subject, choices)
                     review = review_database(trial_path, subject)
                     message = "Scenario ipotetico creato nell’archivio di prova separato."
+                elif values.get("operation", [""])[0] == "retry_evaluation":
+                    resolved = retry_database_evaluation(
+                        trial_path, subject, values["prescription"][0], values["session"][0])
+                    review = review_database(trial_path, subject)
+                    token_state["value"] = secrets.token_urlsafe(32)
+                    if resolved.evaluation is None:
+                        detail = resolved.evaluation_message or "valutazione non completata"
+                        message = f"Abbinamento già salvato; {detail}"
+                    else:
+                        message = "Valutazione completata sul solo scenario di prova."
                 else:
                     resolved = resolve_database_choice(
                         trial_path, subject, values["prescription"][0], values["session"][0])

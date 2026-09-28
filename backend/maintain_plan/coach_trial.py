@@ -7,7 +7,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
 import os
+import shutil
 import sqlite3
+import tempfile
 
 from .models import (
     ActualSession, Applicability, BlockType, Composition, Discipline,
@@ -39,29 +41,39 @@ def _readonly_archive_sessions(archive_path: str | Path,
     path = Path(archive_path).resolve()
     if not path.is_file():
         raise FileNotFoundError(f"Archivio MAINTAIN_PLAN non trovato: {path}")
-    connection = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
-    connection.row_factory = sqlite3.Row
-    try:
-        connection.execute("PRAGMA query_only = ON")
-        columns = {row[1] for row in connection.execute(
-            "PRAGMA table_info(maintain_plan_actual_sessions)")}
-        required = {"session_id", "start", "composition", "contract_version",
-                    "payload_schema_version", "payload_json"}
-        if not required <= columns:
-            raise ValueError("schema storico privo della tabella attività compatibile")
-        if "subject_ref" in columns:
-            # Filter ownership before payload decoding: corrupt data belonging to
-            # another athlete must not poison this athlete's read-only journey.
-            rows = connection.execute(
-                "SELECT * FROM maintain_plan_actual_sessions "
-                "WHERE subject_ref = ? ORDER BY session_id", (subject_ref,)).fetchall()
-        else:
-            # Legacy schemas predate the indexed ownership column. Their payload
-            # ownership is checked conservatively after decoding below.
-            rows = connection.execute(
-                "SELECT * FROM maintain_plan_actual_sessions ORDER BY session_id").fetchall()
-    finally:
-        connection.close()
+    # Even a SQLite read-only connection may create or update -shm for a WAL
+    # database. Read a private byte-for-byte snapshot of the database and its
+    # existing WAL sidecars instead, so recovery and shared memory stay private.
+    with tempfile.TemporaryDirectory(prefix="ironcoach-archive-read-") as directory:
+        snapshot = Path(directory) / path.name
+        shutil.copy2(path, snapshot)
+        for suffix in ("-wal", "-shm"):
+            sidecar = Path(f"{path}{suffix}")
+            if sidecar.exists():
+                shutil.copy2(sidecar, Path(f"{snapshot}{suffix}"))
+        connection = sqlite3.connect(snapshot)
+        connection.row_factory = sqlite3.Row
+        try:
+            connection.execute("PRAGMA query_only = ON")
+            columns = {row[1] for row in connection.execute(
+                "PRAGMA table_info(maintain_plan_actual_sessions)")}
+            required = {"session_id", "start", "composition", "contract_version",
+                        "payload_schema_version", "payload_json"}
+            if not required <= columns:
+                raise ValueError("schema storico privo della tabella attività compatibile")
+            if "subject_ref" in columns:
+                # Filter ownership before payload decoding: corrupt data belonging to
+                # another athlete must not poison this athlete's read-only journey.
+                rows = connection.execute(
+                    "SELECT * FROM maintain_plan_actual_sessions "
+                    "WHERE subject_ref = ? ORDER BY session_id", (subject_ref,)).fetchall()
+            else:
+                # Legacy schemas predate the indexed ownership column. Their payload
+                # ownership is checked conservatively after decoding below.
+                rows = connection.execute(
+                    "SELECT * FROM maintain_plan_actual_sessions ORDER BY session_id").fetchall()
+        finally:
+            connection.close()
     sessions = []
     for row in rows:
         if row["payload_schema_version"] != PAYLOAD_SCHEMA_VERSION:

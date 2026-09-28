@@ -410,11 +410,16 @@ def test_mapping_saved_evaluation_failure_is_rendered_after_database_reread(
     before = sha256(archive.read_bytes()).digest()
     trial = tmp_path / "trial.db"
     original_evaluate = coach_review_module.evaluate
+    attempts = 0
 
-    def fail_evaluation(*_args, **_kwargs):
-        raise RuntimeError("interruzione simulata")
+    def fail_once(*args, **kwargs):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise RuntimeError("interruzione simulata")
+        return original_evaluate(*args, **kwargs)
 
-    monkeypatch.setattr(coach_review_module, "evaluate", fail_evaluation)
+    monkeypatch.setattr(coach_review_module, "evaluate", fail_once)
     server = ThreadingHTTPServer(("127.0.0.1", 0), make_trial_handler(
         str(archive), str(trial), action_token="secret"))
     thread = Thread(target=server.serve_forever, daemon=True)
@@ -451,6 +456,26 @@ def test_mapping_saved_evaluation_failure_is_rendered_after_database_reread(
         assert "Valutazione sospesa" in result
         assert "Valutazione non completata" in result
         assert "Scenario non salvato" not in result
+
+        retry_form = re.search(r'<form method="post" class="retry">(.*?)</form>', result)
+        assert retry_form is not None
+        retry_token = re.search(
+            r'name="action_token" value="([^"]+)"', retry_form.group(1)).group(1)
+        retry = urlencode({
+            "operation": "retry_evaluation", "action_token": retry_token,
+            "subject": "athlete-1", "prescription": prescription, "session": session,
+        })
+        retry_cookie = response.getheader("Set-Cookie").split(";", 1)[0]
+        connection.request("POST", "/", retry, {
+            "Origin": f"http://{host}:{port}", "Cookie": retry_cookie,
+            "Content-Type": "application/x-www-form-urlencoded",
+        })
+        retried = connection.getresponse()
+        retried_page = retried.read().decode()
+        assert retried.status == 200
+        assert "Valutazione completata" in retried_page
+        assert "Valutazione salvata" in retried_page
+        assert "Riprova valutazione dello scenario" not in retried_page
     finally:
         server.shutdown()
         server.server_close()
@@ -461,5 +486,47 @@ def test_mapping_saved_evaluation_failure_is_rendered_after_database_reread(
     assert len(trial_repository.list_prescription_mappings()) == 1
     with sqlite3.connect(trial) as connection:
         assert connection.execute(
-            "SELECT count(*) FROM maintain_plan_execution_evaluations").fetchone()[0] == 0
+            "SELECT count(*) FROM maintain_plan_execution_evaluations").fetchone()[0] == 1
     assert sha256(archive.read_bytes()).digest() == before
+    assert attempts == 2
+
+
+def test_get_reads_committed_wal_without_touching_real_sqlite_files(tmp_path):
+    archive = _archive(tmp_path)
+    keeper = sqlite3.connect(archive)
+    try:
+        assert keeper.execute("PRAGMA journal_mode = WAL").fetchone()[0] == "wal"
+        keeper.execute("PRAGMA wal_autocheckpoint = 0")
+        wal_session = replace(RUN_SESSION, session_id="wal-session")
+        # This committed row remains in WAL while the keeper connection prevents
+        # the final close checkpoint/removal of the sidecars.
+        MaintainPlanRepository(archive).create_actual_session(wal_session)
+        paths = (archive, Path(f"{archive}-wal"), Path(f"{archive}-shm"))
+        assert all(path.exists() for path in paths)
+        before = {path.name: path.read_bytes() for path in paths}
+
+        trial = tmp_path / "trial.db"
+        server = ThreadingHTTPServer(("127.0.0.1", 0), make_trial_handler(
+            str(archive), str(trial), action_token="secret"))
+        thread = Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        host, port = server.server_address
+        try:
+            connection = http.client.HTTPConnection(host, port)
+            connection.request("GET", "/?subject=athlete-1")
+            response = connection.getresponse()
+            page = response.read().decode()
+            assert response.status == 200
+            assert page.count("Usa questa attività") == 4
+            assert "wal-session" in page
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join()
+
+        after_paths = (archive, Path(f"{archive}-wal"), Path(f"{archive}-shm"))
+        assert {path.name for path in after_paths if path.exists()} == set(before)
+        assert {path.name: path.read_bytes() for path in after_paths} == before
+        assert not trial.exists()
+    finally:
+        keeper.close()
