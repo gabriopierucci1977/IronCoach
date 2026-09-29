@@ -9,6 +9,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Iterable
 
+from .archive_lock import archive_lock
+
 
 SCHEMA_VERSION = 8
 
@@ -461,52 +463,49 @@ def run_migrations(database_path: str | Path, migrations: Iterable[Migration] = 
     """Apply each migration exactly once and atomically, without touching legacy tables."""
     path = Path(database_path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    connection = sqlite3.connect(path)
-    try:
-        connection.execute("PRAGMA foreign_keys = ON")
-        connection.execute(
-            "CREATE TABLE IF NOT EXISTS maintain_plan_schema_migrations ("
-            "version INTEGER PRIMARY KEY, checksum TEXT NOT NULL, applied_at TEXT NOT NULL)"
-        )
-        connection.commit()
-        applied = dict(connection.execute(
-            "SELECT version, checksum FROM maintain_plan_schema_migrations"
-        ))
-        for migration in sorted(migrations, key=lambda item: item.version):
-            if migration.version in applied:
-                if applied[migration.version] != migration.checksum:
-                    raise RuntimeError(
-                        f"MAINTAIN_PLAN migration {migration.version} checksum mismatch"
-                    )
-                continue
-            try:
-                connection.execute("BEGIN IMMEDIATE")
-                # Another initializer may have completed this migration while this
-                # connection was waiting for SQLite's write lock.  The record read
-                # above is therefore only a fast path; this locked read is the
-                # authority for deciding whether migration SQL may run.
-                locked_record = connection.execute(
-                    "SELECT checksum FROM maintain_plan_schema_migrations WHERE version = ?",
-                    (migration.version,),
-                ).fetchone()
-                if locked_record is not None:
-                    if locked_record[0] != migration.checksum:
+    with archive_lock(path):
+        connection = sqlite3.connect(path)
+        try:
+            connection.execute("PRAGMA foreign_keys = ON")
+            connection.execute(
+                "CREATE TABLE IF NOT EXISTS maintain_plan_schema_migrations ("
+                "version INTEGER PRIMARY KEY, checksum TEXT NOT NULL, applied_at TEXT NOT NULL)"
+            )
+            connection.commit()
+            applied = dict(connection.execute(
+                "SELECT version, checksum FROM maintain_plan_schema_migrations"
+            ))
+            for migration in sorted(migrations, key=lambda item: item.version):
+                if migration.version in applied:
+                    if applied[migration.version] != migration.checksum:
                         raise RuntimeError(
                             f"MAINTAIN_PLAN migration {migration.version} checksum mismatch"
                         )
-                    connection.commit()
-                    applied[migration.version] = migration.checksum
                     continue
-                migration.apply(connection)
-                connection.execute(
-                    "INSERT INTO maintain_plan_schema_migrations"
-                    "(version, checksum, applied_at) VALUES (?, ?, ?)",
-                    (migration.version, migration.checksum,
-                     datetime.now(timezone.utc).isoformat()),
-                )
-                connection.commit()
-            except Exception:
-                connection.rollback()
-                raise
-    finally:
-        connection.close()
+                try:
+                    connection.execute("BEGIN IMMEDIATE")
+                    locked_record = connection.execute(
+                        "SELECT checksum FROM maintain_plan_schema_migrations WHERE version = ?",
+                        (migration.version,),
+                    ).fetchone()
+                    if locked_record is not None:
+                        if locked_record[0] != migration.checksum:
+                            raise RuntimeError(
+                                f"MAINTAIN_PLAN migration {migration.version} checksum mismatch"
+                            )
+                        connection.commit()
+                        applied[migration.version] = migration.checksum
+                        continue
+                    migration.apply(connection)
+                    connection.execute(
+                        "INSERT INTO maintain_plan_schema_migrations"
+                        "(version, checksum, applied_at) VALUES (?, ?, ?)",
+                        (migration.version, migration.checksum,
+                         datetime.now(timezone.utc).isoformat()),
+                    )
+                    connection.commit()
+                except Exception:
+                    connection.rollback()
+                    raise
+        finally:
+            connection.close()
