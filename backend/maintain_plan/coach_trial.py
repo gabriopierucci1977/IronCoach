@@ -281,7 +281,17 @@ def create_trial(archive_path: str | Path, trial_path: str | Path, subject_ref: 
         # Publish only a fully validated scenario. os.replace also makes retries
         # replace the prior trial instead of accumulating duplicate artifacts.
         lock_path(temporary_path).unlink(missing_ok=True)
-        os.replace(temporary_path, trial_path)
+        with archive_lock(trial_path):
+            if trial_path.exists():
+                with sqlite3.connect(trial_path) as current:
+                    progressed = current.execute(
+                        "SELECT count(*) FROM maintain_plan_prescription_mappings"
+                    ).fetchone()[0]
+                if progressed:
+                    raise RuntimeError(
+                        "scenario di prova modificato da una conferma o valutazione; "
+                        "ricarica la pagina prima di sostituirlo")
+            os.replace(temporary_path, trial_path)
     except Exception:
         temporary_path.unlink(missing_ok=True)
         lock_path(temporary_path).unlink(missing_ok=True)

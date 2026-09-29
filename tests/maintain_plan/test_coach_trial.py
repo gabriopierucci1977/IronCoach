@@ -11,6 +11,7 @@ from pathlib import Path
 from backend.maintain_plan.coach_review import resolve_coach_choice, review_subject
 import backend.maintain_plan.coach_review as coach_review_module
 import backend.maintain_plan.coach_trial as coach_trial_module
+from backend.maintain_plan.archive_lock import lock_path
 from backend.maintain_plan.coach_trial import available_activities, create_trial
 from backend.maintain_plan.coach_trial_web import make_trial_handler, render_trial_page
 from backend.maintain_plan.models import Composition, Discipline
@@ -665,3 +666,72 @@ def test_non_finite_duration_inputs_are_rejected_without_publishing_trial(tmp_pa
             raise AssertionError(f"non-finite duration {duration} must be rejected")
         assert not trial.exists()
     assert sha256(archive.read_bytes()).digest() == before
+
+
+def test_get_uses_external_lock_when_archive_directory_is_read_only(tmp_path):
+    directory = tmp_path / "readonly-archive"
+    directory.mkdir()
+    archive = _archive(directory)
+    before_files = {item.name: item.read_bytes() for item in directory.iterdir()}
+    assert lock_path(archive).parent != directory
+    directory.chmod(0o555)
+    try:
+        activities = available_activities(archive, "athlete-1")
+    finally:
+        directory.chmod(0o755)
+
+    assert len(activities) == 3
+    assert {item.name: item.read_bytes() for item in directory.iterdir()} == before_files
+
+
+def test_reset_does_not_replace_trial_after_concurrent_confirmation(
+        tmp_path, monkeypatch):
+    archive = _archive(tmp_path)
+    before_archive = sha256(archive.read_bytes()).digest()
+    trial_path = tmp_path / "trial.db"
+    choices = ({
+        "session_id": "session-1", "sport": "RUN",
+        "duration_minutes": 50, "rpe": 8,
+    },)
+    trial = create_trial(archive, trial_path, "athlete-1", choices, now=NOW)
+    candidate = review_subject(trial, "athlete-1", now=NOW).decision.candidates[0]
+    evaluation_started = Event()
+    allow_evaluation = Event()
+    original_evaluate = coach_review_module.evaluate
+    confirmation_error = []
+
+    def paused_evaluate(*args, **kwargs):
+        evaluation_started.set()
+        assert allow_evaluation.wait(3)
+        return original_evaluate(*args, **kwargs)
+
+    def confirm():
+        try:
+            resolve_coach_choice(
+                MaintainPlanRepository(trial_path), "athlete-1",
+                candidate.prescription_snapshot_id, candidate.session_id, now=NOW)
+        except Exception as error:
+            confirmation_error.append(error)
+
+    monkeypatch.setattr(coach_review_module, "evaluate", paused_evaluate)
+    thread = Thread(target=confirm)
+    thread.start()
+    assert evaluation_started.wait(3)
+    try:
+        try:
+            create_trial(archive, trial_path, "athlete-1", choices, now=NOW)
+        except RuntimeError as error:
+            assert "modificato da una conferma" in str(error)
+        else:
+            raise AssertionError("reset must not discard a concurrently saved mapping")
+    finally:
+        allow_evaluation.set()
+        thread.join(3)
+
+    assert not confirmation_error
+    persisted = MaintainPlanRepository(trial_path)
+    assert len(persisted.list_prescription_mappings()) == 1
+    with sqlite3.connect(trial_path) as connection:
+        assert connection.execute(
+            "SELECT count(*) FROM maintain_plan_execution_evaluations").fetchone()[0] == 1
+    assert sha256(archive.read_bytes()).digest() == before_archive

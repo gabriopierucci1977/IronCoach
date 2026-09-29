@@ -3,14 +3,21 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+from hashlib import sha256
 from pathlib import Path
 import fcntl
+import os
 import sqlite3
+import tempfile
 
 
 def lock_path(database_path: str | Path) -> Path:
-    path = Path(database_path)
-    return path.with_name(f"{path.name}.ironcoach.lock")
+    canonical = str(Path(database_path).resolve()).encode("utf-8")
+    digest = sha256(canonical).hexdigest()
+    user = str(os.getuid()) if hasattr(os, "getuid") else "default"
+    directory = Path(tempfile.gettempdir()) / f"ironcoach-maintain-plan-locks-{user}"
+    directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+    return directory / f"{digest}.lock"
 
 
 @contextmanager
