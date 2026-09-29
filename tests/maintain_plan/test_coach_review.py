@@ -493,15 +493,31 @@ def test_codespaces_confirmation_through_forwarded_https_address(
             "session": "session-1",
             "action_token": action_token,
         })
-        origin = f"https://{forwarded_host}"
-        if origin_has_default_port:
-            origin += ":443"
-        connection.request("POST", "/", payload, headers={
+        origin = (f"https://localhost:{port}" if not origin_has_default_port
+                  else f"https://{forwarded_host}:443")
+        forwarded_headers = {
             "Host": f"localhost:{port}",
             "Origin": origin,
+            "X-Forwarded-Host": forwarded_host,
+            "X-Forwarded-Proto": "https",
             "Cookie": cookie,
             "Content-Type": "application/x-www-form-urlencoded",
-        })
+        }
+        if not origin_has_default_port:
+            invalid_payload = urlencode({
+                "subject": "athlete-1",
+                "prescription": "snapshot-1",
+                "session": "session-1",
+                "action_token": "invalid-token",
+            })
+            connection.request("POST", "/", invalid_payload,
+                               headers=forwarded_headers)
+            invalid_token = connection.getresponse()
+            invalid_token.read()
+            assert invalid_token.status == 403
+            assert repository.list_prescription_mappings() == ()
+
+        connection.request("POST", "/", payload, headers=forwarded_headers)
         confirmed = connection.getresponse()
         confirmed_page = confirmed.read().decode()
         assert confirmed.status == 200

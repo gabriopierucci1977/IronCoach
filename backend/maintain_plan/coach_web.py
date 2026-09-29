@@ -109,16 +109,42 @@ def render_page(subject_ref: str = "", *, review=None, message: str = "",
            f"<style>{style}</style><body>{''.join(body)}</body></html>"
 
 
-def _valid_action(origin: str | None, expected_origin: str, cookie: str,
-                  submitted_token: str, server_token: str) -> bool:
-    cookies = dict(item.strip().split("=", 1) for item in cookie.split(";") if "=" in item)
-    cookie_token = cookies.get("ironcoach_action", "")
+def _valid_origin(origin: str | None, expected_origin: str, *,
+                  host: str | None = None,
+                  forwarded_host: str | None = None,
+                  forwarded_proto: str | None = None) -> bool:
+    """Accept the public origin, or Codespaces' precisely identified rewrite."""
     allowed_origins = {expected_origin}
     if expected_origin.startswith("https://"):
-        # Origin serialisation normally elides HTTPS's default port, while
-        # clients and proxies may also send the equivalent explicit form.
         allowed_origins.add(f"{expected_origin}:443")
-    return (origin in allowed_origins and
+    if origin in allowed_origins:
+        return True
+
+    # Codespaces' web proxy can rewrite both the authority and Origin to its
+    # loopback upstream.  Only recognise that form when the proxy also records
+    # the environment-derived public authority and HTTPS scheme.  These exact
+    # checks deliberately do not make arbitrary localhost origins trustworthy.
+    public_authority = expected_origin.removeprefix("https://")
+    return (
+        expected_origin.startswith("https://")
+        and host is not None
+        and host.startswith(("localhost:", "127.0.0.1:"))
+        and origin == f"https://{host}"
+        and forwarded_host in {public_authority, f"{public_authority}:443"}
+        and forwarded_proto == "https"
+    )
+
+
+def _valid_action(origin: str | None, expected_origin: str, cookie: str,
+                  submitted_token: str, server_token: str, *,
+                  host: str | None = None,
+                  forwarded_host: str | None = None,
+                  forwarded_proto: str | None = None) -> bool:
+    cookies = dict(item.strip().split("=", 1) for item in cookie.split(";") if "=" in item)
+    cookie_token = cookies.get("ironcoach_action", "")
+    return (_valid_origin(origin, expected_origin, host=host,
+                          forwarded_host=forwarded_host,
+                          forwarded_proto=forwarded_proto) and
             hmac.compare_digest(cookie_token, server_token) and
             hmac.compare_digest(submitted_token, server_token))
 
@@ -224,7 +250,10 @@ def make_handler(database_path: str, *, action_token: str | None = None,
                 if not _valid_action(
                         self.headers.get("Origin"), expected_origin,
                         self.headers.get("Cookie", ""),
-                        values.get("action_token", [""])[0], token):
+                        values.get("action_token", [""])[0], token,
+                        host=self.headers.get("Host"),
+                        forwarded_host=self.headers.get("X-Forwarded-Host"),
+                        forwarded_proto=self.headers.get("X-Forwarded-Proto")):
                     self._send(render_page(subject,
                         message="Azione respinta: origine o autorizzazione non valida.",
                         action_token=token), 403)
