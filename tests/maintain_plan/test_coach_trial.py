@@ -196,7 +196,9 @@ def test_private_codespaces_get_fill_post_creates_and_shows_scenario(tmp_path):
             ("sport_2", "BIKE"), ("duration_2", "90"), ("rpe_2", "7"),
         ])
         connection.request("POST", "/", payload, {
-            "Host": loopback_host, "Origin": public_origin, "Cookie": cookie,
+            "Host": loopback_host, "Origin": f"https://{loopback_host}",
+            "X-Forwarded-Host": public_origin.removeprefix("https://"),
+            "X-Forwarded-Proto": "https", "Cookie": cookie,
             "Content-Type": "application/x-www-form-urlencoded",
         })
         posted = connection.getresponse()
@@ -229,7 +231,9 @@ def test_private_codespaces_get_fill_post_creates_and_shows_scenario(tmp_path):
                 "session": session,
             })
             connection.request("POST", "/", confirmation, {
-                "Host": loopback_host, "Origin": public_origin, "Cookie": cookie,
+                "Host": loopback_host, "Origin": f"https://{loopback_host}",
+                "X-Forwarded-Host": public_origin.removeprefix("https://"),
+                "X-Forwarded-Proto": "https", "Cookie": cookie,
                 "Content-Type": "application/x-www-form-urlencoded",
             })
             response = connection.getresponse()
@@ -283,6 +287,16 @@ def test_rejected_codespaces_post_explains_reason_and_keeps_activities(tmp_path)
         assert wrong_origin.status == 403
         assert "origine HTTPS inattesa" in wrong_origin_page
         assert wrong_origin_page.count("Usa questa attività") == 3
+
+        connection.request("POST", "/", payload, {
+            "Host": f"localhost:{port}",
+            "Origin": f"https://localhost:{port}",
+            "Cookie": cookie, "Content-Type": "application/x-www-form-urlencoded",
+        })
+        unverified_proxy = connection.getresponse()
+        unverified_proxy_page = unverified_proxy.read().decode()
+        assert unverified_proxy.status == 403
+        assert "origine HTTPS inattesa" in unverified_proxy_page
     finally:
         server.shutdown()
         server.server_close()

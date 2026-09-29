@@ -15,6 +15,7 @@ from .coach_review import (retry_database_evaluation, review_database,
                            resolve_database_choice)
 from .coach_trial import available_activities, create_trial, trial_state_token
 from .coach_web import (_artifact_details, _trusted_origins, _valid_action,
+                        _valid_origin,
                         configured_database_path)
 from .runtime_matching_decision import DecisionStatus
 
@@ -29,12 +30,13 @@ def trial_database_path(archive_path: str | Path) -> Path:
 
 def _action_rejection_reason(origin: str | None, expected_origin: str,
                              cookie: str, submitted_token: str,
-                             server_token: str) -> str | None:
+                             server_token: str, *, host: str | None = None,
+                             forwarded_host: str | None = None,
+                             forwarded_proto: str | None = None) -> str | None:
     """Explain a strict request rejection without exposing either CSRF token."""
-    allowed_origins = {expected_origin}
-    if expected_origin.startswith("https://"):
-        allowed_origins.add(f"{expected_origin}:443")
-    if origin not in allowed_origins:
+    if not _valid_origin(origin, expected_origin, host=host,
+                         forwarded_host=forwarded_host,
+                         forwarded_proto=forwarded_proto):
         return "origine HTTPS inattesa"
     cookies = dict(item.strip().split("=", 1) for item in cookie.split(";") if "=" in item)
     cookie_token = cookies.get("ironcoach_action", "")
@@ -217,12 +219,18 @@ def make_trial_handler(archive_path: str, trial_path: str, *,
             submitted_token = values.get("action_token", [""])[0]
             rejection = _action_rejection_reason(
                 self.headers.get("Origin"), origin,
-                self.headers.get("Cookie", ""), submitted_token, token_state["value"])
+                self.headers.get("Cookie", ""), submitted_token, token_state["value"],
+                host=self.headers.get("Host"),
+                forwarded_host=self.headers.get("X-Forwarded-Host"),
+                forwarded_proto=self.headers.get("X-Forwarded-Proto"))
             # Keep the shared, hardened coach_web guard authoritative as well;
             # the detailed helper only supplies a safe explanation to the coach.
             if rejection is not None or not _valid_action(
                     self.headers.get("Origin"), origin,
-                    self.headers.get("Cookie", ""), submitted_token, token_state["value"]):
+                    self.headers.get("Cookie", ""), submitted_token, token_state["value"],
+                    host=self.headers.get("Host"),
+                    forwarded_host=self.headers.get("X-Forwarded-Host"),
+                    forwarded_proto=self.headers.get("X-Forwarded-Proto")):
                 activities = available_activities(archive_path, subject)
                 reason = rejection or "origine o autorizzazione non valida"
                 self._send(render_trial_page(
