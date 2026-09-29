@@ -3,12 +3,52 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+import errno
 from hashlib import sha256
 from pathlib import Path
-import fcntl
 import os
 import sqlite3
 import tempfile
+import time
+
+if os.name == "nt":
+    import msvcrt
+else:
+    import fcntl
+
+
+def _lock(handle) -> None:
+    if os.name != "nt":
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        return
+
+    # Windows locks byte ranges rather than whole files.  All IronCoach
+    # processes use the first byte, and LK_NBLCK lets us wait indefinitely
+    # (LK_LOCK only retries for a limited period in the Python runtime).
+    handle.seek(0)
+    if not handle.read(1):
+        handle.seek(0)
+        handle.write(b"\0")
+        handle.flush()
+    while True:
+        try:
+            handle.seek(0)
+            msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+            return
+        except OSError as error:
+            if error.errno not in {errno.EACCES, errno.EDEADLK} and getattr(
+                error, "winerror", None
+            ) not in {33, 36}:
+                raise
+            time.sleep(0.05)
+
+
+def _unlock(handle) -> None:
+    if os.name == "nt":
+        handle.seek(0)
+        msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+    else:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
 
 def lock_path(database_path: str | Path) -> Path:
@@ -27,11 +67,13 @@ def archive_lock(database_path: str | Path):
     path.parent.mkdir(parents=True, exist_ok=True)
     handle = path.open("a+b")
     try:
-        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        _lock(handle)
         yield
     finally:
-        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
-        handle.close()
+        try:
+            _unlock(handle)
+        finally:
+            handle.close()
 
 
 class LockedConnection(sqlite3.Connection):
