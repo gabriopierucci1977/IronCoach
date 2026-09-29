@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from hashlib import sha256
 from pathlib import Path
 from uuid import uuid4
+import hmac
 import math
 import os
 import shutil
@@ -28,6 +29,34 @@ from .validators import validate_actual_session, validate_prescription
 
 
 POLICY_VERSION = "1.0.0-draft"
+_TRIAL_STATE_TABLE = "ironcoach_coach_trial_state"
+
+
+def _trial_state_token_unlocked(path: Path) -> str:
+    """Fingerprint one persisted trial generation while its writer lock is held."""
+    digest = sha256()
+    if not path.exists():
+        digest.update(b"missing")
+        return digest.hexdigest()
+    with sqlite3.connect(f"file:{path.resolve()}?mode=ro", uri=True) as connection:
+        row = connection.execute(
+            f"SELECT scenario_id FROM {_TRIAL_STATE_TABLE} LIMIT 1"
+        ).fetchone()
+    if row is None:
+        raise ValueError("scenario di prova privo di identificatore persistito")
+    digest.update(str(row[0]).encode())
+    for candidate in (path, Path(f"{path}-wal"), Path(f"{path}-shm")):
+        digest.update(candidate.name.encode())
+        if candidate.exists():
+            digest.update(candidate.read_bytes())
+    return digest.hexdigest()
+
+
+def trial_state_token(trial_path: str | Path) -> str:
+    """Return an opaque token for the complete persisted trial state."""
+    path = Path(trial_path)
+    with archive_lock(path):
+        return _trial_state_token_unlocked(path)
 
 
 def _archive_signature(path: Path) -> dict[str, tuple[int, str]]:
@@ -243,7 +272,8 @@ def hypothetical_prescription(subject_ref: str, session: ActualSession, *,
 
 
 def create_trial(archive_path: str | Path, trial_path: str | Path, subject_ref: str,
-                 choices: tuple[dict[str, object], ...], *, now: datetime | None = None
+                 choices: tuple[dict[str, object], ...], *, now: datetime | None = None,
+                 expected_state_token: str | None = None
                  ) -> MaintainPlanRepository:
     """Copy chosen activities and authored plans into a fresh, separate database."""
     if not choices:
@@ -256,6 +286,12 @@ def create_trial(archive_path: str | Path, trial_path: str | Path, subject_ref: 
     temporary_path = trial_path.with_name(f".{trial_path.name}.{uuid4().hex}.tmp")
     try:
         trial = MaintainPlanRepository(temporary_path)
+        with sqlite3.connect(temporary_path) as connection:
+            connection.execute(
+                f"CREATE TABLE {_TRIAL_STATE_TABLE} (scenario_id TEXT NOT NULL UNIQUE)")
+            connection.execute(
+                f"INSERT INTO {_TRIAL_STATE_TABLE} (scenario_id) VALUES (?)",
+                (uuid4().hex,))
         seen = set()
         for index, choice in enumerate(choices):
             session_id = str(choice["session_id"])
@@ -283,14 +319,25 @@ def create_trial(archive_path: str | Path, trial_path: str | Path, subject_ref: 
         lock_path(temporary_path).unlink(missing_ok=True)
         with archive_lock(trial_path):
             if trial_path.exists():
+                current_token = _trial_state_token_unlocked(trial_path)
                 with sqlite3.connect(trial_path) as current:
                     progressed = current.execute(
                         "SELECT count(*) FROM maintain_plan_prescription_mappings"
                     ).fetchone()[0]
-                if progressed:
+                if expected_state_token is not None:
+                    if not hmac.compare_digest(expected_state_token, current_token):
+                        raise RuntimeError(
+                            "scenario di prova modificato da una conferma, valutazione "
+                            "o sostituzione concorrente; ricarica la pagina")
+                elif progressed:
                     raise RuntimeError(
                         "scenario di prova modificato da una conferma o valutazione; "
                         "ricarica la pagina prima di sostituirlo")
+            elif (expected_state_token is not None
+                  and not hmac.compare_digest(
+                      expected_state_token, _trial_state_token_unlocked(trial_path))):
+                raise RuntimeError(
+                    "scenario di prova sostituito nel frattempo; ricarica la pagina")
             os.replace(temporary_path, trial_path)
     except Exception:
         temporary_path.unlink(missing_ok=True)

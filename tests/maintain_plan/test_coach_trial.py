@@ -12,7 +12,8 @@ from backend.maintain_plan.coach_review import resolve_coach_choice, review_subj
 import backend.maintain_plan.coach_review as coach_review_module
 import backend.maintain_plan.coach_trial as coach_trial_module
 from backend.maintain_plan.archive_lock import lock_path
-from backend.maintain_plan.coach_trial import available_activities, create_trial
+from backend.maintain_plan.coach_trial import (available_activities, create_trial,
+                                               trial_state_token)
 from backend.maintain_plan.coach_trial_web import make_trial_handler, render_trial_page
 from backend.maintain_plan.models import Composition, Discipline
 from backend.maintain_plan.repository import MaintainPlanRepository
@@ -107,9 +108,13 @@ def test_browser_flow_writes_only_trial_database(tmp_path):
         connection.request("GET", "/?subject=athlete-1")
         response = connection.getresponse()
         assert response.status == 200
-        assert "PIANO IPOTETICO" in response.read().decode()
+        initial_page = response.read().decode()
+        assert "PIANO IPOTETICO" in initial_page
+        state_token = re.search(
+            r'name="state_token" value="([^"]+)"', initial_page).group(1)
         payload = urlencode({
             "operation": "create", "action_token": "secret", "subject": "athlete-1",
+            "state_token": state_token,
             "selected": "0", "session_0": "swim-1", "sport_0": "SWIM",
             "duration_0": "35", "rpe_0": "5",
         })
@@ -176,10 +181,13 @@ def test_private_codespaces_get_fill_post_creates_and_shows_scenario(tmp_path):
         assert initial.status == 200
         assert page.count("Usa questa attività") == 3
         assert "Secure" in initial.getheader("Set-Cookie")
+        state_token = re.search(
+            r'name="state_token" value="([^"]+)"', page).group(1)
 
         payload = urlencode([
             ("operation", "create"), ("action_token", "codespace-secret"),
             ("subject", "athlete-1"),
+            ("state_token", state_token),
             ("selected", "0"), ("session_0", "swim-1"),
             ("sport_0", "SWIM"), ("duration_0", "45"), ("rpe_0", "6"),
             ("selected", "1"), ("session_1", "session-1"),
@@ -456,8 +464,13 @@ def test_mapping_saved_evaluation_failure_is_rendered_after_database_reread(
     host, port = server.server_address
     try:
         connection = http.client.HTTPConnection(host, port)
+        connection.request("GET", "/?subject=athlete-1")
+        initial = connection.getresponse().read().decode()
+        state_token = re.search(
+            r'name="state_token" value="([^"]+)"', initial).group(1)
         create = urlencode({
             "operation": "create", "action_token": "secret", "subject": "athlete-1",
+            "state_token": state_token,
             "selected": "0", "session_0": "swim-1", "sport_0": "SWIM",
             "duration_0": "45", "rpe_0": "6",
         })
@@ -694,6 +707,7 @@ def test_reset_does_not_replace_trial_after_concurrent_confirmation(
         "duration_minutes": 50, "rpe": 8,
     },)
     trial = create_trial(archive, trial_path, "athlete-1", choices, now=NOW)
+    reset_token = trial_state_token(trial_path)
     candidate = review_subject(trial, "athlete-1", now=NOW).decision.candidates[0]
     evaluation_started = Event()
     allow_evaluation = Event()
@@ -719,7 +733,9 @@ def test_reset_does_not_replace_trial_after_concurrent_confirmation(
     assert evaluation_started.wait(3)
     try:
         try:
-            create_trial(archive, trial_path, "athlete-1", choices, now=NOW)
+            create_trial(
+                archive, trial_path, "athlete-1", choices, now=NOW,
+                expected_state_token=reset_token)
         except RuntimeError as error:
             assert "modificato da una conferma" in str(error)
         else:
@@ -735,3 +751,48 @@ def test_reset_does_not_replace_trial_after_concurrent_confirmation(
         assert connection.execute(
             "SELECT count(*) FROM maintain_plan_execution_evaluations").fetchone()[0] == 1
     assert sha256(archive.read_bytes()).digest() == before_archive
+
+
+def test_confirmed_trial_can_be_deliberately_replaced_with_current_token(tmp_path):
+    archive = _archive(tmp_path)
+    trial_path = tmp_path / "trial.db"
+    choices = ({
+        "session_id": "session-1", "sport": "RUN",
+        "duration_minutes": 50, "rpe": 8,
+    },)
+    trial = create_trial(archive, trial_path, "athlete-1", choices, now=NOW)
+    candidate = review_subject(trial, "athlete-1", now=NOW).decision.candidates[0]
+    resolve_coach_choice(
+        trial, "athlete-1", candidate.prescription_snapshot_id,
+        candidate.session_id, now=NOW)
+    confirmed_token = trial_state_token(trial_path)
+
+    replacement = create_trial(
+        archive, trial_path, "athlete-1", choices, now=NOW,
+        expected_state_token=confirmed_token)
+
+    assert replacement.list_prescription_mappings() == ()
+    assert trial_state_token(trial_path) != confirmed_token
+
+
+def test_stale_token_cannot_replace_an_empty_trial_after_aba_change(tmp_path):
+    archive = _archive(tmp_path)
+    trial_path = tmp_path / "trial.db"
+    choices = ({
+        "session_id": "session-1", "sport": "RUN",
+        "duration_minutes": 50, "rpe": 8,
+    },)
+    create_trial(archive, trial_path, "athlete-1", choices, now=NOW)
+    first_token = trial_state_token(trial_path)
+    create_trial(
+        archive, trial_path, "athlete-1", choices, now=NOW,
+        expected_state_token=first_token)
+
+    try:
+        create_trial(
+            archive, trial_path, "athlete-1", choices, now=NOW,
+            expected_state_token=first_token)
+    except RuntimeError as error:
+        assert "sostituzione concorrente" in str(error)
+    else:
+        raise AssertionError("an ABA replacement must invalidate the old state token")

@@ -13,7 +13,7 @@ import webbrowser
 
 from .coach_review import (retry_database_evaluation, review_database,
                            resolve_database_choice)
-from .coach_trial import available_activities, create_trial
+from .coach_trial import available_activities, create_trial, trial_state_token
 from .coach_web import (_artifact_details, _trusted_origins, _valid_action,
                         configured_database_path)
 from .runtime_matching_decision import DecisionStatus
@@ -48,7 +48,8 @@ def _action_rejection_reason(origin: str | None, expected_origin: str,
 
 
 def render_trial_page(subject: str, *, activities=(), review=None,
-                      message: str = "", action_token: str = "") -> str:
+                      message: str = "", action_token: str = "",
+                      state_token: str = "", replacing: bool = False) -> str:
     banner = ("<aside><strong>SCENARIO DI PROVA · PIANO IPOTETICO</strong><br>"
               "Il piano e la valutazione esistono solo in questo scenario: non sono "
               "fatti storici dell’atleta e non vengono inviati ad Airtable né salvati "
@@ -62,7 +63,13 @@ def render_trial_page(subject: str, *, activities=(), review=None,
             'del piccolo piano. I valori svolti non precompilano durata o intensità.</p>',
             '<form method="post"><input type="hidden" name="operation" value="create">',
             f'<input type="hidden" name="action_token" value="{escape(action_token, quote=True)}">',
+            f'<input type="hidden" name="state_token" value="{escape(state_token, quote=True)}">',
             f'<input type="hidden" name="subject" value="{escape(subject, quote=True)}">'])
+        if replacing:
+            body.append(
+                '<p class="warning"><strong>Attenzione:</strong> creare questo scenario '
+                'sostituirà quello di prova attuale e rimuoverà i suoi abbinamenti e le '
+                'sue valutazioni. L’archivio reale non sarà modificato.</p>')
         if not activities:
             body.append("<p>Nessuna attività Garmin di nuoto, bici o corsa disponibile. "
                         "Non vengono inventate attività mancanti.</p>")
@@ -193,7 +200,9 @@ def make_trial_handler(archive_path: str, trial_path: str, *,
             try:
                 activities = available_activities(archive_path, subject)
                 self._send(render_trial_page(subject, activities=activities,
-                                             action_token=token_state["value"]))
+                                             action_token=token_state["value"],
+                                             state_token=trial_state_token(trial_path),
+                                             replacing=Path(trial_path).exists()))
             except Exception as error:
                 self._send(render_trial_page(subject, message=f"Dati non utilizzabili: {error}",
                                              action_token=token_state["value"]), 400)
@@ -229,7 +238,9 @@ def make_trial_handler(archive_path: str, trial_path: str, *,
                         "duration_minutes": values[f"duration_{index}"][0],
                         "rpe": values[f"rpe_{index}"][0],
                     } for index in values.get("selected", ()))
-                    create_trial(archive_path, trial_path, subject, choices)
+                    create_trial(
+                        archive_path, trial_path, subject, choices,
+                        expected_state_token=values.get("state_token", [""])[0])
                     review = review_database(trial_path, subject)
                     message = "Scenario ipotetico creato nell’archivio di prova separato."
                 elif values.get("operation", [""])[0] == "retry_evaluation":
@@ -260,7 +271,9 @@ def make_trial_handler(archive_path: str, trial_path: str, *,
                 activities = available_activities(archive_path, subject)
                 self._send(render_trial_page(subject, activities=activities,
                                              message=f"Scenario non salvato: {error}",
-                                             action_token=token_state["value"]), 400)
+                                             action_token=token_state["value"],
+                                             state_token=trial_state_token(trial_path),
+                                             replacing=Path(trial_path).exists()), 400)
 
         def log_message(self, *_args):
             return
