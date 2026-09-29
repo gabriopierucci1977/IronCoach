@@ -8,17 +8,20 @@ from hashlib import sha256
 from pathlib import Path
 import os
 import sqlite3
+import sys
 import tempfile
 import time
 
-if os.name == "nt":
+_IS_WINDOWS = sys.platform == "win32"
+
+if _IS_WINDOWS:
     import msvcrt
 else:
     import fcntl
 
 
 def _lock(handle) -> None:
-    if os.name != "nt":
+    if not _IS_WINDOWS:
         fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
         return
 
@@ -44,7 +47,7 @@ def _lock(handle) -> None:
 
 
 def _unlock(handle) -> None:
-    if os.name == "nt":
+    if _IS_WINDOWS:
         handle.seek(0)
         msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
     else:

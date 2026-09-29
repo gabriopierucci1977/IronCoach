@@ -38,6 +38,7 @@ def test_repository_import_uses_windows_lock_backend_without_fcntl() -> None:
 import builtins
 import os
 import sys
+import tempfile
 import types
 
 real_import = builtins.__import__
@@ -47,10 +48,21 @@ def guarded_import(name, *args, **kwargs):
     return real_import(name, *args, **kwargs)
 
 builtins.__import__ = guarded_import
-os.name = "nt"
-sys.modules["msvcrt"] = types.SimpleNamespace(LK_NBLCK=1, LK_UNLCK=0, locking=lambda *args: None)
+sys.platform = "win32"
+calls = []
+sys.modules["msvcrt"] = types.SimpleNamespace(
+    LK_NBLCK=1,
+    LK_UNLCK=0,
+    locking=lambda *args: calls.append(args),
+)
 from backend.maintain_plan.repository import MaintainPlanRepository
+from backend.maintain_plan.archive_lock import _lock, _unlock
+
 assert MaintainPlanRepository.__name__ == "MaintainPlanRepository"
+with tempfile.TemporaryFile(mode="w+b") as handle:
+    _lock(handle)
+    _unlock(handle)
+assert [call[1:] for call in calls] == [(1, 1), (0, 1)]
 '''
     result = subprocess.run(
         [sys.executable, "-c", script],
