@@ -228,7 +228,9 @@ def make_trial_handler(archive_path: str, trial_path: str, *,
                 self._send(render_trial_page(
                     subject, activities=activities,
                     message=f"Azione respinta: {reason}.",
-                    action_token=token_state["value"]), 403)
+                    action_token=token_state["value"],
+                    state_token=trial_state_token(trial_path),
+                    replacing=Path(trial_path).exists()), 403)
                 return
             try:
                 if values.get("operation", [""])[0] == "create":

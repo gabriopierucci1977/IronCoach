@@ -30,6 +30,7 @@ from .validators import validate_actual_session, validate_prescription
 
 POLICY_VERSION = "1.0.0-draft"
 _TRIAL_STATE_TABLE = "ironcoach_coach_trial_state"
+_SQLITE_SIDECAR_SUFFIXES = ("-wal", "-shm", "-journal")
 
 
 def _trial_state_token_unlocked(path: Path) -> str:
@@ -45,7 +46,8 @@ def _trial_state_token_unlocked(path: Path) -> str:
     if row is None:
         raise ValueError("scenario di prova privo di identificatore persistito")
     digest.update(str(row[0]).encode())
-    for candidate in (path, Path(f"{path}-wal"), Path(f"{path}-shm")):
+    for candidate in (path, *(Path(f"{path}{suffix}")
+                               for suffix in _SQLITE_SIDECAR_SUFFIXES)):
         digest.update(candidate.name.encode())
         if candidate.exists():
             digest.update(candidate.read_bytes())
@@ -62,7 +64,8 @@ def trial_state_token(trial_path: str | Path) -> str:
 def _archive_signature(path: Path) -> dict[str, tuple[int, str]]:
     """Fingerprint the database set without opening it through SQLite."""
     result = {}
-    for candidate in (path, Path(f"{path}-wal"), Path(f"{path}-shm")):
+    for candidate in (path, *(Path(f"{path}{suffix}")
+                               for suffix in _SQLITE_SIDECAR_SUFFIXES)):
         if candidate.exists():
             payload = candidate.read_bytes()
             result[candidate.name] = (len(payload), sha256(payload).hexdigest())
@@ -70,12 +73,12 @@ def _archive_signature(path: Path) -> dict[str, tuple[int, str]]:
 
 
 def _copy_stable_archive(path: Path, directory: str) -> Path:
-    """Copy one stable DB/WAL/SHM generation or fail instead of mixing generations."""
+    """Copy one stable SQLite generation or fail instead of mixing generations."""
     with archive_lock(path):
         before = _archive_signature(path)
         snapshot = Path(directory) / path.name
         shutil.copy2(path, snapshot)
-        for suffix in ("-wal", "-shm"):
+        for suffix in _SQLITE_SIDECAR_SUFFIXES:
             sidecar = Path(f"{path}{suffix}")
             if sidecar.exists():
                 shutil.copy2(sidecar, Path(f"{snapshot}{suffix}"))

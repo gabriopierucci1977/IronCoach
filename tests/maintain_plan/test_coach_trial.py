@@ -270,6 +270,9 @@ def test_rejected_codespaces_post_explains_reason_and_keeps_activities(tmp_path)
         assert "cookie di autorizzazione mancante" in page
         assert page.count("Usa questa attività") == 3
         assert "Nessuna attività Garmin" not in page
+        assert re.search(
+            r'name="state_token" value="([^"]+)"', page).group(1) == trial_state_token(trial)
+        assert "sostituirà quello di prova attuale" not in page
 
         connection.request("POST", "/", payload, {
             "Host": f"localhost:{port}", "Origin": "https://attacker.example",
@@ -285,6 +288,38 @@ def test_rejected_codespaces_post_explains_reason_and_keeps_activities(tmp_path)
         server.server_close()
         thread.join()
     assert not trial.exists()
+
+
+def test_rejected_post_preserves_replacement_state_without_weakening_guard(tmp_path):
+    archive, trial, server, thread = _codespaces_server(tmp_path)
+    create_trial(archive, trial, "athlete-1", ({
+        "session_id": "session-1", "sport": "RUN",
+        "duration_minutes": 50, "rpe": 8,
+    },), now=NOW)
+    expected_state = trial_state_token(trial)
+    _host, port = server.server_address
+    try:
+        connection = http.client.HTTPConnection("127.0.0.1", port)
+        payload = urlencode({"operation": "create", "action_token": "codespace-secret",
+                             "subject": "athlete-1"})
+        connection.request("POST", "/", payload, {
+            "Host": f"localhost:{port}",
+            "Origin": f"https://ironcoach-space-{port}.app.github.dev",
+            "Content-Type": "application/x-www-form-urlencoded",
+        })
+        response = connection.getresponse()
+        page = response.read().decode()
+
+        assert response.status == 403
+        assert "cookie di autorizzazione mancante" in page
+        assert re.search(
+            r'name="state_token" value="([^"]+)"', page).group(1) == expected_state
+        assert "sostituirà quello di prova attuale" in page
+        assert trial_state_token(trial) == expected_state
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join()
 
 
 def test_failed_trial_is_atomic_and_retry_replaces_without_duplicates(tmp_path):
@@ -574,6 +609,36 @@ def test_get_reads_committed_wal_without_touching_real_sqlite_files(tmp_path):
         assert not trial.exists()
     finally:
         keeper.close()
+
+
+def test_private_snapshot_copies_and_checks_rollback_journal(tmp_path, monkeypatch):
+    archive = _archive(tmp_path)
+    journal = Path(f"{archive}-journal")
+    journal.write_bytes(b"rollback state")
+    destination = tmp_path / "snapshot"
+    destination.mkdir()
+
+    snapshot = coach_trial_module._copy_stable_archive(archive, str(destination))
+
+    assert Path(f"{snapshot}-journal").read_bytes() == b"rollback state"
+
+    original_copy = coach_trial_module.shutil.copy2
+
+    def mutate_journal_after_copy(source, target):
+        result = original_copy(source, target)
+        if Path(source) == journal:
+            journal.write_bytes(b"changed concurrently")
+        return result
+
+    monkeypatch.setattr(coach_trial_module.shutil, "copy2", mutate_journal_after_copy)
+    second_destination = tmp_path / "unstable-snapshot"
+    second_destination.mkdir()
+    try:
+        coach_trial_module._copy_stable_archive(archive, str(second_destination))
+    except RuntimeError as error:
+        assert "cambiato durante la lettura" in str(error)
+    else:
+        raise AssertionError("a changing rollback journal must invalidate the snapshot")
 
 
 def test_application_lock_serializes_wal_writer_after_coherent_snapshot(
