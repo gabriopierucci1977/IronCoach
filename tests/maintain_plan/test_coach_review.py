@@ -26,7 +26,7 @@ from backend.maintain_plan.models import (
     PolicyRef, Requiredness, ResolutionMethod, SupportStatus,
 )
 from backend.maintain_plan.repository import MaintainPlanRepository
-from backend.maintain_plan.rpe_feedback import capture_observed_rpe
+from backend.maintain_plan.rpe_feedback import RpeFeedbackState, capture_observed_rpe
 from backend.maintain_plan.runtime_matching_decision import DecisionStatus
 from tests.maintain_plan.fixtures import NOW, RUN_PRESCRIPTION, RUN_SESSION
 
@@ -141,6 +141,28 @@ def test_browser_page_offers_every_candidate_and_a_no_write_exit(tmp_path):
     assert page.count("Conferma questa corrispondenza") == 2
     assert "Non lo so: non salvare nulla" in page
     assert repository.list_prescription_mappings() == ()
+
+
+@pytest.mark.parametrize(("state", "expected", "forbidden"), (
+    (RpeFeedbackState("VALUE", 7, "PORTAL_USER", "IronCoach"),
+     "dichiarato direttamente da te", "fonte: IronCoach"),
+    (RpeFeedbackState("VALUE", 7, "IMPORTED_SOURCE", "verified-garmin-import"),
+     "fonte: verified-garmin-import", "dichiarato direttamente da te"),
+    (RpeFeedbackState("VALUE", 7, "NEUTRAL", None),
+     "provenienza non attribuibile con affidabilità", "dichiarato direttamente da te"),
+))
+def test_browser_attributes_qualified_rpe_to_its_actual_origin(
+        tmp_path, state, expected, forbidden):
+    repository = _repository(tmp_path)
+    review = resolve_coach_choice(
+        repository, "athlete-1", "snapshot-1", "session-1", now=NOW)
+
+    page = render_page(
+        "athlete-1", review=replace(
+            review, rpe_requests=(("session-1", state),)))
+
+    assert expected in page
+    assert forbidden not in page
 
 
 def test_browser_checks_readiness_after_subject_is_entered(tmp_path):

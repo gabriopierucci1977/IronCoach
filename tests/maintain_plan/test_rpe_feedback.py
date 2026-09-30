@@ -7,8 +7,8 @@ import pytest
 
 from backend.maintain_plan.repository import MaintainPlanRepository
 from backend.maintain_plan.rpe_feedback import (
-    capture_database_observed_rpe, capture_observed_rpe, qualified_rpe, session_rpe,
-    session_rpe_state,
+    capture_database_observed_rpe, capture_observed_rpe, qualified_rpe,
+    rpe_attribution, session_rpe, session_rpe_state,
 )
 from tests.maintain_plan.fixtures import RUN_SESSION
 
@@ -78,6 +78,24 @@ def test_only_explicitly_qualified_source_value_is_reused():
     }
     assert qualified_rpe(unqualified_garmin) is None
     assert qualified_rpe(qualified) == 7
+
+
+def test_rpe_attribution_requires_explicit_portal_declaration():
+    portal = {
+        "provenance": {
+            "source": "ironcoach-coach-portal",
+            "declared_by": "ironcoach-user",
+            "capture_method": "direct-user-declaration",
+            "rpe_qualification": {"source": "ironcoach-user"},
+        }}
+    imported = {
+        "provenance": {"rpe_qualification": {"source": "verified-garmin-import"}}}
+    unattributable = {
+        "provenance": {"rpe_qualification": {"source": 42}}}
+
+    assert rpe_attribution(portal) == ("PORTAL_USER", "IronCoach")
+    assert rpe_attribution(imported) == ("IMPORTED_SOURCE", "verified-garmin-import")
+    assert rpe_attribution(unattributable) == ("NEUTRAL", None)
 
 
 def test_repeat_submission_is_idempotent_and_correction_is_append_only(tmp_path):

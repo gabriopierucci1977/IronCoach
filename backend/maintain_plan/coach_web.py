@@ -105,8 +105,14 @@ def render_page(subject_ref: str = "", *, review=None, message: str = "",
                         f"<p>Copertura: {escape(review.evaluation.evaluation_coverage.status.value)}</p>")
         for session_id, rpe_state in review.rpe_requests:
             if rpe_state.status == "VALUE":
+                if rpe_state.attribution == "PORTAL_USER":
+                    attribution = "dichiarato direttamente da te"
+                elif rpe_state.attribution == "IMPORTED_SOURCE" and rpe_state.source:
+                    attribution = f"fonte: {rpe_state.source}"
+                else:
+                    attribution = "provenienza non attribuibile con affidabilità"
                 body.append(f'<section class="completed"><strong>RPE osservato:</strong> '
-                            f'{escape(str(rpe_state.value))}/10 · dichiarato direttamente da te.'
+                            f'{escape(str(rpe_state.value))}/10 · {escape(attribution)}.'
                             '<p>Puoi correggerlo qui sotto se era errato.</p></section>')
             elif rpe_state.status == "OMITTED":
                 body.append('<section class="completed"><strong>RPE non indicato.</strong> '

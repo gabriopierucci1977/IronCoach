@@ -28,6 +28,8 @@ def _identifier(kind: str, session_id: str) -> str:
 class RpeFeedbackState:
     status: str
     value: int | float | None = None
+    attribution: str = "NEUTRAL"
+    source: str | None = None
 
 
 def _projection_id(session_id: str, sequence: int) -> str:
@@ -52,6 +54,26 @@ def qualified_rpe(payload: Mapping[str, Any] | None) -> int | float | None:
     return value
 
 
+def rpe_attribution(payload: Mapping[str, Any] | None) -> tuple[str, str | None]:
+    """Describe attribution without changing whether the RPE is qualified."""
+    if not isinstance(payload, Mapping):
+        return "NEUTRAL", None
+    provenance = payload.get("provenance")
+    if not isinstance(provenance, Mapping):
+        return "NEUTRAL", None
+    if (provenance.get("source") == "ironcoach-coach-portal" and
+            provenance.get("declared_by") == "ironcoach-user" and
+            provenance.get("capture_method") in {
+                "direct-user-declaration", "direct-user-correction"}):
+        return "PORTAL_USER", "IronCoach"
+    qualification = provenance.get("rpe_qualification")
+    source = (qualification.get("source")
+              if isinstance(qualification, Mapping) else None)
+    if isinstance(source, str) and source.strip():
+        return "IMPORTED_SOURCE", source.strip()
+    return "NEUTRAL", None
+
+
 def session_rpe_state(repository: MaintainPlanRepository, session_id: str) -> RpeFeedbackState:
     log = repository.get_feedback_log(_identifier("log", session_id))
     if log is not None:
@@ -59,10 +81,15 @@ def session_rpe_state(repository: MaintainPlanRepository, session_id: str) -> Rp
         if projection is None or projection.projected_payload is None:
             raise ValueError("feedback RPE privo di proiezione corrente")
         value = qualified_rpe(projection.projected_payload)
-        return RpeFeedbackState("OMITTED" if value is None else "VALUE", value)
+        attribution, source = rpe_attribution(projection.projected_payload)
+        return RpeFeedbackState(
+            "OMITTED" if value is None else "VALUE", value, attribution, source)
     session = repository.get_actual_session(session_id)
     value = None if session is None else qualified_rpe(session.athlete_feedback)
-    return RpeFeedbackState("UNANSWERED" if value is None else "VALUE", value)
+    attribution, source = rpe_attribution(
+        None if session is None else session.athlete_feedback)
+    return RpeFeedbackState(
+        "UNANSWERED" if value is None else "VALUE", value, attribution, source)
 
 
 def session_rpe(repository: MaintainPlanRepository, session_id: str) -> int | float | None:
