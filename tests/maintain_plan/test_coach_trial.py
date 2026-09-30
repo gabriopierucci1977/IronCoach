@@ -418,7 +418,7 @@ def test_get_reads_previous_schema_without_migrating_real_archive(tmp_path):
     with sqlite3.connect(archive) as connection:
         connection.execute("DROP INDEX idx_mp_mappings_snapshot_unique")
         connection.execute("DROP INDEX idx_mp_mappings_session_unique")
-        connection.execute("DELETE FROM maintain_plan_schema_migrations WHERE version = 8")
+        connection.execute("DELETE FROM maintain_plan_schema_migrations WHERE version >= 8")
     before = sha256(archive.read_bytes()).digest()
     trial = tmp_path / "trial.db"
     server = ThreadingHTTPServer(("127.0.0.1", 0), make_trial_handler(

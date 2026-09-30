@@ -2,6 +2,20 @@ IronCoach
 
 Sistema di coaching intelligente per analisi atleta, valutazione dello stato fisico e adattamento del piano di allenamento.
 
+## Principio di prodotto
+
+IronCoach è un coach personale basato sull’IA: integra la storia di
+allenamento e usa l’IA come componente centrale per analizzare, spiegare i
+feedback, proporre piani orientati a una gara e rivederli in base ai risultati
+e alle risposte dell’atleta. Matching, validazione e valutazioni
+deterministiche garantiscono l’affidabilità dei dati, ma non esauriscono il
+motore di coaching. `INSUFFICIENT_DATA` riguarda un confronto specifico e non
+blocca ogni feedback dell’IA; le risposte devono distinguere dati osservati,
+interpretazioni e incertezze senza inventare misure mancanti.
+
+Il requisito completo per gli sviluppi successivi è documentato in
+[`docs/AI_COACHING_PRODUCT_PRINCIPLE.md`](docs/AI_COACHING_PRODUCT_PRINCIPLE.md).
+
 Versione corrente: Beta 0.3.1 hardening candidate
 
 ## Primo percorso coach MAINTAIN_PLAN (Beta 0.4)

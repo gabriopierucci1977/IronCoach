@@ -29,6 +29,7 @@ class CoachReview:
     evaluation_message: str | None = None
     suspended_evaluations: tuple[tuple[CandidatePair, str], ...] = ()
     completed_evaluations: tuple[tuple[CandidatePair, object], ...] = ()
+    rpe_requests: tuple[tuple[str, object], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -127,6 +128,13 @@ def review_subject(repository: MaintainPlanRepository, subject_ref: str,
     are returned without a write: absence in imported data is not non-completion.
     """
     mappings = repository.list_prescription_mappings()
+    from .rpe_feedback import session_rpe_state
+    rpe_requests = tuple(
+        (mapping.actual_session_ref, session_rpe_state(repository, mapping.actual_session_ref))
+        for mapping in mappings
+        if (repository.get_actual_session(mapping.actual_session_ref) is not None and
+            repository.get_actual_session(mapping.actual_session_ref).subject_ref == subject_ref)
+    )
     snapshots_all = repository.list_prescription_snapshots(subject_ref)
     sessions_all = repository.list_actual_sessions(subject_ref)
     snapshots_by_id = {item.prescription_snapshot_id: item for item in snapshots_all}
@@ -167,7 +175,8 @@ def review_subject(repository: MaintainPlanRepository, subject_ref: str,
     if decision.status is not DecisionStatus.MATCHED or decision.selected_pair is None:
         return CoachReview(decision, candidate_details=details,
                            suspended_evaluations=tuple(suspended),
-                           completed_evaluations=tuple(completed))
+                           completed_evaluations=tuple(completed),
+                           rpe_requests=rpe_requests)
 
     pair = decision.selected_pair
     session = next(item for item in sessions if item.session_id == pair.session_id)
@@ -176,7 +185,8 @@ def review_subject(repository: MaintainPlanRepository, subject_ref: str,
             "Abbinamento automatico sospeso: l’attività contiene dati in conflitto."))
     return CoachReview(decision, candidate_details=details,
                        suspended_evaluations=tuple(suspended),
-                       completed_evaluations=tuple(completed))
+                       completed_evaluations=tuple(completed),
+                       rpe_requests=rpe_requests)
 
 
 def resolve_coach_choice(repository: MaintainPlanRepository, subject_ref: str,
@@ -268,8 +278,11 @@ def resolve_coach_choice(repository: MaintainPlanRepository, subject_ref: str,
             expected_scope=scope, expected_decision=decision)
     evaluation, saved_pair, message = _evaluate_saved(
         repository, snapshot, session, mapping, timestamp)
+    from .rpe_feedback import session_rpe_state
     return CoachReview(decision, evaluation, details, saved_pair, message,
-                       tuple(suspended))
+                       tuple(suspended),
+                       rpe_requests=((session.session_id,
+                                      session_rpe_state(repository, session.session_id)),))
 
 
 def review_database(database_path: str, subject_ref: str) -> CoachReview:
@@ -307,8 +320,11 @@ def retry_saved_evaluation(repository: MaintainPlanRepository, subject_ref: str,
     decision = decide_runtime_matching(scope)
     evaluation, pair, message = _evaluate_saved(
         repository, snapshot, session, mapping, now or datetime.now(timezone.utc))
+    from .rpe_feedback import session_rpe_state
     return CoachReview(decision, evaluation, saved_pair=pair,
-                       evaluation_message=message)
+                       evaluation_message=message,
+                       rpe_requests=((session.session_id,
+                                      session_rpe_state(repository, session.session_id)),))
 
 
 def retry_database_evaluation(database_path: str, subject_ref: str,

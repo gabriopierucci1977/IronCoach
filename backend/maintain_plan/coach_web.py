@@ -19,6 +19,7 @@ from .coach_review import (
     resolve_database_choice,
 )
 from .runtime_matching_decision import DecisionStatus
+from .rpe_feedback import capture_database_observed_rpe
 
 
 def _artifact_details(review, prescription_id: str, session_id: str):
@@ -102,6 +103,35 @@ def render_page(subject_ref: str = "", *, review=None, message: str = "",
                            if overall is None else overall.value)
             body.append(f"<h2>Conseguenza sul piano: {escape(consequence)}</h2>"
                         f"<p>Copertura: {escape(review.evaluation.evaluation_coverage.status.value)}</p>")
+        for session_id, rpe_state in review.rpe_requests:
+            if rpe_state.status == "VALUE":
+                body.append(f'<section class="completed"><strong>RPE osservato:</strong> '
+                            f'{escape(str(rpe_state.value))}/10 · dichiarato direttamente da te.'
+                            '<p>Puoi correggerlo qui sotto se era errato.</p></section>')
+            elif rpe_state.status == "OMITTED":
+                body.append('<section class="completed"><strong>RPE non indicato.</strong> '
+                            'Hai scelto di omettere il valore; puoi aggiungerlo in seguito.'
+                            '</section>')
+            if rpe_state.status == "UNANSWERED":
+                guidance = ('Nessuna risposta è stata ancora data. I dati acquisiti non '
+                            'contengono un RPE con significato e scala verificati.')
+            elif rpe_state.status == "OMITTED":
+                guidance = 'Puoi aggiungere ora un RPE oppure confermare di non indicarlo.'
+            else:
+                guidance = ('Inserisci un nuovo valore solo per correggere quello dichiarato; '
+                            'la correzione sarà aggiunta allo storico.')
+            body.append(
+                '<section><strong>RPE osservato facoltativo</strong>'
+                f'<p>{escape(guidance)} '
+                'Puoi indicarlo da 1 a 10 oppure lasciare vuoto: il feedback disponibile resta '
+                'visibile e la valutazione quantitativa può restare INSUFFICIENT_DATA.</p>'
+                '<form method="post">'
+                f'<input type="hidden" name="action_token" value="{escape(action_token, quote=True)}">'
+                f'<input type="hidden" name="subject" value="{escape(subject_ref, quote=True)}">'
+                f'<input type="hidden" name="session" value="{escape(session_id, quote=True)}">'
+                '<input type="hidden" name="operation" value="capture_rpe">'
+                '<label>RPE osservato (1–10) <input type="number" name="rpe" min="1" max="10" step="1"></label>'
+                '<button>Salva risposta (anche vuota)</button></form></section>')
     style = "body{font:18px system-ui;max-width:850px;margin:40px auto;padding:0 20px}" \
             "input,button{font:inherit;padding:8px;margin:6px}.candidate{border:1px solid #bbb;padding:16px;margin:12px 0}" \
             ".message,.completed{background:#eef8ee;padding:12px}.warning{background:#fff3cd;padding:12px}"
@@ -183,7 +213,7 @@ def _trusted_origins(port: int, environment=None) -> dict[str, str]:
 
 
 def make_handler(database_path: str, *, action_token: str | None = None,
-                 environment=None):
+                 environment=None, configured_subject: str | None = None):
     token = action_token or secrets.token_urlsafe(32)
     environment = dict(os.environ if environment is None else environment)
     class CoachHandler(BaseHTTPRequestHandler):
@@ -258,17 +288,27 @@ def make_handler(database_path: str, *, action_token: str | None = None,
                         message="Azione respinta: origine o autorizzazione non valida.",
                         action_token=token), 403)
                     return
+                operation = values.get("operation", [""])[0]
                 prescription = values.get("prescription", [""])[0]
                 session = values.get("session", [""])[0]
-                if values.get("operation", [""])[0] == "retry_evaluation":
+                if operation == "capture_rpe":
+                    authoritative_subject = configured_subject or subject
+                    capture_database_observed_rpe(
+                        database_path, session_id=session,
+                        submitted_rpe=values.get("rpe", [""])[0])
+                    review = review_database(database_path, authoritative_subject)
+                    subject = authoritative_subject
+                    message = "RPE osservato registrato; i dati mancanti restano dichiarati come tali."
+                elif operation == "retry_evaluation":
                     review = retry_database_evaluation(
                         database_path, subject, prescription, session)
                 else:
                     review = resolve_database_choice(
                         database_path, subject, prescription, session)
-                message = ("Scelta del coach salvata e piano valutato."
-                           if review.evaluation is not None
-                           else "Scelta del coach salvata.")
+                if operation != "capture_rpe":
+                    message = ("Scelta del coach salvata e piano valutato."
+                               if review.evaluation is not None
+                               else "Scelta del coach salvata.")
                 self._send(render_page(subject, review=review, message=message,
                                        action_token=token))
             except Exception as error:
@@ -307,7 +347,9 @@ def run(open_browser: bool = True, subject_ref: str | None = None) -> None:
         print(readiness.message())
         if not readiness.ready:
             raise RuntimeError(readiness.message())
-    server = ThreadingHTTPServer(("127.0.0.1", 8765), make_handler(database_path))
+    server = ThreadingHTTPServer(
+        ("127.0.0.1", 8765),
+        make_handler(database_path, configured_subject=subject_ref))
     origin = next(iter(_trusted_origins(server.server_address[1]).values()))
     label = ("Revisione coach pronta" if subject_ref is not None
              else "Pagina coach pronta per il controllo atleta")
