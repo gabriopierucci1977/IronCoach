@@ -71,12 +71,18 @@ configurata da `OPENAI_API_KEY` (modello configurabile con
 interpretazione e incertezze. Se la chiave manca o la chiamata fallisce, la
 pagina mostra **Parere IA non disponibile** e non sostituisce l'IA con un testo
 deterministico. Il contesto include al massimo le cinque sedute precedenti.
+La durata mostrata al coach proviene dalla metrica secondaria canonica
+`duration` in minuti: resta una durata osservata e non viene reinterpretata
+come `active_duration` o quantità primaria, né ricavata dagli orari di inizio e
+fine quando la metrica manca.
 
 Quando esistono prescrizioni ma il collegamento non è già affidabile, la pagina
 chiede se la sessione appartiene al programma o è autonoma e conserva la
 risposta. Solo la scelta esplicita di una prescrizione crea il mapping e abilita
 il confronto; il percorso RPE 1–10 resta facoltativo e conserva la provenienza
-della dichiarazione dell'utente.
+della dichiarazione dell'utente. Una sessione già dichiarata autonoma viene
+esclusa dai candidati di matching e non può essere associata implicitamente a
+una prescrizione: prima occorre un cambio di decisione esplicito.
 
 ### Preparazione e avvio in GitHub Codespaces
 

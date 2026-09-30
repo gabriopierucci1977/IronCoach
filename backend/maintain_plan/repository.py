@@ -291,11 +291,24 @@ class MaintainPlanRepository:
         if snapshot is None or session is None:
             raise ValueError("mapping must reference a persisted snapshot and actual session")
         self._validate_mapping_refs(value, snapshot, session)
-        self._insert(
-            "INSERT INTO maintain_plan_prescription_mappings VALUES (?, ?, ?, ?, ?, ?)",
-            (value.mapping_id, value.prescription_snapshot_ref, value.actual_session_ref,
-             value.resolution_method.value, PAYLOAD_SCHEMA_VERSION, serialize_contract(value)),
-        )
+        with self._connect() as connection:
+            self._reject_autonomous_mapping(connection, value.actual_session_ref)
+            connection.execute(
+                "INSERT INTO maintain_plan_prescription_mappings VALUES (?, ?, ?, ?, ?, ?)",
+                (value.mapping_id, value.prescription_snapshot_ref, value.actual_session_ref,
+                 value.resolution_method.value, PAYLOAD_SCHEMA_VERSION,
+                 serialize_contract(value)))
+
+    @staticmethod
+    def _reject_autonomous_mapping(connection: sqlite3.Connection,
+                                   session_id: str) -> None:
+        relation = connection.execute(
+            "SELECT relation FROM maintain_plan_session_relations WHERE session_id = ?",
+            (session_id,),
+        ).fetchone()
+        if relation is not None and relation[0] == "AUTONOMOUS":
+            raise ValueError(
+                "actual session is explicitly autonomous; change the decision first")
 
     def persist_prescription_mapping(
         self,
@@ -401,6 +414,7 @@ class MaintainPlanRepository:
                     raise ValueError("matching decision is no longer valid")
             # Legacy NULL ownership is readable for compatibility, but never mapping eligible.
             self._validate_mapping_refs(value, snapshot, session)
+            self._reject_autonomous_mapping(connection, value.actual_session_ref)
 
             decoded = {
                 key: None if row is None else self._decode_prescription_mapping_row(row)
@@ -494,6 +508,7 @@ class MaintainPlanRepository:
             if snapshot is None or session is None:
                 raise ValueError("confirmed mapping artifacts are no longer available")
             self._validate_mapping_refs(mapping, snapshot, session)
+            self._reject_autonomous_mapping(connection, mapping.actual_session_ref)
 
             connection.execute(
                 "INSERT INTO maintain_plan_matching_results VALUES (?, ?, ?, ?, ?, ?, ?)",
@@ -594,6 +609,15 @@ class MaintainPlanRepository:
         if snapshot is not None and snapshot.subject_ref != session.subject_ref:
             raise ValueError("session and prescription owners differ")
         with self._connect() as connection:
+            mapped = connection.execute(
+                "SELECT prescription_snapshot_ref FROM maintain_plan_prescription_mappings "
+                "WHERE actual_session_ref = ?", (session_id,),
+            ).fetchone()
+            if relation == "AUTONOMOUS" and mapped is not None:
+                raise ValueError("a mapped session cannot be declared autonomous")
+            if (relation == "PROGRAM" and mapped is not None
+                    and mapped[0] != prescription_snapshot_id):
+                raise ValueError("session is mapped to a different prescription")
             existing = connection.execute(
                 "SELECT relation, prescription_snapshot_id FROM maintain_plan_session_relations "
                 "WHERE session_id = ?", (session_id,),

@@ -35,18 +35,26 @@ def _number(value):
     return value if isinstance(value, (int, float)) and not isinstance(value, bool) else None
 
 
+def _duration_minutes(component) -> float | None:
+    """Read an observed duration only when metric semantics and unit are explicit."""
+    for metric in component.secondary_metrics:
+        if (metric.get("metric") == "duration" and metric.get("unit") == "min"
+                and _number(metric.get("value")) is not None):
+            return metric["value"]
+    legacy = component.quantity_observation or {}
+    if (legacy.get("metric") == "duration" and legacy.get("unit") == "min"
+            and _number(legacy.get("value")) is not None):
+        return legacy["value"]
+    nested = legacy.get("duration")
+    if (isinstance(nested, dict) and nested.get("unit") == "min"
+            and _number(nested.get("value")) is not None):
+        return nested["value"]
+    return None
+
+
 def session_facts(session, *, rpe: int | None = None) -> SessionFacts:
-    durations = []
-    for component in session.components:
-        observation = component.quantity_observation or {}
-        seconds = _number(observation.get("seconds"))
-        minutes = _number(observation.get("minutes"))
-        if seconds is not None:
-            durations.append(seconds / 60)
-        elif minutes is not None:
-            durations.append(minutes)
-    if not durations and session.end is not None:
-        durations.append((session.end - session.start).total_seconds() / 60)
+    durations = [duration for component in session.components
+                 if (duration := _duration_minutes(component)) is not None]
     sports = sorted({component.discipline.value for component in session.components
                      if component.discipline is not None})
     return SessionFacts(
@@ -68,7 +76,9 @@ def _openai_comment(payload: dict) -> dict:
             "Sei IronCoach. Rispondi in italiano come coach personale. Usa soltanto il JSON "
             "fornito, senza inventare valori Garmin/Strava. Restituisci solo JSON con le chiavi "
             "observed, interpretation, uncertainties. Separa fatti, lettura prudente e limiti. "
-            "La storia serve come contesto, non come prescrizione."),
+            "Se session.duration_minutes è presente, riportala in observed soltanto come durata "
+            "osservata: non chiamarla active_duration né quantità primaria. Se è null, non "
+            "inventarla. La storia serve come contesto, non come prescrizione."),
         input=json.dumps(payload, ensure_ascii=False),
     )
     return json.loads(response.output_text)

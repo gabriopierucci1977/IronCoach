@@ -167,7 +167,8 @@ def review_subject(repository: MaintainPlanRepository, subject_ref: str,
     snapshots = tuple(item for item in snapshots_all
                       if item.prescription_snapshot_id not in mapped_prescriptions)
     sessions = tuple(item for item in sessions_all
-                     if item.session_id not in mapped_sessions)
+                     if item.session_id not in mapped_sessions and
+                     repository.get_session_relation(item.session_id) != ("AUTONOMOUS", None))
     scope = validate_runtime_matching_scope(subject_ref, snapshots, sessions)
     decision = decide_runtime_matching(scope)
     details = _details(decision, snapshots, sessions)
@@ -192,6 +193,9 @@ def resolve_coach_choice(repository: MaintainPlanRepository, subject_ref: str,
                          prescription_id: str, session_id: str, *,
                          now: datetime | None = None) -> CoachReview:
     """Persist an explicit coach choice only if it is still a current candidate."""
+    if repository.get_session_relation(session_id) == ("AUTONOMOUS", None):
+        raise ValueError(
+            "la sessione è stata dichiarata autonoma; cambia prima la decisione esplicitamente")
     mappings = repository.list_prescription_mappings()
     suspended = []
     for existing_mapping in mappings:
@@ -209,7 +213,8 @@ def resolve_coach_choice(repository: MaintainPlanRepository, subject_ref: str,
     snapshots = tuple(item for item in repository.list_prescription_snapshots(subject_ref)
                       if item.prescription_snapshot_id not in used_prescriptions)
     sessions = tuple(item for item in repository.list_actual_sessions(subject_ref)
-                     if item.session_id not in used_sessions)
+                     if item.session_id not in used_sessions and
+                     repository.get_session_relation(item.session_id) != ("AUTONOMOUS", None))
     scope = validate_runtime_matching_scope(subject_ref, snapshots, sessions)
     decision = decide_runtime_matching(scope)
     details = _details(decision, snapshots, sessions)
