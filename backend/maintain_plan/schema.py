@@ -12,7 +12,7 @@ from typing import Callable, Iterable
 from .archive_lock import archive_lock
 
 
-SCHEMA_VERSION = 9
+SCHEMA_VERSION = 10
 
 
 @dataclass(frozen=True)
@@ -474,6 +474,28 @@ def _migration_9(connection: sqlite3.Connection) -> None:
 
 MIGRATIONS = MIGRATIONS + (Migration(
     9, hashlib.sha256(_MIGRATION_9_SQL.encode("utf-8")).hexdigest(), _migration_9,
+),)
+
+
+_MIGRATION_10_SQL = """
+CREATE TABLE maintain_plan_session_relations (
+    session_id TEXT PRIMARY KEY REFERENCES maintain_plan_actual_sessions(session_id),
+    relation TEXT NOT NULL CHECK (relation IN ('AUTONOMOUS', 'PROGRAM')),
+    prescription_snapshot_id TEXT REFERENCES maintain_plan_prescription_snapshots(prescription_snapshot_id),
+    decided_at TEXT NOT NULL,
+    actor TEXT NOT NULL,
+    CHECK ((relation = 'AUTONOMOUS' AND prescription_snapshot_id IS NULL)
+        OR (relation = 'PROGRAM' AND prescription_snapshot_id IS NOT NULL))
+)
+""".strip()
+
+
+def _migration_10(connection: sqlite3.Connection) -> None:
+    connection.execute(_MIGRATION_10_SQL)
+
+
+MIGRATIONS = MIGRATIONS + (Migration(
+    10, hashlib.sha256(_MIGRATION_10_SQL.encode("utf-8")).hexdigest(), _migration_10,
 ),)
 
 

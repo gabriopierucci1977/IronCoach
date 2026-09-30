@@ -40,16 +40,15 @@ class CoachReviewReadiness:
 
     @property
     def ready(self) -> bool:
-        return self.prescription_count > 0 and self.activity_count > 0
+        return self.activity_count > 0
 
     def message(self) -> str:
         if self.ready:
-            return ("Revisione pronta per " + self.subject_ref + ": "
-                    f"{self.prescription_count} prescrizione/i e "
-                    f"{self.activity_count} attività acquisita/e.")
+            plan = (f"{self.prescription_count} prescrizione/i"
+                    if self.prescription_count else "nessuna prescrizione: sedute autonome")
+            return ("Revisione pronta per " + self.subject_ref + ": " + plan +
+                    f" e {self.activity_count} attività acquisita/e.")
         missing = []
-        if self.prescription_count == 0:
-            missing.append("una prescrizione MAINTAIN_PLAN")
         if self.activity_count == 0:
             missing.append("un’attività Garmin acquisita")
         return "Revisione non pronta per " + self.subject_ref + ": manca " + " e ".join(missing) + "."

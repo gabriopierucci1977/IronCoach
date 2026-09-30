@@ -6,6 +6,7 @@ import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Iterator, Mapping
+from datetime import datetime
 
 from .models import (ActualSession, Confirmation, ConfirmationAnswerType, ExecutionEvaluation, FeedbackEvent, FeedbackEventLog,
                      FeedbackProjection, MatchingResult, PrescriptionMapping,
@@ -567,6 +568,46 @@ class MaintainPlanRepository:
                 raise ValueError("stored prescription mapping has unresolved references")
             self._validate_mapping_refs(value, snapshot, session)
         return values
+
+    def get_session_relation(self, session_id: str) -> tuple[str, str | None] | None:
+        """Return the athlete's durable classification of an ambiguous session."""
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT relation, prescription_snapshot_id FROM maintain_plan_session_relations "
+                "WHERE session_id = ?", (session_id,),
+            ).fetchone()
+        return None if row is None else (row[0], row[1])
+
+    def save_session_relation(self, session_id: str, relation: str,
+                              prescription_snapshot_id: str | None, *,
+                              decided_at: datetime, actor: str = "athlete") -> None:
+        """Persist a choice once; identical retries are idempotent, changes are explicit."""
+        if relation not in {"AUTONOMOUS", "PROGRAM"}:
+            raise ValueError("unsupported session relation")
+        session = self.get_actual_session(session_id)
+        snapshot = (self.get_prescription_snapshot(prescription_snapshot_id)
+                    if prescription_snapshot_id else None)
+        if session is None:
+            raise ValueError("unknown actual session")
+        if (relation == "PROGRAM") != (snapshot is not None):
+            raise ValueError("a program relation requires a real prescription")
+        if snapshot is not None and snapshot.subject_ref != session.subject_ref:
+            raise ValueError("session and prescription owners differ")
+        with self._connect() as connection:
+            existing = connection.execute(
+                "SELECT relation, prescription_snapshot_id FROM maintain_plan_session_relations "
+                "WHERE session_id = ?", (session_id,),
+            ).fetchone()
+            proposed = (relation, prescription_snapshot_id)
+            if existing is not None and tuple(existing) != proposed:
+                raise ValueError("session relation was already decided differently")
+            connection.execute(
+                "INSERT OR IGNORE INTO maintain_plan_session_relations "
+                "(session_id, relation, prescription_snapshot_id, decided_at, actor) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (session_id, relation, prescription_snapshot_id,
+                 decided_at.isoformat(), actor),
+            )
 
     @staticmethod
     def _validate_mapping_refs(value: PrescriptionMapping, snapshot: PrescriptionSnapshot,

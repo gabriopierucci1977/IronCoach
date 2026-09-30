@@ -653,7 +653,7 @@ def test_launcher_loads_project_dotenv_and_requires_configured_archive(
 
 @pytest.mark.parametrize(("with_plan", "with_activity", "ready", "missing"), [
     (True, False, False, "un’attività Garmin acquisita"),
-    (False, True, False, "una prescrizione MAINTAIN_PLAN"),
+    (False, True, True, None),
     (True, True, True, None),
 ])
 def test_review_readiness_requires_both_artifact_types_for_same_athlete(
@@ -671,9 +671,10 @@ def test_review_readiness_requires_both_artifact_types_for_same_athlete(
     assert result.prescription_count == int(with_plan)
     assert result.activity_count == int(with_activity)
     if missing is None:
+        plan = ("1 prescrizione/i" if with_plan
+                else "nessuna prescrizione: sedute autonome")
         assert result.message() == (
-            "Revisione pronta per athlete-1: 1 prescrizione/i e "
-            "1 attività acquisita/e.")
+            f"Revisione pronta per athlete-1: {plan} e 1 attività acquisita/e.")
     else:
         assert missing in result.message()
 
