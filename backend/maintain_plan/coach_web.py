@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from html import escape
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, urlencode, urlparse
 from pathlib import Path
 import hmac
 import os
@@ -20,6 +20,8 @@ from .coach_review import (
 )
 from .runtime_matching_decision import DecisionStatus
 from .rpe_feedback import capture_database_observed_rpe
+from .repository import MaintainPlanRepository
+from .session_coach import ai_comment, save_relation, session_facts
 
 
 def _artifact_details(review, prescription_id: str, session_id: str):
@@ -29,13 +31,67 @@ def _artifact_details(review, prescription_id: str, session_id: str):
 
 
 def render_page(subject_ref: str = "", *, review=None, message: str = "",
-                action_token: str = "") -> str:
-    body = ["<h1>IronCoach · Revisione piano</h1>",
-            "<p>Confronta gli allenamenti previsti con le attività importate già disponibili.</p>",
+                action_token: str = "", sessions=(), selected_session=None,
+                ai_result=None, prescriptions=(), relation=None) -> str:
+    body = ["<h1>IronCoach · Le tue sedute</h1>",
+            "<p>Esamina un allenamento svolto, con o senza un piano.</p>",
             '<form method="get"><label>ID atleta <input name="subject" required value="' +
             escape(subject_ref, quote=True) + '"></label><button>Esamina</button></form>']
     if message:
         body.append(f'<p class="message">{escape(message)}</p>')
+    if sessions:
+        body.append("<h2>Archivio allenamenti</h2>")
+        for item in sessions:
+            facts = session_facts(item)
+            duration = ("durata non disponibile" if facts.duration_minutes is None
+                        else f"{facts.duration_minutes:g} min")
+            body.append(
+                '<article class="candidate">'
+                f'<b>{escape(facts.sport)}</b> · {escape(facts.start)} · {escape(duration)} '
+                f'<a href="/?subject={escape(subject_ref, quote=True)}&amp;session='
+                f'{escape(item.session_id, quote=True)}">Esamina</a></article>')
+    if selected_session is not None:
+        facts = session_facts(selected_session)
+        body.append(f'<section><h2>Sessione {escape(facts.session_id)}</h2>'
+                    f'<h3>Dati osservati</h3><p>Sport: {escape(facts.sport)}; '
+                    f'inizio: {escape(facts.start)}; durata: '
+                    f'{escape("non disponibile" if facts.duration_minutes is None else str(facts.duration_minutes) + " min")}.</p></section>')
+        if relation is not None:
+            body.append(f'<p class="completed"><strong>Scelta conservata:</strong> '
+                        f'{escape(relation[0])}</p>')
+        elif prescriptions:
+            body.append('<section class="warning"><strong>Collegamento dubbio.</strong> '
+                        '<p>Questa sessione appartiene al programma oppure è autonoma?</p>'
+                        '<form method="post">'
+                        f'<input type="hidden" name="action_token" value="{escape(action_token, quote=True)}">'
+                        f'<input type="hidden" name="subject" value="{escape(subject_ref, quote=True)}">'
+                        f'<input type="hidden" name="session" value="{escape(facts.session_id, quote=True)}">'
+                        '<input type="hidden" name="operation" value="save_relation">'
+                        '<button name="relation" value="AUTONOMOUS">È autonoma</button>')
+            for prescription in prescriptions:
+                body.append(f'<button name="relation" value="PROGRAM:{escape(prescription.prescription_snapshot_id, quote=True)}">'
+                            f'Appartiene a {escape(prescription.prescription_snapshot_id)}</button>')
+            body.append('</form></section>')
+        else:
+            body.append('<p class="completed"><strong>Sessione autonoma:</strong> '
+                        'non esistono prescrizioni da confrontare.</p>')
+        if ai_result is not None and ai_result.available:
+            body.append('<section class="ai"><h2>Parere IA</h2>'
+                        f'<h3>Dati osservati</h3><p>{escape(ai_result.observed)}</p>'
+                        f'<h3>Interpretazione</h3><p>{escape(ai_result.interpretation)}</p>'
+                        f'<h3>Incertezze</h3><p>{escape(ai_result.uncertainties)}</p></section>')
+        elif ai_result is not None:
+            body.append('<section class="warning"><h2>Parere IA non disponibile</h2>'
+                        f'<p>{escape(ai_result.unavailable_reason)}</p></section>')
+        body.append('<section><strong>RPE facoltativo</strong><p>Se aiuta a interpretare la '
+                    'seduta, indica lo sforzo percepito senza attribuirlo a Garmin o Strava.</p>'
+                    '<form method="post">'
+                    f'<input type="hidden" name="action_token" value="{escape(action_token, quote=True)}">'
+                    f'<input type="hidden" name="subject" value="{escape(subject_ref, quote=True)}">'
+                    f'<input type="hidden" name="session" value="{escape(facts.session_id, quote=True)}">'
+                    '<input type="hidden" name="operation" value="capture_session_rpe">'
+                    '<input type="number" name="rpe" min="1" max="10"><button>Salva RPE</button>'
+                    '</form></section>')
     if review is not None:
         decision = review.decision
         for pair, suspended_message in review.suspended_evaluations:
@@ -140,7 +196,8 @@ def render_page(subject_ref: str = "", *, review=None, message: str = "",
                 '<button>Salva risposta (anche vuota)</button></form></section>')
     style = "body{font:18px system-ui;max-width:850px;margin:40px auto;padding:0 20px}" \
             "input,button{font:inherit;padding:8px;margin:6px}.candidate{border:1px solid #bbb;padding:16px;margin:12px 0}" \
-            ".message,.completed{background:#eef8ee;padding:12px}.warning{background:#fff3cd;padding:12px}"
+            ".message,.completed{background:#eef8ee;padding:12px}.warning{background:#fff3cd;padding:12px}" \
+            ".ai{background:#eef4ff;border-left:5px solid #315efb;padding:16px}a{margin-left:12px}"
     return "<!doctype html><html lang=it><meta charset=utf-8><title>IronCoach Coach</title>" \
            f"<style>{style}</style><body>{''.join(body)}</body></html>"
 
@@ -263,15 +320,34 @@ def make_handler(database_path: str, *, action_token: str | None = None,
                 if not subject:
                     self._send(render_page(action_token=token))
                     return
-                readiness = database_review_readiness(database_path, subject)
-                if not readiness.ready:
+                repository = MaintainPlanRepository(database_path)
+                sessions = repository.list_actual_sessions(subject)
+                if not sessions:
+                    readiness = database_review_readiness(database_path, subject)
                     self._send(render_page(
                         subject, message=readiness.message(), action_token=token))
                     return
-                review = review_database(database_path, subject)
+                session_id = parse_qs(urlparse(self.path).query).get("session", [""])[0]
+                selected = repository.get_actual_session(session_id) if session_id else None
+                if selected is not None and selected.subject_ref != subject:
+                    selected = None
+                prescriptions = repository.list_prescription_snapshots(subject)
+                review = review_database(database_path, subject) if prescriptions else None
+                stored_relation = (repository.get_session_relation(session_id)
+                                   if selected is not None else None)
+                if selected is not None and stored_relation is None:
+                    mapping = next((item for item in repository.list_prescription_mappings()
+                                    if item.actual_session_ref == session_id), None)
+                    if mapping is not None:
+                        stored_relation = ("PROGRAM", mapping.prescription_snapshot_ref)
                 self._send(render_page(
-                    subject, review=review, message=readiness.message(),
-                    action_token=token))
+                    subject, review=review,
+                    message=f"{len(sessions)} attività disponibile/i.", action_token=token,
+                    sessions=sessions, selected_session=selected,
+                    ai_result=(ai_comment(repository, subject, session_id)
+                               if selected is not None else None),
+                    prescriptions=prescriptions,
+                    relation=stored_relation))
             except Exception as error:
                 self._send(render_page(subject, message=f"Dati non utilizzabili: {error}"), 400)
 
@@ -297,14 +373,38 @@ def make_handler(database_path: str, *, action_token: str | None = None,
                 operation = values.get("operation", [""])[0]
                 prescription = values.get("prescription", [""])[0]
                 session = values.get("session", [""])[0]
-                if operation == "capture_rpe":
+                if operation in {"capture_rpe", "capture_session_rpe"}:
                     authoritative_subject = configured_subject or subject
                     capture_database_observed_rpe(
                         database_path, session_id=session,
                         submitted_rpe=values.get("rpe", [""])[0])
+                    repository = MaintainPlanRepository(database_path)
+                    sessions = repository.list_actual_sessions(authoritative_subject)
+                    selected = repository.get_actual_session(session)
+                    if operation == "capture_session_rpe":
+                        self._send(render_page(
+                            authoritative_subject, message="RPE osservato registrato.",
+                            action_token=token, sessions=sessions, selected_session=selected,
+                            ai_result=ai_comment(repository, authoritative_subject, session),
+                            prescriptions=repository.list_prescription_snapshots(authoritative_subject),
+                            relation=repository.get_session_relation(session)))
+                        return
                     review = review_database(database_path, authoritative_subject)
                     subject = authoritative_subject
                     message = "RPE osservato registrato; i dati mancanti restano dichiarati come tali."
+                elif operation == "save_relation":
+                    raw_relation = values.get("relation", [""])[0]
+                    relation, _, prescription_id = raw_relation.partition(":")
+                    if relation == "PROGRAM":
+                        resolve_database_choice(
+                            database_path, subject, prescription_id, session)
+                    save_relation(MaintainPlanRepository(database_path), subject, session,
+                                  relation, prescription_id or None)
+                    self.send_response(303)
+                    self.send_header("Location", "/?" + urlencode(
+                        {"subject": subject, "session": session}))
+                    self.end_headers()
+                    return
                 elif operation == "retry_evaluation":
                     review = retry_database_evaluation(
                         database_path, subject, prescription, session)

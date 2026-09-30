@@ -63,11 +63,32 @@ Il comando è **di sola consultazione**: non salva abbinamenti né valutazioni.
 Per confermare e salvare una proposta usare la pagina browser avviata con
 uno dei file `Avvia revisione coach`.
 
+La pagina elenca e apre le `ActualSession` anche quando non esiste alcuna
+`PrescriptionSnapshot`: in quel caso la seduta è dichiarata autonoma e non
+viene creato alcun piano o collegamento. Il parere usa l'API OpenAI già
+configurata da `OPENAI_API_KEY` (modello configurabile con
+`IRONCOACH_AI_MODEL`, default `gpt-5-mini`) e separa dati osservati,
+interpretazione e incertezze. Se la chiave manca o la chiamata fallisce, la
+pagina mostra **Parere IA non disponibile** e non sostituisce l'IA con un testo
+deterministico. Il contesto include al massimo le cinque sedute precedenti.
+La durata mostrata al coach proviene dalla metrica secondaria canonica
+`duration` in minuti: resta una durata osservata e non viene reinterpretata
+come `active_duration` o quantità primaria, né ricavata dagli orari di inizio e
+fine quando la metrica manca.
+
+Quando esistono prescrizioni ma il collegamento non è già affidabile, la pagina
+chiede se la sessione appartiene al programma o è autonoma e conserva la
+risposta. Solo la scelta esplicita di una prescrizione crea il mapping e abilita
+il confronto; il percorso RPE 1–10 resta facoltativo e conserva la provenienza
+della dichiarazione dell'utente. Una sessione già dichiarata autonoma viene
+esclusa dai candidati di matching e non può essere associata implicitamente a
+una prescrizione: prima occorre un cambio di decisione esplicito.
+
 ### Preparazione e avvio in GitHub Codespaces
 
-La pagina non inizializza un archivio vuoto: prima deve esistere almeno un
-piano `MAINTAIN_PLAN` prodotto dal runtime reale e devono essere state lette le
-attività Garmin dell'atleta. Nel file `.env` impostare:
+La pagina non inizializza un archivio vuoto: devono essere già state lette le
+attività Garmin dell'atleta. Un piano `MAINTAIN_PLAN` è facoltativo e serve
+soltanto per il confronto previsto/osservato. Nel file `.env` impostare:
 
 ```dotenv
 IRONCOACH_MAINTAIN_PLAN_SNAPSHOT_ENABLED=true
@@ -92,14 +113,13 @@ Poi, nel terminale del Codespace:
    `data/ironcoach_maintain_plan.db`. Non usare `--dry-run`: per definizione non
    scrive gli artefatti MAINTAIN_PLAN.
 3. Eseguire `./Avvia\ revisione\ coach.sh ID_ATLETA`. Il controllo iniziale
-   stampa `Revisione pronta` soltanto se, per quello stesso atleta, trova almeno
-   una prescrizione MAINTAIN_PLAN e un'attività Garmin acquisita; altrimenti
-   indica precisamente quale dei due elementi manca e non avvia la pagina.
+   stampa `Revisione pronta` se, per quello stesso atleta, trova almeno
+   un'attività acquisita. Una prescrizione MAINTAIN_PLAN non è più necessaria
+   per esaminare una seduta autonoma.
    In alternativa, eseguire `./Avvia\ revisione\ coach.sh` senza argomenti
    (anche con doppio clic): si apre la pagina iniziale e il medesimo controllo
-   viene eseguito dopo che il coach inserisce l'ID. Finché piano e attività non
-   sono entrambi presenti, la pagina indica cosa manca e non dichiara pronta la
-   revisione.
+   viene eseguito dopo che il coach inserisce l'ID. Se manca l'attività, la
+   pagina indica cosa manca e non dichiara pronta la revisione.
 4. Aprire **Porte**, lasciare la porta `8765` su **Privata** e scegliere
    **Apri nel browser**. Inserire come ID atleta il `record_id` del profilo
    atleta Airtable (il valore `source_id` mostrato dal runtime).

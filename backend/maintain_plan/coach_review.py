@@ -40,16 +40,15 @@ class CoachReviewReadiness:
 
     @property
     def ready(self) -> bool:
-        return self.prescription_count > 0 and self.activity_count > 0
+        return self.activity_count > 0
 
     def message(self) -> str:
         if self.ready:
-            return ("Revisione pronta per " + self.subject_ref + ": "
-                    f"{self.prescription_count} prescrizione/i e "
-                    f"{self.activity_count} attività acquisita/e.")
+            plan = (f"{self.prescription_count} prescrizione/i"
+                    if self.prescription_count else "nessuna prescrizione: sedute autonome")
+            return ("Revisione pronta per " + self.subject_ref + ": " + plan +
+                    f" e {self.activity_count} attività acquisita/e.")
         missing = []
-        if self.prescription_count == 0:
-            missing.append("una prescrizione MAINTAIN_PLAN")
         if self.activity_count == 0:
             missing.append("un’attività Garmin acquisita")
         return "Revisione non pronta per " + self.subject_ref + ": manca " + " e ".join(missing) + "."
@@ -168,7 +167,8 @@ def review_subject(repository: MaintainPlanRepository, subject_ref: str,
     snapshots = tuple(item for item in snapshots_all
                       if item.prescription_snapshot_id not in mapped_prescriptions)
     sessions = tuple(item for item in sessions_all
-                     if item.session_id not in mapped_sessions)
+                     if item.session_id not in mapped_sessions and
+                     repository.get_session_relation(item.session_id) != ("AUTONOMOUS", None))
     scope = validate_runtime_matching_scope(subject_ref, snapshots, sessions)
     decision = decide_runtime_matching(scope)
     details = _details(decision, snapshots, sessions)
@@ -193,6 +193,9 @@ def resolve_coach_choice(repository: MaintainPlanRepository, subject_ref: str,
                          prescription_id: str, session_id: str, *,
                          now: datetime | None = None) -> CoachReview:
     """Persist an explicit coach choice only if it is still a current candidate."""
+    if repository.get_session_relation(session_id) == ("AUTONOMOUS", None):
+        raise ValueError(
+            "la sessione è stata dichiarata autonoma; cambia prima la decisione esplicitamente")
     mappings = repository.list_prescription_mappings()
     suspended = []
     for existing_mapping in mappings:
@@ -210,7 +213,8 @@ def resolve_coach_choice(repository: MaintainPlanRepository, subject_ref: str,
     snapshots = tuple(item for item in repository.list_prescription_snapshots(subject_ref)
                       if item.prescription_snapshot_id not in used_prescriptions)
     sessions = tuple(item for item in repository.list_actual_sessions(subject_ref)
-                     if item.session_id not in used_sessions)
+                     if item.session_id not in used_sessions and
+                     repository.get_session_relation(item.session_id) != ("AUTONOMOUS", None))
     scope = validate_runtime_matching_scope(subject_ref, snapshots, sessions)
     decision = decide_runtime_matching(scope)
     details = _details(decision, snapshots, sessions)
