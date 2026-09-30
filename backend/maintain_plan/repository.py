@@ -273,6 +273,16 @@ class MaintainPlanRepository:
             ).fetchall()
         return tuple(self._decode_actual_session_row(row) for row in rows)
 
+    def configured_subject_refs(self) -> tuple[str, ...]:
+        """Return persisted owners without accepting an identity from a request."""
+        with self._connect() as connection:
+            rows = connection.execute(
+                "SELECT subject_ref FROM maintain_plan_actual_sessions WHERE subject_ref IS NOT NULL "
+                "UNION SELECT subject_ref FROM maintain_plan_prescription_snapshots "
+                "WHERE subject_ref IS NOT NULL ORDER BY subject_ref"
+            ).fetchall()
+        return tuple(row[0] for row in rows)
+
     def create_prescription_mapping(self, value: PrescriptionMapping) -> None:
         self._require_valid(validate_mapping(value))
         snapshot = self.get_prescription_snapshot(value.prescription_snapshot_ref)
@@ -859,21 +869,127 @@ class MaintainPlanRepository:
             raise ValueError("stored source-conflict impact is not canonical")
         return value
 
-    def create_feedback_log(self, value: FeedbackEventLog) -> None:
+    def create_feedback_log(self, value: FeedbackEventLog,
+                            baseline: Mapping[str, Any] | None = None) -> None:
         self._require_valid(validate_feedback_log(value))
         session = self.get_actual_session(value.actual_session_ref.session_id)
-        if session is None or session.athlete_feedback is None:
-            raise ValueError("feedback log must resolve an actual-session feedback baseline")
-        baseline = session.athlete_feedback
+        if session is None:
+            raise ValueError("feedback log must resolve an actual session")
+        baseline = session.athlete_feedback if baseline is None else baseline
         self._require_valid(validate_feedback_payload(baseline))
         if baseline.get("feedback_id") != value.feedback_ref.feedback_id:
             raise ValueError("feedback log does not identify the persisted baseline")
         self._insert(
-            "INSERT INTO maintain_plan_feedback_logs VALUES (?, ?, ?, ?, ?, ?)",
+            "INSERT INTO maintain_plan_feedback_logs "
+            "(feedback_log_id, session_id, feedback_id, schema_version, "
+            "payload_schema_version, payload_json, baseline_payload_json) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
             (value.feedback_log_id, value.actual_session_ref.session_id,
              value.feedback_ref.feedback_id, value.schema_version,
-             PAYLOAD_SCHEMA_VERSION, serialize_contract(value)),
+             PAYLOAD_SCHEMA_VERSION, serialize_contract(value),
+             serialize_contract(baseline)),
         )
+
+    def persist_feedback_capture(self, log: FeedbackEventLog,
+                                 baseline: Mapping[str, Any],
+                                 event: FeedbackEvent,
+                                 projection: FeedbackProjection) -> None:
+        """Atomically create the immutable baseline and its first stream state."""
+        self._require_valid(validate_feedback_log(log))
+        self._require_valid(validate_feedback_payload(baseline))
+        self._require_valid(validate_feedback_event(event, log, baseline))
+        if baseline.get("feedback_id") != log.feedback_ref.feedback_id:
+            raise ValueError("feedback log does not identify the baseline")
+        if event.event_type.value != "CAPTURED":
+            raise ValueError("feedback capture must start with CAPTURED")
+        expected = project_feedback(
+            projection_id=projection.projection_id,
+            projection_version=projection.projection_version,
+            log=log, baseline=baseline, events=(event,),
+            provenance=projection.provenance)
+        if projection != expected:
+            raise ValueError("feedback projection does not match initial capture")
+        session = self.get_actual_session(log.actual_session_ref.session_id)
+        if session is None:
+            raise ValueError("feedback log must resolve an actual session")
+        with self._connect() as connection:
+            try:
+                connection.execute("BEGIN IMMEDIATE")
+                connection.execute(
+                    "INSERT INTO maintain_plan_feedback_logs "
+                    "(feedback_log_id, session_id, feedback_id, schema_version, "
+                    "payload_schema_version, payload_json, baseline_payload_json) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (log.feedback_log_id, log.actual_session_ref.session_id,
+                     log.feedback_ref.feedback_id, log.schema_version,
+                     PAYLOAD_SCHEMA_VERSION, serialize_contract(log),
+                     serialize_contract(baseline)))
+                connection.execute(
+                    "INSERT INTO maintain_plan_feedback_events VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (event.feedback_event_id, log.feedback_log_id,
+                     log.actual_session_ref.session_id, log.feedback_ref.feedback_id,
+                     event.event_sequence, event.event_type.value, event.previous_event_id,
+                     PAYLOAD_SCHEMA_VERSION, serialize_contract(event)))
+                connection.execute(
+                    "INSERT INTO maintain_plan_feedback_projections VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    (projection.projection_id, projection.projection_version,
+                     log.feedback_log_id, log.actual_session_ref.session_id,
+                     log.feedback_ref.feedback_id, projection.status.value,
+                     PAYLOAD_SCHEMA_VERSION, serialize_contract(projection)))
+                connection.commit()
+            except Exception:
+                connection.rollback()
+                raise
+
+    def persist_feedback_revision(self, log: FeedbackEventLog,
+                                  baseline: Mapping[str, Any],
+                                  event: FeedbackEvent,
+                                  projection: FeedbackProjection) -> None:
+        """Atomically append one correction and the corresponding projection."""
+        prior_events = self.list_feedback_events(log.feedback_log_id)
+        self._require_valid(validate_feedback_event(event, log, baseline))
+        expected = project_feedback(
+            projection_id=projection.projection_id,
+            projection_version=projection.projection_version,
+            log=log, baseline=baseline, events=prior_events + (event,),
+            provenance=projection.provenance)
+        if projection != expected or event.event_type.value != "CORRECTED":
+            raise ValueError("feedback revision is not canonical")
+        with self._connect() as connection:
+            try:
+                connection.execute("BEGIN IMMEDIATE")
+                previous = connection.execute(
+                    "SELECT feedback_event_id, event_sequence FROM maintain_plan_feedback_events "
+                    "WHERE feedback_log_id = ? ORDER BY event_sequence DESC LIMIT 1",
+                    (log.feedback_log_id,)).fetchone()
+                if previous != (event.previous_event_id, event.event_sequence - 1):
+                    raise ValueError("feedback stream changed during revision")
+                connection.execute(
+                    "INSERT INTO maintain_plan_feedback_events VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (event.feedback_event_id, log.feedback_log_id,
+                     log.actual_session_ref.session_id, log.feedback_ref.feedback_id,
+                     event.event_sequence, event.event_type.value, event.previous_event_id,
+                     PAYLOAD_SCHEMA_VERSION, serialize_contract(event)))
+                connection.execute(
+                    "INSERT INTO maintain_plan_feedback_projections VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    (projection.projection_id, projection.projection_version,
+                     log.feedback_log_id, log.actual_session_ref.session_id,
+                     log.feedback_ref.feedback_id, projection.status.value,
+                     PAYLOAD_SCHEMA_VERSION, serialize_contract(projection)))
+                connection.commit()
+            except Exception:
+                connection.rollback()
+                raise
+
+    def _feedback_baseline(self, log: FeedbackEventLog) -> Mapping[str, Any] | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT baseline_payload_json FROM maintain_plan_feedback_logs "
+                "WHERE feedback_log_id = ?", (log.feedback_log_id,)).fetchone()
+        if row is not None and row[0] is not None:
+            return deserialize_contract(row[0], dict)
+        session = self.get_actual_session(log.actual_session_ref.session_id)
+        return None if session is None else session.athlete_feedback
 
     def get_feedback_log(self, identifier: str) -> FeedbackEventLog | None:
         stored = self._get("maintain_plan_feedback_logs", "feedback_log_id", identifier,
@@ -886,19 +1002,17 @@ class MaintainPlanRepository:
                 value.feedback_log_id, value.actual_session_ref.session_id,
                 value.feedback_ref.feedback_id, value.schema_version):
             raise ValueError("stored feedback log metadata does not match payload")
-        session = self.get_actual_session(value.actual_session_ref.session_id)
-        if session is None or session.athlete_feedback is None or session.athlete_feedback.get(
-                "feedback_id") != value.feedback_ref.feedback_id:
+        baseline = self._feedback_baseline(value)
+        if baseline is None or baseline.get("feedback_id") != value.feedback_ref.feedback_id:
             raise ValueError("stored feedback log has an unresolved baseline")
-        self._require_valid(validate_feedback_payload(session.athlete_feedback))
+        self._require_valid(validate_feedback_payload(baseline))
         return value
 
     def append_feedback_event(self, value: FeedbackEvent) -> None:
         log = self.get_feedback_log(value.feedback_log_ref.feedback_log_id)
         if log is None:
             raise ValueError("feedback event must reference a persisted log")
-        session = self.get_actual_session(log.actual_session_ref.session_id)
-        baseline = None if session is None else session.athlete_feedback
+        baseline = self._feedback_baseline(log)
         self._require_valid(validate_feedback_payload(baseline))
         self._require_valid(validate_feedback_event(value, log, baseline))
         if (baseline is None or baseline.get("schema_version") != value.baseline_schema_version or
@@ -937,8 +1051,7 @@ class MaintainPlanRepository:
         log = self.get_feedback_log(feedback_log_id)
         if log is None:
             raise ValueError("feedback log is unavailable")
-        session = self.get_actual_session(log.actual_session_ref.session_id)
-        baseline = None if session is None else session.athlete_feedback
+        baseline = self._feedback_baseline(log)
         self._require_valid(validate_feedback_payload(baseline))
         return tuple(self._list_payloads(
             "maintain_plan_feedback_events", "feedback_log_id", feedback_log_id,
@@ -962,10 +1075,9 @@ class MaintainPlanRepository:
         log = self.get_feedback_log(value.feedback_log_ref.feedback_log_id)
         if log is None or value.feedback_ref != log.feedback_ref or value.actual_session_ref != log.actual_session_ref:
             raise ValueError("feedback projection references are incoherent")
-        session = self.get_actual_session(log.actual_session_ref.session_id)
         expected = project_feedback(
             projection_id=value.projection_id, projection_version=value.projection_version,
-            log=log, baseline=None if session is None else session.athlete_feedback,
+            log=log, baseline=self._feedback_baseline(log),
             events=tuple(event for event in self.list_feedback_events(log.feedback_log_id)
                          if value.last_applied_sequence is not None and
                          event.event_sequence <= value.last_applied_sequence),
@@ -994,10 +1106,9 @@ class MaintainPlanRepository:
         if self.get_feedback_log(value.feedback_log_ref.feedback_log_id) is None:
             raise ValueError("stored feedback projection has an unresolved log")
         log = self.get_feedback_log(value.feedback_log_ref.feedback_log_id)
-        session = self.get_actual_session(value.actual_session_ref.session_id)
         expected = project_feedback(
             projection_id=value.projection_id, projection_version=value.projection_version,
-            log=log, baseline=None if session is None else session.athlete_feedback,
+            log=log, baseline=self._feedback_baseline(log),
             events=tuple(event for event in self.list_feedback_events(log.feedback_log_id)
                          if value.last_applied_sequence is not None and
                          event.event_sequence <= value.last_applied_sequence),
@@ -1005,6 +1116,14 @@ class MaintainPlanRepository:
         if expected != value:
             raise ValueError("stored feedback projection does not match its stream")
         return value
+
+    def get_latest_feedback_projection(self, feedback_log_id: str) -> FeedbackProjection | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT projection_id FROM maintain_plan_feedback_projections "
+                "WHERE feedback_log_id = ? ORDER BY rowid DESC LIMIT 1",
+                (feedback_log_id,)).fetchone()
+        return None if row is None else self.get_feedback_projection(row[0])
 
     def create_source_conflict(self, session_id: str, value: Mapping[str, Any]) -> None:
         session = self.get_actual_session(session_id)

@@ -26,6 +26,7 @@ from backend.maintain_plan.models import (
     PolicyRef, Requiredness, ResolutionMethod, SupportStatus,
 )
 from backend.maintain_plan.repository import MaintainPlanRepository
+from backend.maintain_plan.rpe_feedback import RpeFeedbackState, capture_observed_rpe
 from backend.maintain_plan.runtime_matching_decision import DecisionStatus
 from tests.maintain_plan.fixtures import NOW, RUN_PRESCRIPTION, RUN_SESSION
 
@@ -96,6 +97,15 @@ def test_coach_can_answer_ambiguity_and_get_the_evaluation(tmp_path):
     assert f"Conseguenza sul piano: {review.evaluation.overall.value}" in page
     assert "Corrispondenza salvata:</strong> snapshot-1 ← session-2" in page
     assert "Conferma questa corrispondenza" not in page
+    assert "Nessuna risposta è stata ancora data" in page
+
+    capture_observed_rpe(
+        repository, subject_ref="athlete-1", session_id="session-2",
+        submitted_rpe="", captured_at=NOW)
+    omitted_page = render_page(
+        "athlete-1", review=review_subject(repository, "athlete-1", now=NOW))
+    assert "Hai scelto di omettere il valore" in omitted_page
+    assert "Nessuna risposta è stata ancora data" not in omitted_page
 
     with sqlite3.connect(repository.database_path) as connection:
         confirmation_ids = [row[0] for row in connection.execute(
@@ -131,6 +141,28 @@ def test_browser_page_offers_every_candidate_and_a_no_write_exit(tmp_path):
     assert page.count("Conferma questa corrispondenza") == 2
     assert "Non lo so: non salvare nulla" in page
     assert repository.list_prescription_mappings() == ()
+
+
+@pytest.mark.parametrize(("state", "expected", "forbidden"), (
+    (RpeFeedbackState("VALUE", 7, "PORTAL_USER", "IronCoach"),
+     "dichiarato direttamente da te", "fonte: IronCoach"),
+    (RpeFeedbackState("VALUE", 7, "IMPORTED_SOURCE", "verified-garmin-import"),
+     "fonte: verified-garmin-import", "dichiarato direttamente da te"),
+    (RpeFeedbackState("VALUE", 7, "NEUTRAL", None),
+     "provenienza non attribuibile con affidabilità", "dichiarato direttamente da te"),
+))
+def test_browser_attributes_qualified_rpe_to_its_actual_origin(
+        tmp_path, state, expected, forbidden):
+    repository = _repository(tmp_path)
+    review = resolve_coach_choice(
+        repository, "athlete-1", "snapshot-1", "session-1", now=NOW)
+
+    page = render_page(
+        "athlete-1", review=replace(
+            review, rpe_requests=(("session-1", state),)))
+
+    assert expected in page
+    assert forbidden not in page
 
 
 def test_browser_checks_readiness_after_subject_is_entered(tmp_path):

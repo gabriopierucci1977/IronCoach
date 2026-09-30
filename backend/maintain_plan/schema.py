@@ -12,7 +12,7 @@ from typing import Callable, Iterable
 from .archive_lock import archive_lock
 
 
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 9
 
 
 @dataclass(frozen=True)
@@ -456,6 +456,24 @@ def _migration_8(connection: sqlite3.Connection) -> None:
 
 MIGRATIONS = MIGRATIONS + (Migration(
     8, hashlib.sha256(_MIGRATION_8_SQL.encode("utf-8")).hexdigest(), _migration_8,
+),)
+
+
+# Feedback originally had to be embedded in the immutable activity snapshot.
+# Keep that baseline untouched, while allowing later, append-only feedback to
+# carry its own canonical baseline on the log which owns its event stream.
+_MIGRATION_9_SQL = (
+    "ALTER TABLE maintain_plan_feedback_logs "
+    "ADD COLUMN baseline_payload_json TEXT"
+)
+
+
+def _migration_9(connection: sqlite3.Connection) -> None:
+    connection.execute(_MIGRATION_9_SQL)
+
+
+MIGRATIONS = MIGRATIONS + (Migration(
+    9, hashlib.sha256(_MIGRATION_9_SQL.encode("utf-8")).hexdigest(), _migration_9,
 ),)
 
 

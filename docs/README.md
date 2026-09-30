@@ -1,5 +1,6 @@
 # Documentation
 
+- `AI_COACHING_PRODUCT_PRINCIPLE.md` — requisito di prodotto e architettura: l’IA è il centro del coaching personale, mentre matching e valutazioni deterministiche sono guardrail di affidabilità; definisce inoltre l’uso non globale di `INSUFFICIENT_DATA` e la separazione fra osservazioni, interpretazioni e incertezze.
 - `PROJECT_STATE_BETA_0_3.md` — reconstruction audit of the Beta 0.3 snapshot and historical project state.
 - `NORMALIZED_ACTIVITY_CONTRACT.md` — canonical activity schema and analyzer boundary invariants.
 - `BETA_0_3_1_HARDENING.md` — integration-contract hardening pass following the Beta 0.3 reconstruction audit.
