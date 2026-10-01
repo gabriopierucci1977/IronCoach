@@ -7,6 +7,7 @@ import sqlite3
 import pytest
 
 from backend.maintain_plan.models import ActualSession
+from backend.maintain_plan.coach_review import database_review_readiness
 from backend.maintain_plan.prescription_snapshot_service import (
     CommunicatedPrescription,
     PrescriptionSnapshotConflictError,
@@ -125,6 +126,50 @@ def test_v6_legacy_payloads_remain_readable_but_not_mapping_eligible(tmp_path):
     assert session.subject_ref is None
     with pytest.raises(ValueError, match="requires subject_ref"):
         repository.create_prescription_mapping(RUN_MAPPING)
+
+
+def test_column_bound_legacy_actual_session_is_owned_and_readable(tmp_path):
+    """Reproduce archive rows whose v6 payload predates the v7 owner field."""
+    path = tmp_path / "column-bound-legacy.db"
+    repository = MaintainPlanRepository(path)
+    subject = "reco4aHGKSTexpXUC"
+    with sqlite3.connect(path) as connection:
+        connection.execute(
+            "INSERT INTO maintain_plan_actual_sessions "
+            "(session_id, start, composition, contract_version, "
+            "payload_schema_version, payload_json, subject_ref) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (RUN_SESSION.session_id, RUN_SESSION.start.isoformat(),
+             RUN_SESSION.composition.value, RUN_SESSION.contract_version,
+             PAYLOAD_SCHEMA_VERSION, _legacy_payload(RUN_SESSION), subject),
+        )
+
+    sessions = repository.list_actual_sessions(subject)
+
+    assert len(sessions) == 1
+    assert sessions[0].subject_ref == subject
+    assert repository.get_actual_session(RUN_SESSION.session_id) == sessions[0]
+    readiness = database_review_readiness(str(path), subject)
+    assert readiness.ready
+    assert readiness.activity_count == 1
+
+
+def test_explicit_payload_subject_still_must_match_indexed_owner(tmp_path):
+    path = tmp_path / "mismatched-modern.db"
+    repository = MaintainPlanRepository(path)
+    with sqlite3.connect(path) as connection:
+        connection.execute(
+            "INSERT INTO maintain_plan_actual_sessions "
+            "(session_id, start, composition, contract_version, "
+            "payload_schema_version, payload_json, subject_ref) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (RUN_SESSION.session_id, RUN_SESSION.start.isoformat(),
+             RUN_SESSION.composition.value, RUN_SESSION.contract_version,
+             PAYLOAD_SCHEMA_VERSION, serialize_contract(RUN_SESSION), "other-athlete"),
+        )
+
+    with pytest.raises(ValueError, match="metadata does not match payload"):
+        repository.list_actual_sessions("other-athlete")
 
 
 def test_subject_participates_in_snapshot_retry_idempotency(tmp_path):

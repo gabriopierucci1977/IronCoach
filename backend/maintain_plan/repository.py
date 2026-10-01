@@ -238,7 +238,14 @@ class MaintainPlanRepository:
     def _decode_actual_session_row(self, row: sqlite3.Row) -> ActualSession:
         if row["payload_schema_version"] != PAYLOAD_SCHEMA_VERSION:
             raise ValueError("unsupported stored MAINTAIN_PLAN payload schema version")
-        value = deserialize_contract(row["payload_json"], ActualSession)
+        # Migration 7 could only add the ownership column: pre-v7 payloads do
+        # not contain subject_ref.  Some archives subsequently bound those
+        # legacy rows in that column.  Hydrate only that precisely recognised
+        # legacy shape; modern payloads must still match the column exactly.
+        value = deserialize_contract(
+            row["payload_json"], ActualSession,
+            legacy_actual_session_subject_ref=row["subject_ref"],
+        )
         self._require_valid(validate_actual_session(
             value, allow_legacy_subject=row["subject_ref"] is None))
         metadata = (value.session_id, value.start.isoformat(),
@@ -250,19 +257,13 @@ class MaintainPlanRepository:
         return value
 
     def get_actual_session(self, identifier: str) -> ActualSession | None:
-        stored = self._get("maintain_plan_actual_sessions", "session_id", identifier, ActualSession)
-        if stored is None:
-            return None
-        row, value = stored
-        self._require_valid(validate_actual_session(
-            value, allow_legacy_subject=row["subject_ref"] is None))
-        metadata = (value.session_id, value.start.isoformat(),
-                    None if value.composition is None else value.composition.value,
-                    value.contract_version)
-        if (row["session_id"], row["start"], row["composition"],
-                row["contract_version"]) != metadata or row["subject_ref"] != value.subject_ref:
-            raise ValueError("stored actual session metadata does not match payload")
-        return value
+        with self._connect() as connection:
+            connection.row_factory = sqlite3.Row
+            row = connection.execute(
+                "SELECT * FROM maintain_plan_actual_sessions WHERE session_id = ?",
+                (identifier,),
+            ).fetchone()
+        return None if row is None else self._decode_actual_session_row(row)
 
     def list_actual_sessions(self, subject_ref: str) -> tuple[ActualSession, ...]:
         """Return the complete persisted activity set for one exact subject."""

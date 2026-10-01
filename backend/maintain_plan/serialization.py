@@ -56,7 +56,7 @@ def _encode(value: Any) -> Any:
     raise TypeError(f"unsupported MAINTAIN_PLAN payload value: {type(value).__name__}")
 
 
-def _decode(value: Any) -> Any:
+def _decode(value: Any, *, legacy_actual_session_subject_ref: str | None = None) -> Any:
     if value is None or isinstance(value, (bool, int, float, str)):
         return value
     if not isinstance(value, dict) or "$type" not in value:
@@ -76,9 +76,19 @@ def _decode(value: Any) -> Any:
             actual_fields == expected_fields - {"subject_ref"}
         if actual_fields != expected_fields and not legacy_subject:
             raise ValueError("MAINTAIN_PLAN dataclass fields do not match its type")
-        decoded = {name: _decode(item) for name, item in value["fields"].items()}
+        decoded = {
+            name: _decode(
+                item,
+                legacy_actual_session_subject_ref=legacy_actual_session_subject_ref,
+            )
+            for name, item in value["fields"].items()
+        }
         if legacy_subject:
-            decoded["subject_ref"] = None
+            decoded["subject_ref"] = (
+                legacy_actual_session_subject_ref
+                if cls is models.ActualSession
+                else None
+            )
         return cls(**decoded)
     if kind == "enum":
         _require_keys(value, {"$type", "name", "value"})
@@ -96,12 +106,18 @@ def _decode(value: Any) -> Any:
         _require_keys(value, {"$type", "items"})
         if not isinstance(value["items"], list):
             raise ValueError("invalid MAINTAIN_PLAN tuple")
-        return tuple(_decode(item) for item in value["items"])
+        return tuple(_decode(
+            item,
+            legacy_actual_session_subject_ref=legacy_actual_session_subject_ref,
+        ) for item in value["items"])
     if kind == "frozenset":
         _require_keys(value, {"$type", "items"})
         if not isinstance(value["items"], list):
             raise ValueError("invalid MAINTAIN_PLAN frozenset")
-        return frozenset(_decode(item) for item in value["items"])
+        return frozenset(_decode(
+            item,
+            legacy_actual_session_subject_ref=legacy_actual_session_subject_ref,
+        ) for item in value["items"])
     if kind == "mapping":
         _require_keys(value, {"$type", "items"})
         if not isinstance(value["items"], list):
@@ -110,10 +126,16 @@ def _decode(value: Any) -> Any:
         for entry in value["items"]:
             if not isinstance(entry, list) or len(entry) != 2:
                 raise ValueError("invalid MAINTAIN_PLAN mapping entry")
-            key = _decode(entry[0])
+            key = _decode(
+                entry[0],
+                legacy_actual_session_subject_ref=legacy_actual_session_subject_ref,
+            )
             if key in result:
                 raise ValueError("duplicate MAINTAIN_PLAN mapping key")
-            result[key] = _decode(entry[1])
+            result[key] = _decode(
+                entry[1],
+                legacy_actual_session_subject_ref=legacy_actual_session_subject_ref,
+            )
         return result
     raise ValueError(f"unknown MAINTAIN_PLAN payload tag: {kind}")
 
@@ -126,7 +148,12 @@ def serialize_contract(value: Any) -> str:
     )
 
 
-def deserialize_contract(payload: str, expected_type: type[Any]) -> Any:
+def deserialize_contract(
+    payload: str,
+    expected_type: type[Any],
+    *,
+    legacy_actual_session_subject_ref: str | None = None,
+) -> Any:
     """Rebuild a canonical immutable contract object, rejecting wrong versions/types."""
     try:
         envelope = json.loads(
@@ -141,7 +168,10 @@ def deserialize_contract(payload: str, expected_type: type[Any]) -> Any:
         raise ValueError("invalid MAINTAIN_PLAN payload envelope")
     if envelope.get("payload_schema_version") != PAYLOAD_SCHEMA_VERSION:
         raise ValueError("unsupported MAINTAIN_PLAN payload schema version")
-    value = _decode(envelope["payload"])
+    value = _decode(
+        envelope["payload"],
+        legacy_actual_session_subject_ref=legacy_actual_session_subject_ref,
+    )
     if not isinstance(value, expected_type):
         raise ValueError(f"expected {expected_type.__name__} payload")
     return value
