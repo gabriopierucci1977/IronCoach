@@ -180,7 +180,15 @@ def _readonly_archive_sessions(archive_path: str | Path,
     for row in rows:
         if row["payload_schema_version"] != PAYLOAD_SCHEMA_VERSION:
             raise ValueError("versione payload MAINTAIN_PLAN storica non supportata")
-        session = deserialize_contract(row["payload_json"], ActualSession)
+        # v7 added ownership as a relational column without rewriting legacy
+        # payloads.  Hydrate that column only for the codec's recognised
+        # pre-v7 ActualSession shape; modern payloads remain strict.
+        session = deserialize_contract(
+            row["payload_json"], ActualSession,
+            legacy_actual_session_subject_ref=(
+                row["subject_ref"] if "subject_ref" in columns else None
+            ),
+        )
         stored_subject = row["subject_ref"] if "subject_ref" in columns else session.subject_ref
         errors = validate_actual_session(session, allow_legacy_subject=stored_subject is None)
         if errors:
