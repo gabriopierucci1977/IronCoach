@@ -1,8 +1,10 @@
 from dataclasses import replace
 from hashlib import sha256
 import http.client
+import json
 import re
 import sqlite3
+import pytest
 from http.server import ThreadingHTTPServer
 from threading import Event, Thread
 from urllib.parse import urlencode
@@ -17,6 +19,7 @@ from backend.maintain_plan.coach_trial import (available_activities, create_tria
 from backend.maintain_plan.coach_trial_web import make_trial_handler, render_trial_page
 from backend.maintain_plan.models import Composition, Discipline
 from backend.maintain_plan.repository import MaintainPlanRepository
+from backend.maintain_plan.serialization import PAYLOAD_SCHEMA_VERSION, serialize_contract
 from tests.maintain_plan.fixtures import (BRICK_SESSION, NOW, RUN_PRESCRIPTION,
                                           RUN_SESSION)
 
@@ -32,6 +35,50 @@ def _archive(tmp_path):
         RUN_SESSION, session_id="bike-1",
         components=(replace(RUN_SESSION.components[0], discipline=Discipline.BIKE),)))
     return path
+
+
+def _legacy_payload(value):
+    encoded = json.loads(serialize_contract(value))
+    del encoded["payload"]["fields"]["subject_ref"]
+    return json.dumps(encoded, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
+def test_trial_reads_column_bound_legacy_sessions_for_listing_and_creation(tmp_path):
+    archive = tmp_path / "legacy.db"
+    repository = MaintainPlanRepository(archive)
+    subject = "reco4aHGKSTexpXUC"
+    with sqlite3.connect(archive) as connection:
+        connection.execute(
+            "INSERT INTO maintain_plan_actual_sessions "
+            "(session_id, start, composition, contract_version, payload_schema_version, payload_json, subject_ref) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (RUN_SESSION.session_id, RUN_SESSION.start.isoformat(), RUN_SESSION.composition.value,
+             RUN_SESSION.contract_version, PAYLOAD_SCHEMA_VERSION, _legacy_payload(RUN_SESSION), subject),
+        )
+
+    activities = available_activities(archive, subject)
+    trial = create_trial(
+        archive, tmp_path / "trial.db", subject,
+        ({"session_id": RUN_SESSION.session_id, "sport": "RUN",
+          "duration_minutes": 42, "rpe": 6},), now=NOW)
+
+    assert [item.session_id for item in activities] == [RUN_SESSION.session_id]
+    assert [item.session_id for item in trial.list_actual_sessions(subject)] == [RUN_SESSION.session_id]
+
+
+def test_trial_rejects_modern_session_subject_mismatch(tmp_path):
+    archive = tmp_path / "modern-mismatch.db"
+    repository = MaintainPlanRepository(archive)
+    with sqlite3.connect(archive) as connection:
+        connection.execute(
+            "INSERT INTO maintain_plan_actual_sessions "
+            "(session_id, start, composition, contract_version, payload_schema_version, payload_json, subject_ref) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (RUN_SESSION.session_id, RUN_SESSION.start.isoformat(), RUN_SESSION.composition.value,
+             RUN_SESSION.contract_version, PAYLOAD_SCHEMA_VERSION, serialize_contract(RUN_SESSION), "other"),
+        )
+
+    assert available_activities(archive, "other") == ()
 
 
 def test_trial_copies_only_selected_real_activity_and_never_changes_archive(tmp_path):
