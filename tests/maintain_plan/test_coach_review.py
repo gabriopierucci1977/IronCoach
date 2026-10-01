@@ -1,5 +1,5 @@
 from dataclasses import replace
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 import http.client
 from http.server import ThreadingHTTPServer
 from pathlib import Path
@@ -187,7 +187,8 @@ def test_browser_checks_readiness_after_subject_is_entered(tmp_path):
         checked_page = checked.read().decode()
         assert checked.status == 200
         assert "Revisione non pronta per athlete-1" in checked_page
-        assert "un’attività Garmin acquisita" in checked_page
+        assert "una seduta acquisita" in checked_page
+        assert "Garmin" not in checked_page
         assert "Esito:" not in checked_page
     finally:
         server.shutdown()
@@ -652,7 +653,7 @@ def test_launcher_loads_project_dotenv_and_requires_configured_archive(
 
 
 @pytest.mark.parametrize(("with_plan", "with_activity", "ready", "missing"), [
-    (True, False, False, "un’attività Garmin acquisita"),
+    (True, False, False, "una seduta acquisita"),
     (False, True, True, None),
     (True, True, True, None),
 ])
@@ -677,6 +678,76 @@ def test_review_readiness_requires_both_artifact_types_for_same_athlete(
             f"Revisione pronta per athlete-1: {plan} e 1 attività acquisita/e.")
     else:
         assert missing in result.message()
+
+
+def test_portal_lists_and_opens_persisted_non_garmin_sessions_without_plan(tmp_path):
+    """Free review depends on owned ActualSessions, not Garmin or a prescription."""
+    from backend.maintain_plan.models import SourceActivity
+
+    repository = MaintainPlanRepository(tmp_path / "standalone-sessions.db")
+    strava = replace(
+        RUN_SESSION, session_id="strava-session",
+            source_activities=(SourceActivity(
+            "Strava", "strava-42", {"source_id": "strava-42"},
+            {}),),
+        provenance={"normalized_at": datetime(2026, 1, 1, tzinfo=timezone.utc)})
+    uncertain = replace(
+        RUN_SESSION, session_id="uncertain-session", source_activities=())
+    repository.create_actual_session(strava)
+    repository.create_actual_session(uncertain)
+    server = ThreadingHTTPServer(
+        ("127.0.0.1", 0), make_handler(str(repository.database_path)))
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    host, port = server.server_address
+    try:
+        connection = http.client.HTTPConnection(host, port)
+        connection.request("GET", "/?" + urlencode({"subject": "athlete-1"}))
+        response = connection.getresponse()
+        listing = response.read().decode()
+        assert response.status == 200
+        assert "2 attività disponibile/i" in listing
+        assert "strava-session" in listing
+        assert "fonte: Strava" in listing
+        assert "uncertain-session" in listing
+        assert "fonte: fonte incerta" in listing
+        assert "Garmin" not in listing
+
+        connection.request("GET", "/?" + urlencode(
+            {"subject": "athlete-1", "session": "strava-session"}))
+        opened = connection.getresponse()
+        page = opened.read().decode()
+        assert opened.status == 200
+        assert "Sessione strava-session" in page
+        assert "Sessione autonoma" in page
+        assert "fonte: Strava" in page
+        assert "Esito:" not in page
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join()
+
+
+def test_portal_without_any_session_reports_source_neutral_requirement(tmp_path):
+    repository = MaintainPlanRepository(tmp_path / "empty-portal.db")
+    server = ThreadingHTTPServer(
+        ("127.0.0.1", 0), make_handler(str(repository.database_path)))
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    host, port = server.server_address
+    try:
+        connection = http.client.HTTPConnection(host, port)
+        connection.request("GET", "/?" + urlencode({"subject": "athlete-1"}))
+        response = connection.getresponse()
+        page = response.read().decode()
+        assert response.status == 200
+        assert "manca una seduta acquisita" in page
+        assert "Garmin" not in page
+        assert "Archivio allenamenti" not in page
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join()
 
 
 def test_updated_not_evaluable_result_blocks_candidate_save(tmp_path):

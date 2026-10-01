@@ -30,6 +30,13 @@ def _artifact_details(review, prescription_id: str, session_id: str):
                  and item["session_id"] == session_id), {})
 
 
+def _source_label(session) -> str:
+    """Describe only explicitly persisted activity sources."""
+    sources = sorted({item.source.strip() for item in session.source_activities
+                      if isinstance(item.source, str) and item.source.strip()})
+    return ", ".join(sources) if sources else "fonte incerta"
+
+
 def render_page(subject_ref: str = "", *, review=None, message: str = "",
                 action_token: str = "", sessions=(), selected_session=None,
                 ai_result=None, prescriptions=(), relation=None) -> str:
@@ -47,7 +54,8 @@ def render_page(subject_ref: str = "", *, review=None, message: str = "",
                         else f"{facts.duration_minutes:g} min")
             body.append(
                 '<article class="candidate">'
-                f'<b>{escape(facts.sport)}</b> · {escape(facts.start)} · {escape(duration)} '
+                f'<b>{escape(facts.sport)}</b> · {escape(facts.start)} · {escape(duration)} · '
+                f'fonte: {escape(_source_label(item))} '
                 f'<a href="/?subject={escape(subject_ref, quote=True)}&amp;session='
                 f'{escape(item.session_id, quote=True)}">Esamina</a></article>')
     if selected_session is not None:
@@ -55,7 +63,8 @@ def render_page(subject_ref: str = "", *, review=None, message: str = "",
         body.append(f'<section><h2>Sessione {escape(facts.session_id)}</h2>'
                     f'<h3>Dati osservati</h3><p>Sport: {escape(facts.sport)}; '
                     f'inizio: {escape(facts.start)}; durata: '
-                    f'{escape("non disponibile" if facts.duration_minutes is None else str(facts.duration_minutes) + " min")}.</p></section>')
+                    f'{escape("non disponibile" if facts.duration_minutes is None else str(facts.duration_minutes) + " min")}; '
+                    f'fonte: {escape(_source_label(selected_session))}.</p></section>')
         if relation is not None:
             body.append(f'<p class="completed"><strong>Scelta conservata:</strong> '
                         f'{escape(relation[0])}</p>')

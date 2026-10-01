@@ -50,13 +50,18 @@ class CoachReviewReadiness:
                     f" e {self.activity_count} attività acquisita/e.")
         missing = []
         if self.activity_count == 0:
-            missing.append("un’attività Garmin acquisita")
+            missing.append("una seduta acquisita")
         return "Revisione non pronta per " + self.subject_ref + ": manca " + " e ".join(missing) + "."
 
 
 def review_readiness(repository: MaintainPlanRepository,
                      subject_ref: str) -> CoachReviewReadiness:
-    """Report whether one subject has both required persisted artifact types."""
+    """Report whether a subject has a session available for free review.
+
+    Prescription snapshots are counted for the separate plan-comparison path;
+    neither they nor a particular activity source are prerequisites for opening
+    an actual session.
+    """
     return CoachReviewReadiness(
         subject_ref,
         len(repository.list_prescription_snapshots(subject_ref)),
