@@ -10,6 +10,7 @@ from pathlib import Path
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
+from collections.abc import Mapping
 from urllib.parse import quote
 
 PAGE_SIZE = 50
@@ -48,9 +49,13 @@ def session_detail(session) -> dict[str, Any]:
             "missing": sorted(missing), "prescription": None, "feedback": session.athlete_feedback}
 
 def build_export_prompt(session, recent=(), prescription=None, feedback=None) -> str:
+    def compat(value):
+        if isinstance(value, Mapping): return {str(k): compat(v) for k, v in value.items()}
+        if isinstance(value, (list, tuple)): return [compat(v) for v in value]
+        return value
     payload = {"seduta": session_detail(session), "storico_recente": [session_detail(s) for s in recent],
                "prescrizione": prescription, "feedback": feedback or session.athlete_feedback}
-    return "Analizza questa seduta e il mio storico recente. Rispondi in italiano con osservazioni pratiche.\n\n" + json.dumps(payload, ensure_ascii=False, indent=2)
+    return "Analizza questa seduta e il mio storico recente. Rispondi in italiano con osservazioni pratiche.\n\n" + json.dumps(compat(payload), ensure_ascii=False, indent=2)
 
 def export_to_chatgpt(prompt: str, *, clipboard=None, opener=None) -> str:
     if opener is None:

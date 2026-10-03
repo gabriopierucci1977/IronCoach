@@ -50,7 +50,7 @@ def render_page(subject_ref: str = "", *, review=None, message: str = "",
         body.append(f'<p class="message">{escape(message)}</p>')
     if subject_ref:
         body.append('<form method="get"><input type="hidden" name="subject" value="%s"><label>Anno <input name="year" value="%s"></label><label>Mese <input name="month" value="%s"></label><label>Sport <input name="sport" value="%s"></label><button>Filtra</button></form>' % (escape(subject_ref, quote=True), escape(str(year or '')), escape(str(month or '')), escape(str(sport or ''))))
-        body.append('<section><h2>Importa piano JSON</h2><textarea rows="4" cols="60" placeholder="Incolla qui il piano JSON per validarlo"></textarea><button type="button">Valida e mostra anteprima</button></section>')
+        body.append('<section><h2>Importa piano JSON</h2><form method="post"><input type="hidden" name="operation" value="preview_plan"><input type="hidden" name="subject" value="%s"><input type="hidden" name="action_token" value="%s"><textarea name="plan_json" rows="4" cols="60" placeholder="Incolla qui il piano JSON per validarlo"></textarea><button>Valida e mostra anteprima</button></form></section>' % (escape(subject_ref, quote=True), escape(action_token, quote=True)))
     if sessions:
         body.append("<h2>Archivio allenamenti</h2>")
         for item in sessions:
@@ -215,6 +215,8 @@ def render_page(subject_ref: str = "", *, review=None, message: str = "",
                 '<input type="hidden" name="operation" value="capture_rpe">'
                 '<label>RPE osservato (1–10) <input type="number" name="rpe" min="1" max="10" step="1"></label>'
                 '<button>Salva risposta (anche vuota)</button></form></section>')
+    if import_preview is not None:
+        body.append('<section class="completed"><h3>Anteprima piano</h3><pre>%s</pre></section>' % escape(str(import_preview)))
     style = "body{font:18px system-ui;max-width:850px;margin:40px auto;padding:0 20px}" \
             "input,button{font:inherit;padding:8px;margin:6px}.candidate{border:1px solid #bbb;padding:16px;margin:12px 0}" \
             ".message,.completed{background:#eef8ee;padding:12px}.warning{background:#fff3cd;padding:12px}" \
@@ -401,6 +403,17 @@ def make_handler(database_path: str, *, action_token: str | None = None,
                         action_token=token), 403)
                     return
                 operation = values.get("operation", [""])[0]
+                if operation == "preview_plan":
+                    from .session_flow import preview_imported_plan
+                    try:
+                        preview = preview_imported_plan(values.get("plan_json", [""])[0])
+                        message = "Piano valido: anteprima pronta."
+                    except ValueError as error:
+                        self._send(render_page(subject, message=f"JSON non valido: {error}", action_token=token))
+                        return
+                    self._send(render_page(subject, message=message, action_token=token,
+                                           import_preview=preview))
+                    return
                 prescription = values.get("prescription", [""])[0]
                 session = values.get("session", [""])[0]
                 if operation in {"capture_rpe", "capture_session_rpe"}:
