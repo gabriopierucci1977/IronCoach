@@ -22,6 +22,7 @@ from .runtime_matching_decision import DecisionStatus
 from .rpe_feedback import capture_database_observed_rpe
 from .repository import MaintainPlanRepository
 from .session_coach import ai_comment, save_relation, session_facts
+from .session_flow import build_export_prompt, list_sessions, session_detail, preview_imported_plan
 
 
 def _artifact_details(review, prescription_id: str, session_id: str):
@@ -39,13 +40,17 @@ def _source_label(session) -> str:
 
 def render_page(subject_ref: str = "", *, review=None, message: str = "",
                 action_token: str = "", sessions=(), selected_session=None,
-                ai_result=None, prescriptions=(), relation=None) -> str:
+                ai_result=None, prescriptions=(), relation=None, page=1, pages=1,
+                total=None, year=None, month=None, sport=None, import_preview=None) -> str:
     body = ["<h1>IronCoach · Le tue sedute</h1>",
             "<p>Esamina un allenamento svolto, con o senza un piano.</p>",
             '<form method="get"><label>ID atleta <input name="subject" required value="' +
             escape(subject_ref, quote=True) + '"></label><button>Esamina</button></form>']
     if message:
         body.append(f'<p class="message">{escape(message)}</p>')
+    if subject_ref:
+        body.append('<form method="get"><input type="hidden" name="subject" value="%s"><label>Anno <input name="year" value="%s"></label><label>Mese <input name="month" value="%s"></label><label>Sport <input name="sport" value="%s"></label><button>Filtra</button></form>' % (escape(subject_ref, quote=True), escape(str(year or '')), escape(str(month or '')), escape(str(sport or ''))))
+        body.append('<section><h2>Importa piano JSON</h2><form method="post"><input type="hidden" name="operation" value="preview_plan"><input type="hidden" name="subject" value="%s"><input type="hidden" name="action_token" value="%s"><textarea name="plan_json" rows="4" cols="60" placeholder="Incolla qui il piano JSON per validarlo"></textarea><button>Valida e mostra anteprima</button></form></section>' % (escape(subject_ref, quote=True), escape(action_token, quote=True)))
     if sessions:
         body.append("<h2>Archivio allenamenti</h2>")
         for item in sessions:
@@ -56,15 +61,22 @@ def render_page(subject_ref: str = "", *, review=None, message: str = "",
                 '<article class="candidate">'
                 f'<b>{escape(facts.sport)}</b> · {escape(facts.start)} · {escape(duration)} · '
                 f'fonte: {escape(_source_label(item))} '
-                f'<a href="/?subject={escape(subject_ref, quote=True)}&amp;session='
-                f'{escape(item.session_id, quote=True)}">Esamina</a></article>')
+                f'<a href="/?{urlencode({"subject": subject_ref, "session": item.session_id, "year": year or "", "month": month or "", "sport": sport or ""})}">Esamina</a></article>')
+        body.append(f'<p>Pagina {page} di {pages}</p>')
+        for target in (page - 1, page + 1):
+            if 1 <= target <= pages:
+                body.append(f'<a href="/?{urlencode({"subject": subject_ref, "page": target, "year": year or "", "month": month or "", "sport": sport or ""})}">Pagina {target}</a> ')
     if selected_session is not None:
         facts = session_facts(selected_session)
+        detail = session_detail(selected_session)
         body.append(f'<section><h2>Sessione {escape(facts.session_id)}</h2>'
                     f'<h3>Dati osservati</h3><p>Sport: {escape(facts.sport)}; '
                     f'inizio: {escape(facts.start)}; durata: '
                     f'{escape("non disponibile" if facts.duration_minutes is None else str(facts.duration_minutes) + " min")}; '
                     f'fonte: {escape(_source_label(selected_session))}.</p></section>')
+        body.append('<p>Metriche: %s · Dati mancanti: %s · Feedback: %s</p>' % (escape(", ".join(detail["metrics"]) or "nessuna"), escape(", ".join(detail["missing"]) or "nessuno"), escape(str(detail["feedback"] or "nessuno"))))
+        prompt = build_export_prompt(selected_session, sessions)
+        body.append('<button type="button" data-prompt="%s" onclick="navigator.clipboard.writeText(this.dataset.prompt);window.open(\'https://chatgpt.com/?q=\'+encodeURIComponent(this.dataset.prompt),\'_blank\');">Esporta dati verso ChatGPT</button>' % escape(prompt, quote=True))
         if relation is not None:
             body.append(f'<p class="completed"><strong>Scelta conservata:</strong> '
                         f'{escape(relation[0])}</p>')
@@ -203,6 +215,8 @@ def render_page(subject_ref: str = "", *, review=None, message: str = "",
                 '<input type="hidden" name="operation" value="capture_rpe">'
                 '<label>RPE osservato (1–10) <input type="number" name="rpe" min="1" max="10" step="1"></label>'
                 '<button>Salva risposta (anche vuota)</button></form></section>')
+    if import_preview is not None:
+        body.append('<section class="completed"><h3>Anteprima piano</h3><pre>%s</pre></section>' % escape(str(import_preview)))
     style = "body{font:18px system-ui;max-width:850px;margin:40px auto;padding:0 20px}" \
             "input,button{font:inherit;padding:8px;margin:6px}.candidate{border:1px solid #bbb;padding:16px;margin:12px 0}" \
             ".message,.completed{background:#eef8ee;padding:12px}.warning{background:#fff3cd;padding:12px}" \
@@ -330,8 +344,15 @@ def make_handler(database_path: str, *, action_token: str | None = None,
                     self._send(render_page(action_token=token))
                     return
                 repository = MaintainPlanRepository(database_path)
-                sessions = repository.list_actual_sessions(subject)
-                if not sessions:
+                query = parse_qs(urlparse(self.path).query)
+                def integer(name):
+                    raw = query.get(name, [""])[0]
+                    return int(raw) if raw else None
+                listing = list_sessions(repository, subject, page=integer("page") or 1,
+                                        year=integer("year"), month=integer("month"),
+                                        sport=query.get("sport", [None])[0] or None)
+                sessions = listing.items
+                if not sessions and listing.total == 0:
                     readiness = database_review_readiness(database_path, subject)
                     self._send(render_page(
                         subject, message=readiness.message(), action_token=token))
@@ -352,7 +373,9 @@ def make_handler(database_path: str, *, action_token: str | None = None,
                 self._send(render_page(
                     subject, review=review,
                     message=f"{len(sessions)} attività disponibile/i.", action_token=token,
-                    sessions=sessions, selected_session=selected,
+                    sessions=sessions, selected_session=selected, page=listing.page,
+                    pages=listing.pages, total=listing.total, year=integer("year"),
+                    month=integer("month"), sport=query.get("sport", [None])[0],
                     ai_result=(ai_comment(repository, subject, session_id)
                                if selected is not None else None),
                     prescriptions=prescriptions,
@@ -380,6 +403,17 @@ def make_handler(database_path: str, *, action_token: str | None = None,
                         action_token=token), 403)
                     return
                 operation = values.get("operation", [""])[0]
+                if operation == "preview_plan":
+                    from .session_flow import preview_imported_plan
+                    try:
+                        preview = preview_imported_plan(values.get("plan_json", [""])[0])
+                        message = "Piano valido: anteprima pronta."
+                    except ValueError as error:
+                        self._send(render_page(subject, message=f"JSON non valido: {error}", action_token=token))
+                        return
+                    self._send(render_page(subject, message=message, action_token=token,
+                                           import_preview=preview))
+                    return
                 prescription = values.get("prescription", [""])[0]
                 session = values.get("session", [""])[0]
                 if operation in {"capture_rpe", "capture_session_rpe"}:
