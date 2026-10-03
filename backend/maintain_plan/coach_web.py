@@ -344,19 +344,11 @@ def make_handler(database_path: str, *, action_token: str | None = None,
                     self._send(render_page(action_token=token))
                     return
                 repository = MaintainPlanRepository(database_path)
-                query = parse_qs(urlparse(self.path).query)
-                def integer(name):
-                    raw = query.get(name, [""])[0]
-                    return int(raw) if raw else None
-                listing = list_sessions(repository, subject, page=integer("page") or 1,
-                                        year=integer("year"), month=integer("month"),
-                                        sport=query.get("sport", [None])[0] or None)
                 sessions = listing.items
                 if not sessions and listing.total == 0:
                     readiness = database_review_readiness(database_path, subject)
-                    self._send(render_page(
-                        subject, message=readiness.message(), action_token=token))
-                    return
+                    if not identity_message:
+                        identity_message = readiness.message()
                 session_id = parse_qs(urlparse(self.path).query).get("session", [""])[0]
                 selected = repository.get_actual_session(session_id) if session_id else None
                 identity_message = ""
@@ -368,6 +360,14 @@ def make_handler(database_path: str, *, action_token: str | None = None,
                             "maiuscole/minuscole. Usa l'ID esatto configurato."
                         )
                     selected = None
+                sessions = repository.list_actual_sessions(subject)
+                if not sessions:
+                    readiness = database_review_readiness(database_path, subject)
+                    self._send(render_page(
+                        subject,
+                        message=(identity_message or readiness.message()),
+                        action_token=token))
+                    return
                 prescriptions = repository.list_prescription_snapshots(subject)
                 review = review_database(database_path, subject) if prescriptions else None
                 stored_relation = (repository.get_session_relation(session_id)
