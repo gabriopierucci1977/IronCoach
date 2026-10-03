@@ -344,24 +344,28 @@ def make_handler(database_path: str, *, action_token: str | None = None,
                     self._send(render_page(action_token=token))
                     return
                 repository = MaintainPlanRepository(database_path)
-                sessions = listing.items
-                if not sessions and listing.total == 0:
-                    readiness = database_review_readiness(database_path, subject)
-                    if not identity_message:
-                        identity_message = readiness.message()
-                session_id = parse_qs(urlparse(self.path).query).get("session", [""])[0]
+                query = parse_qs(urlparse(self.path).query)
+                def integer(name):
+                    raw = query.get(name, [""])[0]
+                    return int(raw) if raw else None
+                listing = list_sessions(repository, subject, page=integer("page") or 1,
+                                        year=integer("year"), month=integer("month"),
+                                        sport=query.get("sport", [None])[0] or None)
+                session_id = query.get("session", [""])[0]
                 selected = repository.get_actual_session(session_id) if session_id else None
                 identity_message = ""
                 if selected is not None and selected.subject_ref != subject:
-                    if (isinstance(selected.subject_ref, str)
-                            and selected.subject_ref.casefold() == subject.casefold()):
+                    if (
+                        isinstance(selected.subject_ref, str)
+                        and selected.subject_ref.casefold() == subject.casefold()
+                    ):
                         identity_message = (
                             "ID atleta non valido: la differenza riguarda solo "
                             "maiuscole/minuscole. Usa l'ID esatto configurato."
                         )
                     selected = None
-                sessions = repository.list_actual_sessions(subject)
-                if not sessions:
+                sessions = listing.items
+                if not sessions and listing.total == 0:
                     readiness = database_review_readiness(database_path, subject)
                     self._send(render_page(
                         subject,
@@ -379,7 +383,7 @@ def make_handler(database_path: str, *, action_token: str | None = None,
                         stored_relation = ("PROGRAM", mapping.prescription_snapshot_ref)
                 self._send(render_page(
                     subject, review=review,
-                    message=(identity_message or f"{len(sessions)} attività disponibile/i."),
+                    message=(identity_message or f"{len(sessions)} attività disponibile/i."), action_token=token,
                     sessions=sessions, selected_session=selected, page=listing.page,
                     pages=listing.pages, total=listing.total, year=integer("year"),
                     month=integer("month"), sport=query.get("sport", [None])[0],
