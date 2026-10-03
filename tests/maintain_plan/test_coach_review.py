@@ -31,6 +31,27 @@ from backend.maintain_plan.runtime_matching_decision import DecisionStatus
 from tests.maintain_plan.fixtures import NOW, RUN_PRESCRIPTION, RUN_SESSION
 
 
+def test_browser_reports_case_only_subject_mismatch_before_empty_readiness(tmp_path):
+    archived = "recO4aHGKSTexpXUC"
+    entered = "reco4aHGKSTexpXUC"
+    repository = MaintainPlanRepository(tmp_path / "case-mismatch.db")
+    repository.create_actual_session(replace(RUN_SESSION, subject_ref=archived))
+    server = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(str(repository.database_path)))
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        connection = http.client.HTTPConnection(*server.server_address)
+        connection.request("GET", "/?" + urlencode({"subject": entered, "session": RUN_SESSION.session_id}))
+        response = connection.getresponse()
+        page = response.read().decode()
+        assert response.status == 200
+        assert "ID atleta non valido" in page
+        assert "maiuscole/minuscole" in page
+    finally:
+        server.shutdown()
+        thread.join()
+
+
 def _repository(tmp_path, sessions=(RUN_SESSION,)):
     repository = MaintainPlanRepository(tmp_path / "coach-review.db")
     repository.create_prescription_snapshot(RUN_PRESCRIPTION)

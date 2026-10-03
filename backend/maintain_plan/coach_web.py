@@ -351,16 +351,27 @@ def make_handler(database_path: str, *, action_token: str | None = None,
                 listing = list_sessions(repository, subject, page=integer("page") or 1,
                                         year=integer("year"), month=integer("month"),
                                         sport=query.get("sport", [None])[0] or None)
+                session_id = query.get("session", [""])[0]
+                selected = repository.get_actual_session(session_id) if session_id else None
+                identity_message = ""
+                if selected is not None and selected.subject_ref != subject:
+                    if (
+                        isinstance(selected.subject_ref, str)
+                        and selected.subject_ref.casefold() == subject.casefold()
+                    ):
+                        identity_message = (
+                            "ID atleta non valido: la differenza riguarda solo "
+                            "maiuscole/minuscole. Usa l'ID esatto configurato."
+                        )
+                    selected = None
                 sessions = listing.items
                 if not sessions and listing.total == 0:
                     readiness = database_review_readiness(database_path, subject)
                     self._send(render_page(
-                        subject, message=readiness.message(), action_token=token))
+                        subject,
+                        message=(identity_message or readiness.message()),
+                        action_token=token))
                     return
-                session_id = parse_qs(urlparse(self.path).query).get("session", [""])[0]
-                selected = repository.get_actual_session(session_id) if session_id else None
-                if selected is not None and selected.subject_ref != subject:
-                    selected = None
                 prescriptions = repository.list_prescription_snapshots(subject)
                 review = review_database(database_path, subject) if prescriptions else None
                 stored_relation = (repository.get_session_relation(session_id)
@@ -372,7 +383,7 @@ def make_handler(database_path: str, *, action_token: str | None = None,
                         stored_relation = ("PROGRAM", mapping.prescription_snapshot_ref)
                 self._send(render_page(
                     subject, review=review,
-                    message=f"{len(sessions)} attività disponibile/i.", action_token=token,
+                    message=(identity_message or f"{len(sessions)} attività disponibile/i."), action_token=token,
                     sessions=sessions, selected_session=selected, page=listing.page,
                     pages=listing.pages, total=listing.total, year=integer("year"),
                     month=integer("month"), sport=query.get("sport", [None])[0],
