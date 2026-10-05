@@ -41,3 +41,25 @@ def test_export_prompt_contains_session_history_prescription_and_feedback():
     prompt = build_export_prompt(session, [session], {"id": "p1"})
     assert '"session_id": "1"' in prompt and "storico_recente" in prompt
     assert '"id": "p1"' in prompt and "duro" in prompt and "8" in prompt
+
+from backend.maintain_plan.session_flow import preview_text_plan, text_to_plan
+
+
+def test_text_plan_is_converted_to_internal_sessions():
+    plan = text_to_plan(
+        "06/10/2026 - corsa facile per 45 minuti\n"
+        "2026-10-08 - bici con 6 ripetute"
+    )
+    assert [item["sport"] for item in plan["sessions"]] == ["RUN", "BIKE"]
+    assert preview_text_plan("2026-10-06 - nuoto tecnico")[0]["sport"] == "SWIM"
+
+
+def test_text_plan_reports_missing_date():
+    try:
+        text_to_plan("corsa facile senza data")
+    except ValueError as error:
+        assert "data" in str(error)
+    else:
+        raise AssertionError(
+            "La descrizione senza data deve chiedere un chiarimento"
+        )

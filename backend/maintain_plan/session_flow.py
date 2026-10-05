@@ -6,6 +6,7 @@ the user's clipboard/browser and validates plans returned by the user.
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from dataclasses import dataclass
 from datetime import datetime
@@ -77,6 +78,106 @@ def validate_imported_plan(value: str | dict[str, Any]) -> dict[str, Any]:
         try: datetime.fromisoformat(item["date"].replace("Z", "+00:00"))
         except ValueError as exc: raise ValueError(f"sessions[{i}].date non valida") from exc
     return data
+
+
+_TEXT_SPORTS = (
+    ("strength", ("forza", "strength", "pesi", "palestra")),
+    ("swim", ("nuoto", "swim", "piscina")),
+    ("bike", ("ciclismo", "bicicletta", "bici", "bike")),
+    ("run", ("corsa", "running", "run", "jogging")),
+    ("mobility", ("mobilità", "mobilita", "mobility", "stretching")),
+    ("rest", ("riposo", "rest", "recupero")),
+)
+
+_PLAN_DATE_RE = re.compile(
+    r"(?<!\d)(\d{4}[-/]\d{1,2}[-/]\d{1,2}|\d{1,2}/\d{1,2}/\d{4})(?!\d)"
+)
+
+
+def _plan_date(value: str) -> str:
+    normalized = value.replace("/", "-")
+    parts = normalized.split("-")
+    if len(parts[0]) == 4:
+        parsed = datetime.strptime(normalized, "%Y-%m-%d")
+    else:
+        parsed = datetime.strptime(normalized, "%d-%m-%Y")
+    return parsed.strftime("%Y-%m-%dT00:00:00+00:00")
+
+
+def text_to_plan(value: str) -> dict[str, Any]:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError("scrivi almeno una seduta")
+
+    sessions = []
+    errors = []
+
+    for line_number, raw_line in enumerate(value.splitlines(), 1):
+        line = raw_line.strip()
+
+        if not line or line.startswith("#"):
+            continue
+
+        date_match = _PLAN_DATE_RE.search(line)
+
+        if date_match is None:
+            errors.append(
+                f"riga {line_number}: indica una data "
+                "(AAAA-MM-GG oppure GG/MM/AAAA)"
+            )
+            continue
+
+        date_value = _plan_date(date_match.group(1))
+        description = (
+            line[:date_match.start()] + " " + line[date_match.end():]
+        ).strip(" -:;\t")
+
+        lowered = description.casefold()
+
+        sport = next(
+            (
+                canonical
+                for canonical, words in _TEXT_SPORTS
+                if any(word in lowered for word in words)
+            ),
+            None,
+        )
+
+        if sport is None:
+            errors.append(
+                f"riga {line_number}: indica lo sport "
+                "(corsa, bici, nuoto, forza o altro)"
+            )
+            continue
+
+        sessions.append({
+            "date": date_value,
+            "sport": sport.upper(),
+            "title": description or sport,
+            "description": description,
+        })
+
+    if errors:
+        raise ValueError("; ".join(errors))
+
+    if not sessions:
+        raise ValueError("non ho trovato sedute descrivibili")
+
+    return {
+        "sessions": sessions,
+        "source": "descrizione_utente",
+    }
+
+
+def preview_text_plan(value: str) -> tuple[dict[str, Any], ...]:
+    data = text_to_plan(value)
+    return tuple(
+        {
+            "date": item["date"],
+            "sport": item["sport"],
+            "title": item["title"],
+        }
+        for item in data["sessions"]
+    )
 
 def preview_imported_plan(value: str | dict[str, Any]) -> tuple[dict[str, Any], ...]:
     data = validate_imported_plan(value)
