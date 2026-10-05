@@ -739,8 +739,8 @@ def test_portal_lists_and_opens_persisted_non_garmin_sessions_without_plan(tmp_p
         opened = connection.getresponse()
         page = opened.read().decode()
         assert opened.status == 200
-        assert "Sessione strava-session" in page
-        assert "Sessione autonoma" in page
+        assert "Corsa del 01/01/2026" in page
+        assert "Confronto con il piano" in page
         assert "fonte: Strava" in page
         assert "Esito:" not in page
     finally:

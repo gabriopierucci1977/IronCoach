@@ -61,7 +61,7 @@ def test_ai_comment_is_explicitly_unavailable_without_configuration(tmp_path, mo
     comment = ai_comment(repository, "athlete-1", "session-1")
 
     assert not comment.available
-    assert "OPENAI_API_KEY non configurata" in comment.unavailable_reason
+    assert "OPENAI_API_KEY" in comment.unavailable_reason
     assert comment.interpretation == ""
 
 
@@ -114,9 +114,9 @@ def test_browser_can_open_a_session_when_no_prescription_exists(tmp_path, monkey
         response = connection.getresponse()
         page = response.read().decode()
         assert response.status == 200
-        assert "Sessione autonoma" in page
-        assert "Parere IA non disponibile" in page
-        assert "OPENAI_API_KEY non configurata" in page
+        assert "Confronto con il piano" in page
+        assert "Analisi con ChatGPT" in page
+        assert "OPENAI_API_KEY" not in page
         assert "RPE facoltativo" in page
     finally:
         server.shutdown()

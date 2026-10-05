@@ -71,6 +71,83 @@ def _source_label(session) -> str:
     return ", ".join(sources) if sources else "fonte incerta"
 
 
+
+def _activity_summary(session):
+    from collections.abc import Mapping
+    from zoneinfo import ZoneInfo
+
+    facts = session_facts(session)
+    labels = {"RUN": "Corsa", "BIKE": "Bici", "SWIM": "Nuoto"}
+    sport = ", ".join(
+        labels.get(item.strip(), item.strip().title())
+        for item in facts.sport.split(",")
+    )
+
+    date = session.start
+    if date.tzinfo is not None:
+        date = date.astimezone(ZoneInfo("Europe/Rome"))
+
+    rows = [
+        ("Inizio", f"{date:%d/%m/%Y alle %H:%M} (ora italiana)"),
+        ("Fonte", _source_label(session).title()),
+    ]
+
+    if facts.duration_minutes is not None:
+        rows.append(("Durata", f"{facts.duration_minutes:g} minuti"))
+
+    metric_labels = {
+        "distance": "Distanza",
+        "heart_rate": "Frequenza cardiaca",
+        "power": "Potenza",
+    }
+
+    for component in session.components:
+        for metric in getattr(component, "secondary_metrics", ()) or ():
+            if not isinstance(metric, Mapping) or metric.get("value") is None:
+                continue
+            name = str(metric.get("metric", "Misura"))
+            if name == "duration":
+                continue
+            rows.append((
+                metric_labels.get(name, name.replace("_", " ").capitalize()),
+                f'{metric["value"]} {metric.get("unit") or ""}'.strip(),
+            ))
+
+        intensity = getattr(component, "intensity_observations", None) or {}
+        for name, unit in (("heart_rate", "bpm"), ("power", "W")):
+            values = intensity.get(name)
+            if not isinstance(values, Mapping):
+                continue
+            for kind, label in (
+                ("average", "media"),
+                ("max", "massima"),
+                ("normalized", "normalizzata"),
+            ):
+                if values.get(kind) is not None:
+                    rows.append((
+                        f"{metric_labels[name]} {label}",
+                        f"{values[kind]} {unit}",
+                    ))
+
+    body = (
+        f'<section><h2>{escape(sport)} del {date:%d/%m/%Y}</h2>'
+        '<h3>Dati registrati</h3><ul>'
+    )
+
+    for label, value in dict.fromkeys(rows):
+        body += (
+            f'<li><strong>{escape(label)}:</strong> '
+            f'{escape(value)}</li>'
+        )
+
+    body += (
+        '</ul><p>Le misure provengono dall’archivio di IronCoach. '
+        'Se manca un dato presente in Garmin, occorre verificarne '
+        'l’importazione.</p></section>'
+    )
+    return body
+
+
 def render_page(subject_ref: str = "", *, review=None, message: str = "",
                 action_token: str = "", sessions=(), selected_session=None,
                 ai_result=None, prescriptions=(), relation=None, page=1, pages=1,
@@ -126,12 +203,7 @@ def render_page(subject_ref: str = "", *, review=None, message: str = "",
     if selected_session is not None:
         facts = session_facts(selected_session)
         detail = session_detail(selected_session)
-        body.append(f'<section><h2>Sessione {escape(facts.session_id)}</h2>'
-                    f'<h3>Dati osservati</h3><p>Sport: {escape(facts.sport)}; '
-                    f'inizio: {escape(facts.start)}; durata: '
-                    f'{escape("non disponibile" if facts.duration_minutes is None else str(facts.duration_minutes) + " min")}; '
-                    f'fonte: {escape(_source_label(selected_session))}.</p></section>')
-        body.append('<p>Metriche: %s · Dati mancanti: %s · Feedback: %s</p>' % (escape(", ".join(detail["metrics"]) or "nessuna"), escape(", ".join(detail["missing"]) or "nessuno"), escape(str(detail["feedback"] or "nessuno"))))
+        body.append(_activity_summary(selected_session))
         prompt = build_export_prompt(selected_session, sessions)
         export_prompt = build_export_prompt(selected_session, sessions)
         body.append(
@@ -159,16 +231,23 @@ def render_page(subject_ref: str = "", *, review=None, message: str = "",
                             f'Appartiene a {escape(prescription.prescription_snapshot_id)}</button>')
             body.append('</form></section>')
         else:
-            body.append('<p class="completed"><strong>Sessione autonoma:</strong> '
-                        'non esistono prescrizioni da confrontare.</p>')
+            body.append('<p class="completed"><strong>Confronto con il piano:</strong> '
+                        'non è disponibile un allenamento programmato da confrontare.</p>')
         if ai_result is not None and ai_result.available:
             body.append('<section class="ai"><h2>Parere IA</h2>'
                         f'<h3>Dati osservati</h3><p>{escape(ai_result.observed)}</p>'
                         f'<h3>Interpretazione</h3><p>{escape(ai_result.interpretation)}</p>'
                         f'<h3>Incertezze</h3><p>{escape(ai_result.uncertainties)}</p></section>')
         elif ai_result is not None:
-            body.append('<section class="warning"><h2>Parere IA non disponibile</h2>'
-                        f'<p>{escape(ai_result.unavailable_reason)}</p></section>')
+            body.append('<section class="warning"><h2>Analisi non disponibile</h2>'
+                        '<p>Puoi richiedere un parere con il pulsante '
+                        'di esportazione.</p></section>')
+        else:
+            body.append('<section class="ai"><h2>Analisi con ChatGPT</h2>'
+                        '<p>Le chiamate automatiche a pagamento sono disattivate. '
+                        'Per richiedere un parere, usa “Esporta dati verso ChatGPT”. '
+                        'L’esportazione avviene solo quando premi il pulsante.</p>'
+                        '</section>')
         body.append('<section><strong>RPE facoltativo</strong><p>Se aiuta a interpretare la '
                     'seduta, indica lo sforzo percepito senza attribuirlo a Garmin o Strava.</p>'
                     '<form method="post">'
@@ -475,8 +554,7 @@ def make_handler(database_path: str, *, action_token: str | None = None,
                     sessions=sessions, selected_session=selected, page=listing.page,
                     pages=listing.pages, total=listing.total, year=integer("year"),
                     month=integer("month"), sport=query.get("sport", [None])[0],
-                    ai_result=(ai_comment(repository, subject, session_id)
-                               if selected is not None else None),
+                    ai_result=None,
                     prescriptions=prescriptions,
                     relation=stored_relation))
             except Exception as error:
@@ -559,7 +637,7 @@ def make_handler(database_path: str, *, action_token: str | None = None,
                         self._send(render_page(
                             authoritative_subject, message="RPE osservato registrato.",
                             action_token=token, sessions=sessions, selected_session=selected,
-                            ai_result=ai_comment(repository, authoritative_subject, session),
+                            ai_result=None,
                             prescriptions=repository.list_prescription_snapshots(authoritative_subject),
                             relation=repository.get_session_relation(session)))
                         return

@@ -47,7 +47,16 @@ def session_detail(session) -> dict[str, Any]:
     return {"session_id": session.session_id, "sport": sorted({getattr(c.discipline, "value", c.discipline) for c in session.components}),
             "start": session.start.isoformat(), "duration_minutes": duration,
             "source": sorted({a.source for a in session.source_activities}), "metrics": sorted(set(metrics)),
-            "missing": sorted(missing), "prescription": None, "feedback": session.athlete_feedback}
+            "missing": sorted(missing), "prescription": None, "feedback": session.athlete_feedback,
+            "observations": [
+                {
+                    "sport": getattr(c.discipline, "value", c.discipline),
+                    "quantity": c.quantity_observation,
+                    "secondary_metrics": getattr(c, "secondary_metrics", ()),
+                    "intensity": getattr(c, "intensity_observations", None),
+                }
+                for c in session.components
+            ]}
 
 def build_export_prompt(session, recent=(), prescription=None, feedback=None) -> str:
     def compat(value):
