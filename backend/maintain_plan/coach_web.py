@@ -394,16 +394,34 @@ def _valid_origin(origin: str | None, expected_origin: str, *,
     if origin in allowed_origins:
         return True
 
+    # Alcuni browser mobili omettono Origin nei moduli inviati
+    # alla stessa applicazione.
+    if not origin:
+        return (
+            expected_origin.startswith("https://")
+            and host is not None
+            and host.startswith(("localhost:", "127.0.0.1:"))
+            and forwarded_host in {
+                expected_origin.removeprefix("https://"),
+                f"{expected_origin.removeprefix('https://')}:443",
+            }
+            and forwarded_proto == "https"
+        )
+
     # Codespaces' web proxy can rewrite both the authority and Origin to its
     # loopback upstream.  Only recognise that form when the proxy also records
     # the environment-derived public authority and HTTPS scheme.  These exact
     # checks deliberately do not make arbitrary localhost origins trustworthy.
     public_authority = expected_origin.removeprefix("https://")
+    forwarded_origins = {
+        f"https://{public_authority}",
+        f"https://{public_authority}:443",
+    }
     return (
         expected_origin.startswith("https://")
         and host is not None
         and host.startswith(("localhost:", "127.0.0.1:"))
-        and origin == f"https://{host}"
+        and origin in forwarded_origins
         and forwarded_host in {public_authority, f"{public_authority}:443"}
         and forwarded_proto == "https"
     )
@@ -489,7 +507,7 @@ def make_handler(database_path: str, *, action_token: str | None = None,
                 "https://") else "")
             self.send_header(
                 "Set-Cookie",
-                f"ironcoach_action={token}; SameSite=Strict; HttpOnly{secure}")
+                f"ironcoach_action={token}; Path=/; SameSite=Strict; HttpOnly{secure}")
             self.end_headers()
             self.wfile.write(payload)
 
