@@ -24,6 +24,7 @@ from .runtime_matching_decision import DecisionStatus
 from .rpe_feedback import capture_database_observed_rpe
 from .repository import MaintainPlanRepository
 from .session_coach import ai_comment, save_relation, session_facts
+from .manual_analysis import load_manual_analysis, save_manual_analysis
 from .session_flow import (
     build_export_prompt,
     list_sessions,
@@ -148,11 +149,26 @@ def _activity_summary(session):
     return body
 
 
+def render_manual_analysis(subject, session_id, token, prompt, saved=None):
+    from html import escape
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    safe = lambda value: escape(str(value), quote=True)
+    saved_text = saved['text'] if saved else ''
+    body = f'<section class="ai" id="manual-analysis"><h2>Analisi del tuo allenamento</h2><p>La richiesta è pronta. Apri ChatGPT per ottenere il parere, poi torna qui per conservarlo in questa attività.</p><button type="button" onclick="ironcoachCopyRequest()">Copia richiesta</button><button type="button" onclick="ironcoachOpenChatGPT()">Apri ChatGPT</button><p id="analysis-transfer-status" role="status" aria-live="polite"></p><details><summary>Leggi o copia la richiesta completa</summary><label for="analysis-request">Richiesta da inviare a ChatGPT</label><textarea id="analysis-request" rows="10" readonly>{safe(prompt)}</textarea></details>'
+    if saved:
+        date = datetime.fromisoformat(saved['created_at']).astimezone(ZoneInfo('Europe/Rome'))
+        body += f'<h3>Parere salvato</h3><p>Da ChatGPT, inserito da te il {date:%d/%m/%Y alle %H:%M}.</p><div class="saved-analysis">{safe(saved_text)}</div><p>Puoi aggiornarlo sotto: la versione precedente rimane conservata.</p>'
+    body += f'<form method="post"><input type="hidden" name="operation" value="save_manual_analysis"><input type="hidden" name="subject" value="{safe(subject)}"><input type="hidden" name="session" value="{safe(session_id)}"><input type="hidden" name="action_token" value="{safe(token)}"><label for="analysis-text">Incolla qui il parere di ChatGPT</label><textarea id="analysis-text" name="analysis_text" rows="10" maxlength="30000" required placeholder="Incolla la risposta ricevuta…">{safe(saved_text)}</textarea><p>Il parere verrà conservato solo quando premi Salva.</p><button>Salva parere nella seduta</button></form></section><style>#manual-analysis textarea{{display:block;box-sizing:border-box;width:100%;font:inherit;margin:12px 0;padding:10px}}.saved-analysis{{white-space:pre-wrap;overflow-wrap:anywhere;padding:14px;background:white;border:1px solid #ccd}}</style>'
+    body += "<script>\nfunction ironcoachSelectRequest() {\n    const box = document.getElementById('analysis-request');\n    box.closest('details').open = true;\n    box.focus(); box.select(); box.setSelectionRange(0, box.value.length);\n}\nasync function ironcoachCopyRequest() {\n    const status = document.getElementById('analysis-transfer-status');\n    try {\n        await navigator.clipboard.writeText(document.getElementById('analysis-request').value);\n        status.textContent = 'Richiesta copiata. Apri ChatGPT e incollala nella chat.';\n    } catch (error) {\n        ironcoachSelectRequest();\n        status.textContent = 'Copia automatica non disponibile: copia il testo selezionato.';\n    }\n}\nfunction ironcoachOpenChatGPT() {\n    const prompt = document.getElementById('analysis-request').value;\n    // Long prompts go through the clipboard rather than a potentially truncated URL.\n    const url = 'https://chatgpt.com/?q=' + encodeURIComponent(prompt);\n    const useQuery = url.length <= 7000;\n    window.open(useQuery ? url : 'https://chatgpt.com/', '_blank', 'noopener,noreferrer');\n    if (useQuery) {\n        document.getElementById('analysis-transfer-status').textContent =\n            'In ChatGPT controlla la richiesta e premi Invio. Poi copia il parere e torna qui.';\n    } else {\n        ironcoachCopyRequest();\n    }\n}\n</script>"
+    return body
+
+
 def render_page(subject_ref: str = "", *, review=None, message: str = "",
                 action_token: str = "", sessions=(), selected_session=None,
                 ai_result=None, prescriptions=(), relation=None, page=1, pages=1,
                 total=None, year=None, month=None, sport=None, import_preview=None,
-                import_plan_payload=None) -> str:
+                import_plan_payload=None, manual_analysis=None) -> str:
     body = ["<h1>IronCoach · Le tue sedute</h1>",
             "<p>Esamina un allenamento svolto, con o senza un piano.</p>",
             '<form method="get"><label>ID atleta <input name="subject" required value="' +
@@ -204,16 +220,6 @@ def render_page(subject_ref: str = "", *, review=None, message: str = "",
         facts = session_facts(selected_session)
         detail = session_detail(selected_session)
         body.append(_activity_summary(selected_session))
-        prompt = build_export_prompt(selected_session, sessions)
-        export_prompt = build_export_prompt(selected_session, sessions)
-        body.append(
-            '<button type="button" data-prompt="%s" '
-            'onclick="navigator.clipboard.writeText(this.dataset.prompt);'
-            'window.open(\'https://chatgpt.com/?q=\'+ '
-            'encodeURIComponent(this.dataset.prompt),\'_blank\');">'
-            'Esporta dati verso ChatGPT</button>'
-            % escape(export_prompt, quote=True)
-        )
         if relation is not None:
             body.append(f'<p class="completed"><strong>Scelta conservata:</strong> '
                         f'{escape(relation[0])}</p>')
@@ -233,21 +239,9 @@ def render_page(subject_ref: str = "", *, review=None, message: str = "",
         else:
             body.append('<p class="completed"><strong>Confronto con il piano:</strong> '
                         'non è disponibile un allenamento programmato da confrontare.</p>')
-        if ai_result is not None and ai_result.available:
-            body.append('<section class="ai"><h2>Parere IA</h2>'
-                        f'<h3>Dati osservati</h3><p>{escape(ai_result.observed)}</p>'
-                        f'<h3>Interpretazione</h3><p>{escape(ai_result.interpretation)}</p>'
-                        f'<h3>Incertezze</h3><p>{escape(ai_result.uncertainties)}</p></section>')
-        elif ai_result is not None:
-            body.append('<section class="warning"><h2>Analisi non disponibile</h2>'
-                        '<p>Puoi richiedere un parere con il pulsante '
-                        'di esportazione.</p></section>')
-        else:
-            body.append('<section class="ai"><h2>Analisi con ChatGPT</h2>'
-                        '<p>Le chiamate automatiche a pagamento sono disattivate. '
-                        'Per richiedere un parere, usa “Esporta dati verso ChatGPT”. '
-                        'L’esportazione avviene solo quando premi il pulsante.</p>'
-                        '</section>')
+        export_prompt = build_export_prompt(selected_session, sessions)
+        body.append(render_manual_analysis(
+            subject_ref, facts.session_id, action_token, export_prompt, manual_analysis))
         body.append('<section><strong>RPE facoltativo</strong><p>Se aiuta a interpretare la '
                     'seduta, indica lo sforzo percepito senza attribuirlo a Garmin o Strava.</p>'
                     '<form method="post">'
@@ -556,7 +550,9 @@ def make_handler(database_path: str, *, action_token: str | None = None,
                     month=integer("month"), sport=query.get("sport", [None])[0],
                     ai_result=None,
                     prescriptions=prescriptions,
-                    relation=stored_relation))
+                    relation=stored_relation,
+                    manual_analysis=(load_manual_analysis(repository, subject, session_id)
+                                     if selected is not None else None)))
             except Exception as error:
                 self._send(render_page(subject, message=f"Dati non utilizzabili: {error}"), 400)
 
@@ -580,6 +576,17 @@ def make_handler(database_path: str, *, action_token: str | None = None,
                         action_token=token), 403)
                     return
                 operation = values.get("operation", [""])[0]
+                if operation == "save_manual_analysis":
+                    session_id = values.get("session", [""])[0]
+                    repository = MaintainPlanRepository(database_path)
+                    save_manual_analysis(
+                        repository, subject, session_id,
+                        values.get("analysis_text", [""])[0])
+                    self.send_response(303)
+                    self.send_header("Location", "/?" + urlencode(
+                        {"subject": subject, "session": session_id}) + "#manual-analysis")
+                    self.end_headers()
+                    return
                 if operation in {"preview_text_plan", "preview_plan"}:
                     try:
                         if operation == "preview_text_plan":
@@ -639,7 +646,9 @@ def make_handler(database_path: str, *, action_token: str | None = None,
                             action_token=token, sessions=sessions, selected_session=selected,
                             ai_result=None,
                             prescriptions=repository.list_prescription_snapshots(authoritative_subject),
-                            relation=repository.get_session_relation(session)))
+                            relation=repository.get_session_relation(session),
+                            manual_analysis=load_manual_analysis(
+                                repository, authoritative_subject, session)))
                         return
                     review = review_database(database_path, authoritative_subject)
                     subject = authoritative_subject

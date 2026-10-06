@@ -24,7 +24,7 @@ def test_pagination_and_filtering():
 
 def test_render_contains_navigation_export_and_import_preview():
     html = render_page("a", sessions=(_session(1),), selected_session=_session(1), page=1, pages=2)
-    assert "Esamina" in html and "Esporta dati verso ChatGPT" in html
+    assert "Esamina" in html and "Apri ChatGPT" in html
     assert "chatgpt.com/?q=" in html and "Importa piano JSON" in html
 
 

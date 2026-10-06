@@ -115,7 +115,7 @@ def test_browser_can_open_a_session_when_no_prescription_exists(tmp_path, monkey
         page = response.read().decode()
         assert response.status == 200
         assert "Confronto con il piano" in page
-        assert "Analisi con ChatGPT" in page
+        assert "Analisi del tuo allenamento" in page
         assert "OPENAI_API_KEY" not in page
         assert "RPE facoltativo" in page
     finally:
