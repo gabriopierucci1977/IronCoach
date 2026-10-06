@@ -399,6 +399,16 @@ def _valid_origin(origin: str | None, expected_origin: str, *,
     # the environment-derived public authority and HTTPS scheme.  These exact
     # checks deliberately do not make arbitrary localhost origins trustworthy.
     public_authority = expected_origin.removeprefix("https://")
+    proxy_context = (
+        expected_origin.startswith("https://")
+        and host is not None
+        and host.startswith(("localhost:", "127.0.0.1:"))
+        and forwarded_host in {public_authority, f"{public_authority}:443"}
+        and forwarded_proto == "https"
+    )
+    if proxy_context and origin is None:
+        return True
+
     return (
         expected_origin.startswith("https://")
         and host is not None
