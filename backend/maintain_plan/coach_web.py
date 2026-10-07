@@ -406,7 +406,7 @@ def _valid_origin(origin: str | None, expected_origin: str, *,
         and forwarded_host in {public_authority, f"{public_authority}:443"}
         and forwarded_proto == "https"
     )
-    if proxy_context and origin is None:
+    if proxy_context and origin in {None, f"http://{host}"}:
         return True
 
     return (

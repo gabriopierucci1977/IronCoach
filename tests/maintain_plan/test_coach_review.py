@@ -445,8 +445,10 @@ def test_browser_get_is_read_only_and_cross_origin_post_is_rejected(tmp_path):
     repository = _repository(tmp_path)
     token = "test-action-token"
     server = ThreadingHTTPServer(
-        ("127.0.0.1", 0), make_handler(str(repository.database_path),
-                                       action_token=token))
+        ("127.0.0.1", 0), make_handler(
+            str(repository.database_path),
+            action_token=token,
+            environment={}))
     thread = Thread(target=server.serve_forever, daemon=True)
     thread.start()
     host, port = server.server_address
