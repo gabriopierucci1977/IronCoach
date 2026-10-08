@@ -548,3 +548,11 @@ runtime**.
 - Test mirati runtime, stabilità e outcome: `515 passed`; test wiring/outcome: `43 passed`.
 - Non è stata eseguita alcuna attivazione runtime né alcuna modifica a dati reali.
 - Prima di collegare matching o outcome alla pipeline serve un contratto di wiring e rollout esplicitamente approvato.
+
+## Primo slice shadow matching — 8 ottobre 2026
+
+- Aggiunto un boundary shadow in memoria per il matching runtime.
+- Il flag `IRONCOACH_MAINTAIN_PLAN_SHADOW_ENABLED` è disattivato per default.
+- Lo shadow usa soltanto gli artefatti prodotti nella stessa esecuzione.
+- Non apre repository, non persiste dati e non modifica decisione, report, confidence o learning.
+- Lo shadow copre il matching; l’outcome finale resta fuori dal wiring runtime.

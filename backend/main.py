@@ -52,6 +52,9 @@ from backend.maintain_plan.runtime_prescription_capture import (
 from backend.maintain_plan.runtime_actual_session_capture import (
     RuntimeActualSessionCapture,
 )
+from backend.maintain_plan.runtime_shadow import (
+    evaluate_runtime_matching_shadow,
+)
 from backend.maintain_plan.coach_review import format_coach_review, review_database
 
 
@@ -620,9 +623,10 @@ def run_pipeline(
             garmin_sync_warnings
         )
 
+    actual_capture_result = None
     if not dry_run:
         capture_time = datetime.now(timezone.utc)
-        _execute_phase(
+        actual_capture_result = _execute_phase(
             "cattura attività MAINTAIN_PLAN",
             lambda: RuntimeActualSessionCapture().capture(
                 runtime_config=runtime_config,
@@ -669,8 +673,9 @@ def run_pipeline(
         ),
     )
 
+    snapshot_capture_result = None
     if not dry_run:
-        _execute_phase(
+        snapshot_capture_result = _execute_phase(
             "cattura prescrizione MAINTAIN_PLAN",
             lambda: RuntimePrescriptionCapture().capture(
                 runtime_config=runtime_config,
@@ -679,6 +684,46 @@ def run_pipeline(
                 decision=decision,
             ),
         )
+
+    if (
+        not dry_run
+        and getattr(runtime_config, "maintain_plan_shadow_enabled", False) is True
+    ):
+        try:
+            athlete_context = (
+                context.get("athlete")
+                if isinstance(context, dict)
+                else None
+            )
+            subject_ref = (
+                athlete_context.get("source_id")
+                if isinstance(athlete_context, dict)
+                else None
+            )
+            shadow_result = evaluate_runtime_matching_shadow(
+                subject_ref=subject_ref,
+                snapshots=(
+                    (snapshot_capture_result,)
+                    if snapshot_capture_result is not None
+                    else ()
+                ),
+                sessions=(
+                    actual_capture_result.captured_sessions
+                    if actual_capture_result is not None
+                    else ()
+                ),
+            )
+            print(
+                "MAINTAIN_PLAN shadow matching: "
+                f"{shadow_result.decision.status.value}; "
+                f"candidates={len(shadow_result.decision.candidates)}; "
+                f"pairs={len(shadow_result.decision.pair_evaluations)}"
+            )
+        except Exception as error:
+            print(
+                "MAINTAIN_PLAN shadow non disponibile: "
+                f"{type(error).__name__}"
+            )
 
     report_builder = _execute_phase(
         "inizializzazione Report Builder",

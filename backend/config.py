@@ -11,6 +11,7 @@ Decision Memory possono essere personalizzati tramite:
 - IRONCOACH_DECISION_MEMORY_DATABASE_PATH
 - IRONCOACH_MAINTAIN_PLAN_SNAPSHOT_ENABLED
 - IRONCOACH_MAINTAIN_PLAN_ACTUAL_SESSION_ENABLED
+- IRONCOACH_MAINTAIN_PLAN_SHADOW_ENABLED
 - IRONCOACH_MAINTAIN_PLAN_DATABASE_PATH
 - IRONCOACH_MAINTAIN_PLAN_TIMEZONE
 
@@ -37,6 +38,7 @@ DEFAULT_DECISION_MEMORY_DATABASE_PATH = (
 )
 DEFAULT_MAINTAIN_PLAN_SNAPSHOT_ENABLED = False
 DEFAULT_MAINTAIN_PLAN_ACTUAL_SESSION_ENABLED = False
+DEFAULT_MAINTAIN_PLAN_SHADOW_ENABLED = False
 DEFAULT_MAINTAIN_PLAN_DATABASE_PATH = (
     "data/ironcoach_maintain_plan.db"
 )
@@ -157,6 +159,9 @@ class RuntimeConfig:
     maintain_plan_timezone: str = (
         DEFAULT_MAINTAIN_PLAN_TIMEZONE
     )
+    maintain_plan_shadow_enabled: bool = (
+        DEFAULT_MAINTAIN_PLAN_SHADOW_ENABLED
+    )
 
     def __post_init__(self) -> None:
         high_cap = _normalize_confidence_cap(
@@ -243,6 +248,12 @@ class RuntimeConfig:
                 _string_from_env(
                     "IRONCOACH_MAINTAIN_PLAN_TIMEZONE",
                     DEFAULT_MAINTAIN_PLAN_TIMEZONE,
+                )
+            ),
+            maintain_plan_shadow_enabled=(
+                _bool_from_env(
+                    "IRONCOACH_MAINTAIN_PLAN_SHADOW_ENABLED",
+                    DEFAULT_MAINTAIN_PLAN_SHADOW_ENABLED,
                 )
             ),
         )

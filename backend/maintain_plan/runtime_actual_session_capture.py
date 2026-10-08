@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
@@ -15,6 +15,7 @@ from .runtime_actual_session_adapter import (
     validate_runtime_unicode_tree,
 )
 from .serialization import serialize_contract
+from .models import ActualSession
 
 
 @dataclass(frozen=True)
@@ -22,6 +23,9 @@ class RuntimeActualSessionCaptureResult:
     created: tuple[str, ...] = ()
     reused: tuple[str, ...] = ()
     unsupported: tuple[int, ...] = ()
+    captured_sessions: tuple[ActualSession, ...] = field(
+        default=(), compare=False, repr=False
+    )
 
 
 def _semantic(value: Any) -> Any:
@@ -75,7 +79,10 @@ class RuntimeActualSessionCapture:
                 unsupported.append(index)
 
         if not candidates:
-            return RuntimeActualSessionCaptureResult(unsupported=tuple(unsupported))
+            return RuntimeActualSessionCaptureResult(
+                unsupported=tuple(unsupported),
+                captured_sessions=(),
+            )
 
         # All untrusted input has been classified/normalized before migrations.
         repository = self._repository_factory(runtime_config.maintain_plan_database_path)
@@ -95,4 +102,9 @@ class RuntimeActualSessionCapture:
                 else:
                     transaction.create(candidate)
                     created.append(candidate.session_id)
-        return RuntimeActualSessionCaptureResult(tuple(created), tuple(reused), tuple(unsupported))
+        return RuntimeActualSessionCaptureResult(
+            tuple(created),
+            tuple(reused),
+            tuple(unsupported),
+            tuple(candidates),
+        )
