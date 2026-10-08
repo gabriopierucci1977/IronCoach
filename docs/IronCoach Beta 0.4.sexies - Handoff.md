@@ -537,3 +537,14 @@ runtime**.
 - Il salvataggio reale del commento è stato verificato dalla pagina web e il commento resta associato alla seduta dopo il ricaricamento.
 - Verifica: 1550 test passati, 5 saltati; compilazione e `git diff --check` superati.
 - Commit applicativo già pubblicato: `db70480`.
+
+
+## Stato runtime verificato — 8 ottobre 2026
+
+- `SCHEMA_VERSION` corrente: `10`, con migrazioni 1–10 presenti e verificate.
+- La cattura `ActualSession` è richiamata da `backend/main.py` dopo la costruzione del contesto e prima della Decision Memory.
+- La cattura resta opt-in: il servizio non opera se `IRONCOACH_MAINTAIN_PLAN_ACTUAL_SESSION_ENABLED` è assente o falso.
+- Matching runtime, stabilità e outcome finale sono implementati come servizi del package, ma non sono collegati alla pipeline principale.
+- Test mirati runtime, stabilità e outcome: `515 passed`; test wiring/outcome: `43 passed`.
+- Non è stata eseguita alcuna attivazione runtime né alcuna modifica a dati reali.
+- Prima di collegare matching o outcome alla pipeline serve un contratto di wiring e rollout esplicitamente approvato.
