@@ -556,3 +556,11 @@ runtime**.
 - Lo shadow usa soltanto gli artefatti prodotti nella stessa esecuzione.
 - Non apre repository, non persiste dati e non modifica decisione, report, confidence o learning.
 - Lo shadow copre il matching; l’outcome finale resta fuori dal wiring runtime.
+
+## Verifica end-to-end shadow pipeline — 8 ottobre 2026
+
+- Aggiunti test end-to-end isolati del wiring shadow nella pipeline.
+- Verificato il passaggio in memoria di snapshot e sessioni catturati.
+- Verificato il comportamento default-off e `dry_run`.
+- Verificato che un errore shadow non interrompa la pipeline.
+- Nessuna attivazione runtime reale o scrittura su dati reali.
