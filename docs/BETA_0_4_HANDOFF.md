@@ -985,3 +985,16 @@ importata da `backend/main.py`, il flag shadow resta default-off e non vengono
 creati adapter runtime per `PrescriptionMapping`, `ExecutionEvaluation` o
 `GeneralStabilityEvaluation` finché non esiste un contratto canonico approvato
 per le loro sorgenti, ownership, versionamento e idempotenza.
+
+## Scelta B: contratto adapter runtime — 9 ottobre 2026
+
+È stata scelta la definizione del contratto adapter runtime, mantenendo però
+l'implementazione e il wiring in stato **NON ATTIVO**. Il contratto preparatorio
+è in `docs/MAINTAIN_PLAN_RUNTIME_ADAPTER_CONTRACT.md`.
+
+Il prossimo lavoro dovrà identificare i provider concreti per
+`PrescriptionSnapshot`, `ActualSession`, `PrescriptionMapping`,
+`ExecutionEvaluation` e `GeneralStabilityEvaluation`, con ownership,
+provenance, versionamento e idempotenza verificabili. Fino alla chiusura di
+questi punti il flag runtime resta default-off e non si introducono fallback o
+inferenze.
