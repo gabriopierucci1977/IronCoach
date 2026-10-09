@@ -976,3 +976,12 @@ adapter canonici e con semantica normativa completa, un
 `GeneralStabilityEvaluation` coerenti per la stessa catena. Non introdurre
 fallback, inferenze o un collegamento a `backend/main.py` finché questo
 contratto di input non è definito e verificato con test di integrazione.
+
+## Decisione esplicita: mantenere l’isolamento — 9 ottobre 2026
+
+È stata confermata la scelta di mantenere MAINTAIN_PLAN isolato dal runtime
+legacy. La chain shadow resta pure, non pubblicata e non persistente; non viene
+importata da `backend/main.py`, il flag shadow resta default-off e non vengono
+creati adapter runtime per `PrescriptionMapping`, `ExecutionEvaluation` o
+`GeneralStabilityEvaluation` finché non esiste un contratto canonico approvato
+per le loro sorgenti, ownership, versionamento e idempotenza.
