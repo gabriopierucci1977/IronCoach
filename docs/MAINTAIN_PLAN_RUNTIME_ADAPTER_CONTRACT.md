@@ -129,3 +129,21 @@ Prima di scrivere il codice adapter devono essere identificati e testati:
 
 Fino a quel momento questo documento resta una definizione contrattuale
 preparatoria: nessun adapter o wiring runtime viene considerato implementato.
+
+## Matrice provider verificata — 9 ottobre 2026
+
+L'inventario statico del repository ha prodotto questa matrice:
+
+| Artefatto | Sorgente individuata | Stato adapter |
+|---|---|---|
+| `PrescriptionSnapshot` | `RuntimePrescriptionCapture` e `PrescriptionSnapshotService` | disponibile dentro MAINTAIN_PLAN; manca il confine adapter verso un bundle runtime |
+| `ActualSession` | `RuntimeActualSessionCapture` e repository append-only | disponibile dentro MAINTAIN_PLAN; manca il confine adapter verso un bundle runtime |
+| `PrescriptionMapping` | `runtime_matching_persistence.py`, `MaintainPlanRepository` e `coach_review.py` | bridge esistente, non creato dalla chain pure |
+| `ExecutionEvaluation` | repository con create/get e `final_outcome_service.py` | contratto canonico presente, nessun producer runtime fuori da MAINTAIN_PLAN |
+| `GeneralStabilityEvaluation` | `general_stability_service.py` | servizio canonico presente, ma nessun provider runtime o percorso di persistenza individuato |
+
+La matrice blocca l'implementazione dell'adapter completo sul lato stability.
+Non è ammesso costruire una `GeneralStabilityEvaluation` da dati grezzi,
+lasciare il campo vuoto o degradare a un outcome parziale. Il prossimo lavoro
+ammissibile è definire il provider stability e la sua provenance; fino ad
+allora la chain resta non attiva e default-off.

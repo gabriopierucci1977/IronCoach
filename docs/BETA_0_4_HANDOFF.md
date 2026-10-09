@@ -998,3 +998,11 @@ Il prossimo lavoro dovrà identificare i provider concreti per
 provenance, versionamento e idempotenza verificabili. Fino alla chiusura di
 questi punti il flag runtime resta default-off e non si introducono fallback o
 inferenze.
+
+## Provider runtime verificati: gap stability — 9 ottobre 2026
+
+L'inventario dei provider conferma capture per `PrescriptionSnapshot` e
+`ActualSession`, oltre a bridge/repository per mapping ed execution dentro
+MAINTAIN_PLAN. Non esiste ancora un provider runtime canonico per
+`GeneralStabilityEvaluation`. L'adapter completo resta quindi bloccato su
+quel provider; nessun fallback o outcome parziale è autorizzato.
