@@ -956,3 +956,23 @@ Commit del checkpoint: `161ee8a`, `3c8ec50`, `b4f0f81`, `08a5110`, `590e107`.
 La verifica completa post-chain ha prodotto **1581 passed, 5 skipped**;
 `compileall` e `git diff --check` sono verdi. Il wiring legacy già presente in
 `backend/main.py` resta separato; la nuova chain non è attivata nel runtime.
+
+## Audit prontezza attivazione runtime — 9 ottobre 2026
+
+L'audit del checkpoint `3ebdf7d` ha verificato che:
+
+- `runtime_shadow_chain.py`, `runtime_shadow_consistency.py` e
+  `runtime_outcome_shadow.py` non sono importati dal runtime legacy fuori da
+  `backend/maintain_plan`;
+- `IRONCOACH_MAINTAIN_PLAN_SHADOW_ENABLED` resta configurato **default-off**;
+- il bridge di persistenza del matching esiste, ma non viene attivato dalla
+  chain pure;
+- i test shadow dedicati sono presenti e la suite completa post-chain è verde:
+  **1581 passed, 5 skipped**.
+
+L'attivazione runtime resta rinviata: il runtime non espone ancora, tramite
+adapter canonici e con semantica normativa completa, un
+`PrescriptionMapping`, una `ExecutionEvaluation` e una
+`GeneralStabilityEvaluation` coerenti per la stessa catena. Non introdurre
+fallback, inferenze o un collegamento a `backend/main.py` finché questo
+contratto di input non è definito e verificato con test di integrazione.
