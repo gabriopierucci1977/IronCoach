@@ -936,3 +936,23 @@ Full suite finale:
 442 passed, 5 skipped
 
 La Beta 0.4 è quindi in uno stato sicuro da cui riprendere.
+## Checkpoint shadow outcome chain — 9 ottobre 2026
+
+La branch `feature/beta-0.4-decision-memory` contiene ora i confini pure e
+non persistenti per il tratto shadow matching → outcome:
+
+- `runtime_matching_scope.py` valida lo scope esplicito per soggetto;
+- `runtime_matching_decision.py` produce la decisione globale deterministica;
+- `runtime_outcome_boundary.py` valida gli input canonici dell'outcome;
+- `runtime_outcome_shadow.py` valuta l'outcome senza pubblicazione;
+- `runtime_shadow_orchestration.py` gestisce gli stati shadow senza inferire
+  mapping o scrivere il database;
+- `runtime_shadow_consistency.py` verifica la coerenza tra decisione, mapping,
+  snapshot, sessione ed evaluation;
+- `runtime_shadow_chain.py` compone consistency e outcome shadow in un unico
+  risultato pure, senza cambiare `backend/main.py` o il runtime legacy.
+
+Commit del checkpoint: `161ee8a`, `3c8ec50`, `b4f0f81`, `08a5110`, `590e107`.
+La verifica completa post-chain ha prodotto **1581 passed, 5 skipped**;
+`compileall` e `git diff --check` sono verdi. Il wiring legacy già presente in
+`backend/main.py` resta separato; la nuova chain non è attivata nel runtime.
