@@ -585,3 +585,11 @@ runtime**.
 - La boundary non scopre artefatti, non apre repository, non persiste e non
   chiama la pipeline o il learning.
 - L'outcome finale resta separato e non viene valutato da questa slice.
+
+## Shadow outcome isolato — 9 ottobre 2026
+
+- Aggiunto `runtime_outcome_shadow.py` per assemblare input canonici già in memoria.
+- Lo shadow valida la boundary e calcola il risultato draft tramite i servizi puri.
+- Il risultato non viene pubblicato, persistito, inserito nel report o usato nel learning.
+- Nessun wiring nella pipeline principale e nessun nuovo flag runtime.
+- Gli input reali restano responsabilità di producer e orchestrazione futuri.
