@@ -593,3 +593,12 @@ runtime**.
 - Il risultato non viene pubblicato, persistito, inserito nel report o usato nel learning.
 - Nessun wiring nella pipeline principale e nessun nuovo flag runtime.
 - Gli input reali restano responsabilità di producer e orchestrazione futuri.
+
+## Orchestrazione shadow matching-outcome — 9 ottobre 2026
+
+- Aggiunto un confine puro tra decisione di matching e valutazione outcome shadow.
+- Un `CandidatePair` selezionato non genera mapping o evaluation implicitamente.
+- L'outcome shadow avanza soltanto con `ExecutionEvaluation`,
+  `GeneralStabilityEvaluation` e metadati completi forniti esplicitamente.
+- Matching irrisolto e input outcome incompleti restano non valutati.
+- Nessun wiring nella pipeline, persistenza, report o learning.
