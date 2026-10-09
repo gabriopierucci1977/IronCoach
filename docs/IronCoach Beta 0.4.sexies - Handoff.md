@@ -564,3 +564,14 @@ runtime**.
 - Verificato il comportamento default-off e `dry_run`.
 - Verificato che un errore shadow non interrompa la pipeline.
 - Nessuna attivazione runtime reale o scrittura su dati reali.
+
+## Input per l'outcome finale — 9 ottobre 2026
+
+- Aggiunto `MAINTAIN_PLAN_OUTCOME_RUNTIME_INPUT_CONTRACT.md` in stato DRAFT.
+- Documentati gli input canonici di execution, stability e aggregazione finale.
+- Distinto il matching shadow da un mapping autorevole e da una evaluation.
+- Elencati baseline attestata, candidate set recovery, projection del feedback,
+  confini temporali e provenance necessari prima del futuro wiring.
+- Audit precedente: 241 test mirati passati; nuovo contesto completo su `2b0d7ac`.
+- Questa slice modifica solo documentazione; nessuna attivazione runtime,
+  migrazione o modifica a decisioni, report, confidence e learning.
