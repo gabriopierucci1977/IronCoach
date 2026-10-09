@@ -575,3 +575,13 @@ runtime**.
 - Audit precedente: 241 test mirati passati; nuovo contesto completo su `2b0d7ac`.
 - Questa slice modifica solo documentazione; nessuna attivazione runtime,
   migrazione o modifica a decisioni, report, confidence e learning.
+
+## Boundary pura input outcome — 9 ottobre 2026
+
+- Aggiunta `runtime_outcome_boundary.py` per validare input canonici già in memoria.
+- La boundary richiede `ExecutionEvaluation`, `GeneralStabilityEvaluation`,
+  `evaluation_id`, `evaluated_at` e `ProvenanceRef`.
+- Gli errori strutturali sono fail-closed e deterministici.
+- La boundary non scopre artefatti, non apre repository, non persiste e non
+  chiama la pipeline o il learning.
+- L'outcome finale resta separato e non viene valutato da questa slice.
