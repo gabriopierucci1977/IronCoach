@@ -1006,3 +1006,12 @@ L'inventario dei provider conferma capture per `PrescriptionSnapshot` e
 MAINTAIN_PLAN. Non esiste ancora un provider runtime canonico per
 `GeneralStabilityEvaluation`. L'adapter completo resta quindi bloccato su
 quel provider; nessun fallback o outcome parziale è autorizzato.
+
+## Contratto provider stability — 9 ottobre 2026
+
+È stato definito il contratto preparatorio per il provider di
+`GeneralStabilityEvaluation` in `docs/MAINTAIN_PLAN_STABILITY_PROVIDER_CONTRACT.md`.
+Il provider dovrà usare soltanto recovery evidence e projection tipizzate,
+validare ownership/cutoff/provenance e restare privo di scritture e rete. La
+chain runtime rimane non attiva finché i provider concreti e i test di
+idempotenza non sono disponibili.
