@@ -1015,3 +1015,17 @@ Il provider dovrà usare soltanto recovery evidence e projection tipizzate,
 validare ownership/cutoff/provenance e restare privo di scritture e rete. La
 chain runtime rimane non attiva finché i provider concreti e i test di
 idempotenza non sono disponibili.
+
+## Correzione ownership della chain stability — 9 ottobre 2026
+
+La consistency boundary impone ora uguaglianza esatta fra il subject_ref della
+stabilita e quello della catena snapshot/sessione. La validazione stability
+canonica continua a verificare la coerenza interna delle evidenze. I test di
+regressione usano stability valida di un altro soggetto con gli stessi ID:
+la catena deve rifiutarla prima di valutare l'outcome. I fixture positivi sono
+allineati tramite copie locali immutabili di snapshot e sessione.
+
+Il provider 04dea1d e la chain 3ba0c19 consumano input gia tipizzati. Non sono
+ancora una sorgente reale di recovery: acquisizione di baseline, follow-up e
+reported-problems, oltre alla loro persistenza, restano da implementare con
+contratti espliciti. Il runtime rimane default-off e non viene attivato qui.

@@ -10,7 +10,9 @@ from backend.maintain_plan.runtime_shadow_consistency import RuntimeShadowConsis
 from tests.maintain_plan.fixtures import RUN_MAPPING, RUN_PRESCRIPTION, RUN_SESSION
 from tests.maintain_plan.test_final_outcome_service import PROV, RUN_EXECUTION, T0, stability
 
-SUBJECT = "athlete-1"
+SUBJECT = "athlete"
+RUN_PRESCRIPTION = replace(RUN_PRESCRIPTION, subject_ref=SUBJECT)
+RUN_SESSION = replace(RUN_SESSION, subject_ref=SUBJECT)
 
 
 def matching():

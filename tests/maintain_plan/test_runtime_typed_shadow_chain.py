@@ -12,7 +12,9 @@ from tests.maintain_plan.fixtures import RUN_MAPPING, RUN_PRESCRIPTION, RUN_SESS
 from tests.maintain_plan.test_final_outcome_service import PROV, RUN_EXECUTION, T0
 from tests.maintain_plan.test_general_stability_service import make_input
 
-SUBJECT = "athlete-1"
+SUBJECT = "athlete"
+RUN_PRESCRIPTION = replace(RUN_PRESCRIPTION, subject_ref=SUBJECT)
+RUN_SESSION = replace(RUN_SESSION, subject_ref=SUBJECT)
 SNAPSHOT_REF = VersionedArtifactRef("prescription-snapshot", "snapshot-1", "1")
 SESSION_REF = VersionedArtifactRef("actual-session", "session-1", "1")
 

@@ -68,6 +68,9 @@ def validate_runtime_shadow_consistency(*, subject_ref, matching, snapshot, sess
         if observed is not None and (observed.session_id, observed.component_id) not in valid_observed:
             errors.append(f"component mapping {index} has unknown observed ref")
 
+    if stability.subject_ref != subject_ref:
+        errors.append("stability subject_ref does not equal chain subject_ref")
+
     errors.extend(validate_final_outcome_inputs(execution, stability))
     if errors:
         raise RuntimeShadowConsistencyError(errors)
