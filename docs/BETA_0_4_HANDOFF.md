@@ -1029,3 +1029,22 @@ Il provider 04dea1d e la chain 3ba0c19 consumano input gia tipizzati. Non sono
 ancora una sorgente reale di recovery: acquisizione di baseline, follow-up e
 reported-problems, oltre alla loro persistenza, restano da implementare con
 contratti espliciti. Il runtime rimane default-off e non viene attivato qui.
+
+## Persistenza append-only della valutazione stability — 10 ottobre 2026
+
+È stata aggiunta la migrazione isolata 11 e il repository per conservare una
+`GeneralStabilityEvaluation` canonica già prodotta dal provider. La riga salva
+metadata verificabili per soggetto, snapshot, sessione, policy, timestamp e
+payload tipizzato; le foreign key richiedono che snapshot e sessione esistano.
+La scrittura è insert-only: una seconda valutazione con la stessa identità
+fallisce e non sovrascrive il risultato precedente.
+
+Il round-trip usa la serializzazione deterministica anche per i contratti
+`stability_models`. In inserimento vengono ricontrollati validator canonico e
+ownership dei due artefatti persistiti. Sono presenti test per round-trip,
+listing per soggetto, retry senza overwrite, soggetto estraneo e tampering dei
+metadata.
+
+Questo checkpoint persiste soltanto una valutazione completa ricevuta dal
+provider; non crea baseline, candidate set o reported-problems dal runtime e
+non attiva la shadow chain.

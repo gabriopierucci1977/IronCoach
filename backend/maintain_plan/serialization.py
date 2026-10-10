@@ -8,20 +8,23 @@ from datetime import datetime
 from enum import Enum
 from typing import Any
 
-from . import models
+from . import models, stability_models
 
 
 PAYLOAD_SCHEMA_VERSION = "maintain-plan-json/1"
 
+_CONTRACT_MODULES = (models, stability_models)
 _DATACLASSES = {
     name: value
-    for name, value in vars(models).items()
-    if isinstance(value, type) and is_dataclass(value) and value.__module__ == models.__name__
+    for module in _CONTRACT_MODULES
+    for name, value in vars(module).items()
+    if isinstance(value, type) and is_dataclass(value) and value.__module__ == module.__name__
 }
 _ENUMS = {
     name: value
-    for name, value in vars(models).items()
-    if isinstance(value, type) and issubclass(value, Enum) and value.__module__ == models.__name__
+    for module in _CONTRACT_MODULES
+    for name, value in vars(module).items()
+    if isinstance(value, type) and issubclass(value, Enum) and value.__module__ == module.__name__
 }
 
 
@@ -31,13 +34,17 @@ def _require_keys(value: dict[str, Any], expected: set[str]) -> None:
 
 
 def _encode(value: Any) -> Any:
-    if is_dataclass(value) and value.__class__.__module__ == models.__name__:
+    if is_dataclass(value) and value.__class__.__module__ in {
+        module.__name__ for module in _CONTRACT_MODULES
+    }:
         return {
             "$type": "dataclass",
             "name": value.__class__.__name__,
             "fields": {field.name: _encode(getattr(value, field.name)) for field in fields(value)},
         }
-    if isinstance(value, Enum) and value.__class__.__module__ == models.__name__:
+    if isinstance(value, Enum) and value.__class__.__module__ in {
+        module.__name__ for module in _CONTRACT_MODULES
+    }:
         return {"$type": "enum", "name": value.__class__.__name__, "value": value.value}
     if isinstance(value, datetime):
         return {"$type": "datetime", "value": value.isoformat()}

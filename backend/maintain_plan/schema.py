@@ -12,7 +12,7 @@ from typing import Callable, Iterable
 from .archive_lock import archive_lock
 
 
-SCHEMA_VERSION = 10
+SCHEMA_VERSION = 11
 
 
 @dataclass(frozen=True)
@@ -496,6 +496,42 @@ def _migration_10(connection: sqlite3.Connection) -> None:
 
 MIGRATIONS = MIGRATIONS + (Migration(
     10, hashlib.sha256(_MIGRATION_10_SQL.encode("utf-8")).hexdigest(), _migration_10,
+),)
+
+
+_MIGRATION_11_SQL = """
+CREATE TABLE maintain_plan_stability_evaluations (
+    evaluation_id TEXT PRIMARY KEY,
+    subject_ref TEXT NOT NULL,
+    prescription_snapshot_ref TEXT NOT NULL
+        REFERENCES maintain_plan_prescription_snapshots(prescription_snapshot_id),
+    actual_session_ref TEXT NOT NULL
+        REFERENCES maintain_plan_actual_sessions(session_id),
+    contract_version TEXT NOT NULL,
+    policy_id TEXT NOT NULL,
+    policy_version TEXT NOT NULL,
+    evaluated_at TEXT NOT NULL,
+    payload_schema_version TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    UNIQUE (evaluation_id, subject_ref)
+);
+CREATE INDEX idx_mp_stability_evaluations_subject
+    ON maintain_plan_stability_evaluations(subject_ref);
+CREATE INDEX idx_mp_stability_evaluations_session
+    ON maintain_plan_stability_evaluations(actual_session_ref);
+CREATE INDEX idx_mp_stability_evaluations_snapshot
+    ON maintain_plan_stability_evaluations(prescription_snapshot_ref);
+""".strip()
+
+
+def _migration_11(connection: sqlite3.Connection) -> None:
+    for statement in _MIGRATION_11_SQL.split(";"):
+        if statement.strip():
+            connection.execute(statement)
+
+
+MIGRATIONS = MIGRATIONS + (Migration(
+    11, hashlib.sha256(_MIGRATION_11_SQL.encode("utf-8")).hexdigest(), _migration_11,
 ),)
 
 

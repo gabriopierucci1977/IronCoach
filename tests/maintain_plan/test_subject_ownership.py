@@ -31,8 +31,8 @@ def _legacy_payload(value) -> str:
 
 
 def test_v7_is_exactly_append_only_after_v1_through_v6(tmp_path):
-    assert SCHEMA_VERSION == 10
-    assert [migration.version for migration in MIGRATIONS] == list(range(1, 11))
+    assert SCHEMA_VERSION == 11
+    assert [migration.version for migration in MIGRATIONS] == list(range(1, 12))
     path = tmp_path / "upgrade.db"
     run_migrations(path, MIGRATIONS[:6])
     with sqlite3.connect(path) as connection:
@@ -45,7 +45,7 @@ def test_v7_is_exactly_append_only_after_v1_through_v6(tmp_path):
             "SELECT version, checksum FROM maintain_plan_schema_migrations ORDER BY version"
         ).fetchall()
         assert before == after[:6]
-        assert [row[0] for row in after] == list(range(1, 11))
+        assert [row[0] for row in after] == list(range(1, 12))
         assert "subject_ref" in {row[1] for row in connection.execute(
             "PRAGMA table_info(maintain_plan_prescription_snapshots)")}
         assert "subject_ref" in {row[1] for row in connection.execute(

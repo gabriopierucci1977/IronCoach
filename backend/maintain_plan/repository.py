@@ -13,6 +13,7 @@ from .models import (ActualSession, Confirmation, ConfirmationAnswerType, Execut
                      PrescriptionSnapshot, SourceConflictProjection,
                      SourceConflictImpactEvaluation, SourceConflictResolutionEvent,
                      SourceConflictResolutionLog)
+from .stability_models import GeneralStabilityEvaluation
 from .archive_lock import locked_connect
 from .lifecycle_service import (project_feedback, project_source_conflict,
                                 structurally_equivalent, validate_feedback_payload,
@@ -25,6 +26,7 @@ from .validators import (validate_actual_session, validate_execution_evaluation,
                          validate_confirmation, validate_mapping, validate_matching_result,
                          validate_mapping_ownership, validate_prescription,
                          validate_source_conflict_impact)
+from .stability_validators import validate_general_stability_evaluation
 
 if TYPE_CHECKING:
     from .runtime_matching_decision import MatchingDecision
@@ -871,6 +873,81 @@ class MaintainPlanRepository:
         if not rows:
             return None
         return self.get_execution_evaluation(rows[0][0])
+
+    def create_stability_evaluation(self, value: GeneralStabilityEvaluation) -> None:
+        """Append one canonical stability evaluation and reject semantic drift."""
+        self._require_valid(validate_general_stability_evaluation(value))
+        snapshot_ref = value.prescription_binding.prescription_snapshot_ref
+        session_ref = value.actual_session_boundary.actual_session_ref
+        if snapshot_ref.artifact_type != "prescription-snapshot":
+            raise ValueError("stability evaluation must reference a prescription snapshot")
+        if session_ref.artifact_type != "actual-session":
+            raise ValueError("stability evaluation must reference an actual session")
+        if value.subject_ref != value.prescription_binding.subject_ref:
+            raise ValueError("stability evaluation ownership is incoherent")
+        if value.subject_ref != value.actual_session_boundary.subject_ref:
+            raise ValueError("stability evaluation session ownership is incoherent")
+        snapshot = self.get_prescription_snapshot(snapshot_ref.artifact_id)
+        session = self.get_actual_session(session_ref.artifact_id)
+        if snapshot is None or session is None:
+            raise ValueError("stability evaluation references missing runtime artifacts")
+        if snapshot.subject_ref != value.subject_ref:
+            raise ValueError("stability evaluation snapshot ownership is incoherent")
+        if session.subject_ref != value.subject_ref:
+            raise ValueError("stability evaluation actual-session ownership is incoherent")
+        self._insert(
+            "INSERT INTO maintain_plan_stability_evaluations "
+            "(evaluation_id, subject_ref, prescription_snapshot_ref, actual_session_ref, "
+            "contract_version, policy_id, policy_version, evaluated_at, "
+            "payload_schema_version, payload_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (value.evaluation_id, value.subject_ref, snapshot_ref.artifact_id,
+             session_ref.artifact_id, value.contract_version, value.policy_id,
+             value.policy_version, value.evaluated_at.isoformat(),
+             PAYLOAD_SCHEMA_VERSION, serialize_contract(value)),
+        )
+
+    def get_stability_evaluation(self, identifier: str) -> GeneralStabilityEvaluation | None:
+        stored = self._get("maintain_plan_stability_evaluations", "evaluation_id",
+                           identifier, GeneralStabilityEvaluation)
+        if stored is None:
+            return None
+        row, value = stored
+        self._validate_stability_evaluation_row(row, value)
+        return value
+
+    def list_stability_evaluations(self, subject_ref: str) -> tuple[GeneralStabilityEvaluation, ...]:
+        with self._connect() as connection:
+            connection.row_factory = sqlite3.Row
+            rows = connection.execute(
+                "SELECT * FROM maintain_plan_stability_evaluations "
+                "WHERE subject_ref = ? ORDER BY evaluated_at, evaluation_id",
+                (subject_ref,),
+            ).fetchall()
+        values = []
+        for row in rows:
+            value = deserialize_contract(row["payload_json"], GeneralStabilityEvaluation)
+            self._validate_stability_evaluation_row(row, value)
+            values.append(value)
+        return tuple(values)
+
+    def _validate_stability_evaluation_row(
+        self, row: sqlite3.Row, value: GeneralStabilityEvaluation,
+    ) -> None:
+        self._require_valid(validate_general_stability_evaluation(value))
+        binding = value.prescription_binding
+        boundary = value.actual_session_boundary
+        if (row["evaluation_id"], row["subject_ref"], row["prescription_snapshot_ref"],
+                row["actual_session_ref"], row["contract_version"], row["policy_id"],
+                row["policy_version"], row["evaluated_at"]) != (
+                value.evaluation_id, value.subject_ref,
+                binding.prescription_snapshot_ref.artifact_id,
+                boundary.actual_session_ref.artifact_id, value.contract_version,
+                value.policy_id, value.policy_version, value.evaluated_at.isoformat()):
+            raise ValueError("stored stability evaluation metadata does not match payload")
+        if binding.prescription_snapshot_ref.artifact_type != "prescription-snapshot":
+            raise ValueError("stored stability evaluation has invalid snapshot ref")
+        if boundary.actual_session_ref.artifact_type != "actual-session":
+            raise ValueError("stored stability evaluation has invalid session ref")
 
     def create_source_conflict_impact_evaluation(self, value: SourceConflictImpactEvaluation) -> None:
         self._require_valid(validate_source_conflict_impact(value))
