@@ -1048,3 +1048,26 @@ metadata.
 Questo checkpoint persiste soltanto una valutazione completa ricevuta dal
 provider; non crea baseline, candidate set o reported-problems dal runtime e
 non attiva la shadow chain.
+
+## Adapter runtime recovery tipizzato — 10 ottobre 2026
+
+È stato aggiunto `backend/maintain_plan/runtime_recovery_adapter.py` come
+confine pure per record recovery già disponibili al runtime. L'adapter non
+legge Garmin, non usa rete o database e non viene importato da
+`backend/main.py`.
+
+Il record deve fornire `source`, `source_id`, `date`, `observed_at` e
+`assessed_at`; i timestamp devono essere espliciti e timezone-aware. Un
+`subject_ref` eventualmente presente deve coincidere con quello del contesto.
+Il campo `training_readiness` non viene convertito in una categoria recovery.
+Solo `LOW`, `MODERATE`, `HIGH` e `CRITICAL` espliciti sono categorie valide.
+
+L'archivio `GarminRecoveryArchive` attuale non possiede ancora tutti questi
+campi: per questo l'adapter rifiuta i record incompleti invece di inventare la
+mezzanotte UTC o una classificazione. Con categoria assente ma timestamp
+validi, l'assessment conserva `CategoryMissingness.MISSING` e la valutazione
+resta `INSUFFICIENT_DATA`.
+
+Il contratto dettagliato è in
+`docs/MAINTAIN_PLAN_RUNTIME_RECOVERY_ADAPTER_CONTRACT.md`. La chain, il flag
+runtime e la persistenza restano default-off.
