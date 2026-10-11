@@ -178,6 +178,44 @@ def validate_assessment_ref(value: RecoveryAssessmentRef, name="assessment_ref")
     return tuple(errors)
 
 
+def validate_recovery_candidate_set(
+    value: object, name: str = "candidate_set",
+) -> tuple[str, ...]:
+    """Validate a candidate set independently of a complete stability input."""
+    errors: list[str] = []
+    if type(value) is not RecoveryAssessmentCandidateSet:
+        return (f"{name} must be a RecoveryAssessmentCandidateSet",)
+    errors.extend(validate_artifact_ref(value.actual_session_ref,
+                                        f"{name}.actual_session_ref"))
+    errors.extend(validate_provenance(value.provenance_ref, f"{name}.provenance_ref"))
+    _text(value.subject_ref, f"{name}.subject_ref", errors)
+    _text(value.contract_version, f"{name}.contract_version", errors)
+    if value.contract_version != STABILITY_CONTRACT_VERSION:
+        errors.append(f"{name}.contract_version is unsupported")
+    _datetime(value.captured_at, f"{name}.captured_at", errors)
+    _datetime(value.evaluated_cutoff_at, f"{name}.evaluated_cutoff_at", errors)
+    if (aware(value.captured_at) and aware(value.evaluated_cutoff_at) and
+            value.captured_at > value.evaluated_cutoff_at):
+        errors.append(f"{name}.captured_at must not follow evaluated_cutoff_at")
+    if type(value.candidates) is not tuple:
+        errors.append(f"{name}.candidates must be a tuple")
+        return tuple(errors)
+    for candidate in value.candidates:
+        errors.extend(validate_assessment(candidate, f"{name}.candidates[]"))
+        if type(candidate) is not RecoveryAssessment:
+            continue
+        if (aware(candidate.assessed_at) and aware(value.captured_at) and
+                candidate.assessed_at > value.captured_at):
+            errors.append(f"{name}.candidate assessed_at must not follow captured_at")
+        if (aware(candidate.observed_at) and aware(value.evaluated_cutoff_at) and
+                candidate.observed_at > value.evaluated_cutoff_at):
+            errors.append(f"{name}.candidate observed_at must not follow evaluated_cutoff_at")
+        if (aware(candidate.assessed_at) and aware(value.evaluated_cutoff_at) and
+                candidate.assessed_at > value.evaluated_cutoff_at):
+            errors.append(f"{name}.candidate assessed_at must not follow evaluated_cutoff_at")
+    return tuple(errors)
+
+
 def validate_general_stability_input(value: GeneralStabilityInput) -> tuple[str, ...]:
     errors: list[str] = []
     if type(value) is not GeneralStabilityInput:

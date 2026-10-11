@@ -13,7 +13,7 @@ from .models import (ActualSession, Confirmation, ConfirmationAnswerType, Execut
                      PrescriptionSnapshot, SourceConflictProjection,
                      SourceConflictImpactEvaluation, SourceConflictResolutionEvent,
                      SourceConflictResolutionLog)
-from .stability_models import GeneralStabilityEvaluation
+from .stability_models import GeneralStabilityEvaluation, RecoveryAssessmentCandidateSet
 from .recovery_baseline_models import (
     PrescriptionRecoveryBaseline, validate_recovery_baseline,
 )
@@ -29,7 +29,9 @@ from .validators import (validate_actual_session, validate_execution_evaluation,
                          validate_confirmation, validate_mapping, validate_matching_result,
                          validate_mapping_ownership, validate_prescription,
                          validate_source_conflict_impact)
-from .stability_validators import validate_general_stability_evaluation
+from .stability_validators import (
+    validate_general_stability_evaluation, validate_recovery_candidate_set,
+)
 
 if TYPE_CHECKING:
     from .runtime_matching_decision import MatchingDecision
@@ -301,6 +303,107 @@ class MaintainPlanRepository:
             value.captured_at.isoformat(),
         ):
             raise ValueError("stored recovery baseline metadata does not match payload")
+
+    def acquire_recovery_candidate_set(
+        self, candidate_set_id: str, value: RecoveryAssessmentCandidateSet,
+    ) -> RecoveryAssessmentCandidateSet:
+        """Atomically acquire one immutable candidate set for an actual session."""
+        if type(candidate_set_id) is not str or not candidate_set_id.strip():
+            raise ValueError("candidate_set_id must be a non-empty string")
+        self._require_valid(validate_recovery_candidate_set(value))
+        session_ref = value.actual_session_ref
+        if session_ref.artifact_type != "actual-session":
+            raise ValueError("candidate set must reference an actual session")
+        session = self.get_actual_session(session_ref.artifact_id)
+        if session is None:
+            raise ValueError("candidate set references a missing actual session")
+        if session.subject_ref != value.subject_ref:
+            raise ValueError("candidate set session ownership is incoherent")
+        stored_row = None
+        stored = None
+        with self._connect() as connection:
+            connection.row_factory = sqlite3.Row
+            connection.execute("BEGIN IMMEDIATE")
+            stored_row = connection.execute(
+                "SELECT * FROM maintain_plan_recovery_candidate_sets "
+                "WHERE candidate_set_id = ?",
+                (candidate_set_id,),
+            ).fetchone()
+            if stored_row is None:
+                connection.execute(
+                    "INSERT INTO maintain_plan_recovery_candidate_sets "
+                    "(candidate_set_id, subject_ref, actual_session_ref, contract_version, "
+                    "captured_at, evaluated_cutoff_at, payload_schema_version, payload_json) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    (candidate_set_id, value.subject_ref, session_ref.artifact_id,
+                     value.contract_version, value.captured_at.isoformat(),
+                     value.evaluated_cutoff_at.isoformat(), PAYLOAD_SCHEMA_VERSION,
+                     serialize_contract(value)),
+                )
+                return value
+            stored = self._decode_recovery_candidate_set_row(stored_row)
+        # Validate the existing row after releasing the write transaction.  The
+        # validator follows the foreign key to the immutable session row.
+        self._validate_recovery_candidate_set_row(stored_row, candidate_set_id, stored)
+        if stored == value:
+            return stored
+        raise ValueError("recovery candidate set already exists with different content")
+
+    def get_recovery_candidate_set(
+        self, candidate_set_id: str,
+    ) -> RecoveryAssessmentCandidateSet | None:
+        stored = self._get("maintain_plan_recovery_candidate_sets", "candidate_set_id",
+                           candidate_set_id, RecoveryAssessmentCandidateSet)
+        if stored is None:
+            return None
+        row, value = stored
+        self._validate_recovery_candidate_set_row(row, candidate_set_id, value)
+        return value
+
+    def list_recovery_candidate_sets(
+        self, subject_ref: str,
+    ) -> tuple[RecoveryAssessmentCandidateSet, ...]:
+        with self._connect() as connection:
+            connection.row_factory = sqlite3.Row
+            rows = connection.execute(
+                "SELECT * FROM maintain_plan_recovery_candidate_sets "
+                "WHERE subject_ref = ? ORDER BY evaluated_cutoff_at, captured_at, candidate_set_id",
+                (subject_ref,),
+            ).fetchall()
+        values = []
+        for row in rows:
+            value = self._decode_recovery_candidate_set_row(row)
+            self._validate_recovery_candidate_set_row(row, row["candidate_set_id"], value)
+            values.append(value)
+        return tuple(values)
+
+    def _decode_recovery_candidate_set_row(
+        self, row: sqlite3.Row,
+    ) -> RecoveryAssessmentCandidateSet:
+        if row["payload_schema_version"] != PAYLOAD_SCHEMA_VERSION:
+            raise ValueError("unsupported stored MAINTAIN_PLAN payload schema version")
+        return deserialize_contract(row["payload_json"], RecoveryAssessmentCandidateSet)
+
+    def _validate_recovery_candidate_set_row(
+        self, row: sqlite3.Row, candidate_set_id: str,
+        value: RecoveryAssessmentCandidateSet,
+    ) -> None:
+        self._require_valid(validate_recovery_candidate_set(value))
+        session_ref = value.actual_session_ref
+        if session_ref.artifact_type != "actual-session":
+            raise ValueError("stored recovery candidate set has invalid session ref")
+        session = self.get_actual_session(session_ref.artifact_id)
+        if session is None or session.subject_ref != value.subject_ref:
+            raise ValueError("stored recovery candidate set has unresolved ownership")
+        if (
+            row["candidate_set_id"], row["subject_ref"], row["actual_session_ref"],
+            row["contract_version"], row["captured_at"], row["evaluated_cutoff_at"],
+        ) != (
+            candidate_set_id, value.subject_ref, session_ref.artifact_id,
+            value.contract_version, value.captured_at.isoformat(),
+            value.evaluated_cutoff_at.isoformat(),
+        ):
+            raise ValueError("stored recovery candidate set metadata does not match payload")
 
     def create_actual_session(self, value: ActualSession) -> None:
         self._require_valid(validate_actual_session(value))

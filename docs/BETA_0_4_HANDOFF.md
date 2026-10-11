@@ -1105,3 +1105,19 @@ sessione diverso da quello della baseline. Non esegue lookup, rianalisi,
 lettura SQLite o wiring del runtime legacy. La proiezione reported-problems
 resta esplicita e assente nel chiamante corrente; la valutazione conserva
 `INSUFFICIENT_DATA` finché quella dimensione non viene fornita.
+
+## Persistenza candidate set recovery — 11 ottobre 2026
+
+È stata aggiunta la cattura opt-in di un `RecoveryAssessmentCandidateSet` da
+record recovery già espliciti. Il chiamante dichiara `candidate_set_id`,
+soggetto, sessione reale, cutoff, provenance e record; la cattura non esegue
+lookup nell'archivio e non seleziona automaticamente il follow-up.
+
+La migration 13 aggiunge `maintain_plan_recovery_candidate_sets`. La riga è
+append-only: il retry con stesso ID e stesso payload è idempotente, mentre una
+divergenza semantica viene rifiutata. La sessione deve essere già persistita e
+avere lo stesso `subject_ref`.
+
+Il contratto è in
+`docs/MAINTAIN_PLAN_RECOVERY_CANDIDATE_SET_CONTRACT.md`. La cattura resta
+default-off e non viene collegata a `backend/main.py`.
