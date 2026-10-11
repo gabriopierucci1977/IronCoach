@@ -8,12 +8,12 @@ from datetime import datetime
 from enum import Enum
 from typing import Any
 
-from . import models, stability_models
+from . import models, recovery_baseline_models, stability_models
 
 
 PAYLOAD_SCHEMA_VERSION = "maintain-plan-json/1"
 
-_CONTRACT_MODULES = (models, stability_models)
+_CONTRACT_MODULES = (models, stability_models, recovery_baseline_models)
 _DATACLASSES = {
     name: value
     for module in _CONTRACT_MODULES

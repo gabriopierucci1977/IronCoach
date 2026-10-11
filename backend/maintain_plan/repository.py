@@ -14,6 +14,9 @@ from .models import (ActualSession, Confirmation, ConfirmationAnswerType, Execut
                      SourceConflictImpactEvaluation, SourceConflictResolutionEvent,
                      SourceConflictResolutionLog)
 from .stability_models import GeneralStabilityEvaluation
+from .recovery_baseline_models import (
+    PrescriptionRecoveryBaseline, validate_recovery_baseline,
+)
 from .archive_lock import locked_connect
 from .lifecycle_service import (project_feedback, project_source_conflict,
                                 structurally_equivalent, validate_feedback_payload,
@@ -209,6 +212,95 @@ class MaintainPlanRepository:
         if len(rows) > 1:
             raise ValueError("multiple prescription snapshots already exist for decision_id")
         return self.get_prescription_snapshot(rows[0][0])
+
+    @staticmethod
+    def _baseline_retry_equivalent(
+        stored: PrescriptionRecoveryBaseline,
+        candidate: PrescriptionRecoveryBaseline,
+    ) -> bool:
+        from dataclasses import replace
+        return replace(stored, captured_at=candidate.captured_at) == candidate
+
+    def acquire_recovery_baseline(self, value: PrescriptionRecoveryBaseline) -> PrescriptionRecoveryBaseline:
+        """Atomically acquire one immutable baseline for one snapshot."""
+        self._require_valid(validate_recovery_baseline(value))
+        snapshot_ref = value.binding.prescription_snapshot_ref
+        if snapshot_ref.artifact_type != "prescription-snapshot":
+            raise ValueError("baseline must reference a prescription snapshot")
+        snapshot = self.get_prescription_snapshot(snapshot_ref.artifact_id)
+        if snapshot is None:
+            raise ValueError("baseline references a missing prescription snapshot")
+        self._require_valid(validate_recovery_baseline(value, snapshot))
+        with self._connect() as connection:
+            connection.row_factory = sqlite3.Row
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                "SELECT * FROM maintain_plan_recovery_baselines "
+                "WHERE prescription_snapshot_ref = ?",
+                (snapshot_ref.artifact_id,),
+            ).fetchone()
+            if row is not None:
+                stored = self._decode_recovery_baseline_row(row)
+                if self._baseline_retry_equivalent(stored, value):
+                    return stored
+                raise ValueError("recovery baseline already exists with different content")
+            connection.execute(
+                "INSERT INTO maintain_plan_recovery_baselines "
+                "(baseline_id, subject_ref, prescription_snapshot_ref, assessment_id, "
+                "contract_version, captured_at, payload_schema_version, payload_json) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (value.baseline_id, value.binding.subject_ref, snapshot_ref.artifact_id,
+                 value.assessment.assessment_id, value.assessment.contract_version,
+                 value.captured_at.isoformat(), PAYLOAD_SCHEMA_VERSION,
+                 serialize_contract(value)),
+            )
+            return value
+
+    def get_recovery_baseline(self, identifier: str) -> PrescriptionRecoveryBaseline | None:
+        stored = self._get("maintain_plan_recovery_baselines", "baseline_id",
+                           identifier, PrescriptionRecoveryBaseline)
+        if stored is None:
+            return None
+        row, value = stored
+        self._validate_recovery_baseline_row(row, value)
+        return value
+
+    def list_recovery_baselines(self, subject_ref: str) -> tuple[PrescriptionRecoveryBaseline, ...]:
+        with self._connect() as connection:
+            connection.row_factory = sqlite3.Row
+            rows = connection.execute(
+                "SELECT * FROM maintain_plan_recovery_baselines "
+                "WHERE subject_ref = ? ORDER BY captured_at, baseline_id",
+                (subject_ref,),
+            ).fetchall()
+        values = []
+        for row in rows:
+            value = deserialize_contract(row["payload_json"], PrescriptionRecoveryBaseline)
+            self._validate_recovery_baseline_row(row, value)
+            values.append(value)
+        return tuple(values)
+
+    def _decode_recovery_baseline_row(self, row: sqlite3.Row) -> PrescriptionRecoveryBaseline:
+        if row["payload_schema_version"] != PAYLOAD_SCHEMA_VERSION:
+            raise ValueError("unsupported stored MAINTAIN_PLAN payload schema version")
+        return deserialize_contract(row["payload_json"], PrescriptionRecoveryBaseline)
+
+    def _validate_recovery_baseline_row(
+        self, row: sqlite3.Row, value: PrescriptionRecoveryBaseline,
+    ) -> None:
+        self._require_valid(validate_recovery_baseline(value))
+        snapshot_ref = value.binding.prescription_snapshot_ref
+        snapshot = self.get_prescription_snapshot(snapshot_ref.artifact_id)
+        self._require_valid(validate_recovery_baseline(value, snapshot))
+        if (
+            row["baseline_id"], row["subject_ref"], row["prescription_snapshot_ref"],
+            row["assessment_id"], row["contract_version"], row["captured_at"],
+        ) != (
+            value.baseline_id, value.binding.subject_ref, snapshot_ref.artifact_id,
+            value.assessment.assessment_id, value.assessment.contract_version,
+            value.captured_at.isoformat(),
+        ):
+            raise ValueError("stored recovery baseline metadata does not match payload")
 
     def create_actual_session(self, value: ActualSession) -> None:
         self._require_valid(validate_actual_session(value))

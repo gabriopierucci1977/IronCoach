@@ -1071,3 +1071,23 @@ resta `INSUFFICIENT_DATA`.
 Il contratto dettagliato è in
 `docs/MAINTAIN_PLAN_RUNTIME_RECOVERY_ADAPTER_CONTRACT.md`. La chain, il flag
 runtime e la persistenza restano default-off.
+
+## Baseline recovery legata alla prescrizione — 11 ottobre 2026
+
+È stata aggiunta una cattura opt-in per la baseline recovery usata quando una
+prescrizione viene comunicata. La cattura riceve lo snapshot già persistito,
+l'output esplicito del `RecoveryAnalyzer`, il soggetto, la sorgente recovery,
+i timestamp e le provenance; non cerca automaticamente un record nell'archivio
+e non ricalcola la valutazione.
+
+La baseline è vincolata all'hash del sorgente dell'analyzer e al riferimento
+esatto di snapshot e decisione. Una baseline `UNKNOWN` resta non assessable;
+le categorie sono accettate solo dal livello esplicito dell'analyzer.
+
+La migration 12 aggiunge la tabella append-only
+`maintain_plan_recovery_baselines`. Un retry identico è idempotente; un retry
+con contenuto diverso viene rifiutato. La cattura non è importata dal runtime
+legacy e non attiva la shadow chain.
+
+Il contratto è in
+`docs/MAINTAIN_PLAN_RECOVERY_BASELINE_CONTRACT.md`.
