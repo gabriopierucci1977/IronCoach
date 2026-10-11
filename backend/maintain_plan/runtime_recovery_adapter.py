@@ -10,6 +10,10 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Iterable
 
+from .recovery_baseline_models import (
+    PrescriptionRecoveryBaseline,
+    validate_recovery_baseline,
+)
 from .runtime_stability_provider import (
     RuntimeStabilityProviderResult,
     provide_runtime_stability,
@@ -113,6 +117,7 @@ def build_recovery_assessment(
     *,
     subject_ref: object,
     missing_category_path: str = "candidate_set.candidates[].category",
+    analyzer_ref: object = None,
 ) -> RecoveryAssessment:
     """Convert one source record using only explicit, typed evidence."""
     if type(record) is not dict:
@@ -134,11 +139,16 @@ def build_recovery_assessment(
     if missingness is CategoryMissingness.MISSING:
         missing = (missing_category_path,)
     evidence, provenance = _assessment_provenance(source_id)
-    analyzer = AnalyzerRef(
-        RECOVERY_ANALYZER_ID,
-        RECOVERY_PROVENANCE_VERSION,
-        RECOVERY_ASSESSMENT_SCHEMA_VERSION,
-    )
+    if analyzer_ref is None:
+        analyzer = AnalyzerRef(
+            RECOVERY_ANALYZER_ID,
+            RECOVERY_PROVENANCE_VERSION,
+            RECOVERY_ASSESSMENT_SCHEMA_VERSION,
+        )
+    elif type(analyzer_ref) is AnalyzerRef:
+        analyzer = analyzer_ref
+    else:
+        raise RuntimeRecoveryAdapterError(("analyzer_ref must be an AnalyzerRef",))
     return RecoveryAssessment(
         assessment_id=f"maintain-plan:recovery-assessment:{source}:{source_id}",
         contract_version=STABILITY_CONTRACT_VERSION,
@@ -163,6 +173,7 @@ def build_recovery_candidate_set(
     captured_at: object,
     evaluated_cutoff_at: object,
     provenance_ref: object,
+    analyzer_ref: object = None,
 ) -> RecoveryAssessmentCandidateSet:
     """Build the candidate set from an explicit, already scoped record list."""
     if type(records) not in (list, tuple):
@@ -174,7 +185,9 @@ def build_recovery_candidate_set(
     captured = _parse_timestamp(captured_at, "captured_at")
     cutoff = _parse_timestamp(evaluated_cutoff_at, "evaluated_cutoff_at")
     candidates = tuple(
-        build_recovery_assessment(record, subject_ref=subject_ref)
+        build_recovery_assessment(
+            record, subject_ref=subject_ref, analyzer_ref=analyzer_ref,
+        )
         for record in records
     )
     return RecoveryAssessmentCandidateSet(
@@ -197,6 +210,8 @@ def build_runtime_stability_input(
     evaluated_at: object,
     provenance_ref: object,
     baseline_record: object = None,
+    baseline_assessment: object = None,
+    candidate_analyzer_ref: object = None,
 ) -> GeneralStabilityInput:
     """Build a complete typed input without persistence or source discovery."""
     if type(prescription_binding) is not PrescriptionBaselineBinding:
@@ -211,13 +226,28 @@ def build_runtime_stability_input(
         captured_at=captured_at,
         evaluated_cutoff_at=evaluated,
         provenance_ref=provenance_ref,
+        analyzer_ref=candidate_analyzer_ref,
     )
-    baseline = None
-    if baseline_record is not None:
+    if baseline_record is not None and baseline_assessment is not None:
+        raise RuntimeRecoveryAdapterError((
+            "baseline_record and baseline_assessment are mutually exclusive",
+        ))
+    baseline = baseline_assessment
+    if baseline is not None:
+        if type(baseline) is not RecoveryAssessment:
+            raise RuntimeRecoveryAdapterError((
+                "baseline_assessment must be a RecoveryAssessment",
+            ))
+        if baseline.subject_ref != prescription_binding.subject_ref:
+            raise RuntimeRecoveryAdapterError((
+                "baseline assessment ownership must equal prescription binding",
+            ))
+    elif baseline_record is not None:
         baseline = build_recovery_assessment(
             baseline_record,
             subject_ref=prescription_binding.subject_ref,
             missing_category_path="baseline_assessment.category",
+            analyzer_ref=candidate_analyzer_ref,
         )
     value = GeneralStabilityInput(
         contract_version=STABILITY_CONTRACT_VERSION,
@@ -236,6 +266,43 @@ def build_runtime_stability_input(
     if errors:
         raise RuntimeRecoveryAdapterError(errors)
     return value
+
+
+def build_runtime_stability_input_from_prescription_baseline(
+    *,
+    baseline: object,
+    actual_session_boundary: object,
+    records: object,
+    captured_at: object,
+    evaluated_at: object,
+    provenance_ref: object,
+) -> GeneralStabilityInput:
+    """Use the exact captured baseline and its analyzer identity for follow-ups."""
+    if type(baseline) is not PrescriptionRecoveryBaseline:
+        raise RuntimeRecoveryAdapterError((
+            "baseline must be a PrescriptionRecoveryBaseline",
+        ))
+    errors = validate_recovery_baseline(baseline)
+    if errors:
+        raise RuntimeRecoveryAdapterError(errors)
+    if type(actual_session_boundary) is not ActualSessionBoundary:
+        raise RuntimeRecoveryAdapterError((
+            "actual_session_boundary must be an ActualSessionBoundary",
+        ))
+    if actual_session_boundary.subject_ref != baseline.binding.subject_ref:
+        raise RuntimeRecoveryAdapterError((
+            "baseline and actual session ownership must agree",
+        ))
+    return build_runtime_stability_input(
+        prescription_binding=baseline.binding,
+        actual_session_boundary=actual_session_boundary,
+        records=records,
+        captured_at=captured_at,
+        evaluated_at=evaluated_at,
+        provenance_ref=provenance_ref,
+        baseline_assessment=baseline.assessment,
+        candidate_analyzer_ref=baseline.assessment.analyzer_ref,
+    )
 
 
 def provide_runtime_stability_from_recovery_records(
@@ -258,6 +325,33 @@ def provide_runtime_stability_from_recovery_records(
         evaluated_at=evaluated_at,
         provenance_ref=provenance_ref,
         baseline_record=baseline_record,
+    )
+    try:
+        return provide_runtime_stability(value, evaluation_id=evaluation_id)
+    except ValueError as exc:
+        if isinstance(exc, RuntimeRecoveryAdapterError):
+            raise
+        raise RuntimeRecoveryAdapterError((str(exc),)) from exc
+
+
+def provide_runtime_stability_from_prescription_baseline(
+    *,
+    baseline: object,
+    actual_session_boundary: object,
+    records: object,
+    captured_at: object,
+    evaluated_at: object,
+    provenance_ref: object,
+    evaluation_id: object,
+) -> RuntimeStabilityProviderResult:
+    """Run the provider from a captured baseline without re-analysis or I/O."""
+    value = build_runtime_stability_input_from_prescription_baseline(
+        baseline=baseline,
+        actual_session_boundary=actual_session_boundary,
+        records=records,
+        captured_at=captured_at,
+        evaluated_at=evaluated_at,
+        provenance_ref=provenance_ref,
     )
     try:
         return provide_runtime_stability(value, evaluation_id=evaluation_id)

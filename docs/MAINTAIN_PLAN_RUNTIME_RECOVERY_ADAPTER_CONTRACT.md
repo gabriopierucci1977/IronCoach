@@ -41,3 +41,16 @@ L'archivio `GarminRecoveryArchive` attuale conserva solo record giornalieri con
 questa fase: i record esistenti non soddisfano ancora il requisito dei
 timestamp espliciti e non contengono una categoria canonica. La chain e la
 persistenza restano disattivate per default.
+
+## Bridge con la baseline persistita
+
+`build_runtime_stability_input_from_prescription_baseline` riceve una
+`PrescriptionRecoveryBaseline` già catturata e usa il suo
+`RecoveryAssessment` senza ricrearlo. I record successivi vengono adattati con
+lo stesso `AnalyzerRef` della baseline, così la compatibilità confronta
+assessment prodotti dalla stessa identità dichiarata.
+
+`provide_runtime_stability_from_prescription_baseline` esegue poi il provider
+pure. Il bridge verifica il tipo della baseline, la sua validità e la
+coincidenza del `subject_ref` con la sessione; non legge la persistenza, non
+cerca record recenti e non attiva `backend/main.py`.

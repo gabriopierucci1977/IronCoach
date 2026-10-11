@@ -1,23 +1,29 @@
 from dataclasses import replace
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
 from backend.maintain_plan.runtime_recovery_adapter import (
     RuntimeRecoveryAdapterError,
     build_recovery_assessment,
+    build_runtime_stability_input_from_prescription_baseline,
+    provide_runtime_stability_from_prescription_baseline,
     provide_runtime_stability_from_recovery_records,
 )
 from backend.importers.garmin_recovery_adapter import GarminRecoveryAdapter
+from backend.maintain_plan.recovery_baseline_models import RECOVERY_ANALYZER_REF
 from backend.maintain_plan.stability_models import (
     ActualSessionBoundary,
     CategoryMissingness,
+    CompatibilityStatus,
     GeneralStabilityInput,
     ProvenanceRef,
     RecoveryCategory,
     VersionedArtifactRef,
 )
+from tests.maintain_plan.fixtures import NOW
 from tests.maintain_plan.test_general_stability_service import make_input
+from tests.maintain_plan.test_recovery_baseline_capture import baseline as make_baseline
 
 
 def _record(**overrides):
@@ -126,4 +132,63 @@ def test_adapter_rejects_naive_runtime_context_timestamp():
             evaluated_at=value.evaluated_at,
             provenance_ref=provenance,
             evaluation_id="runtime-recovery-1",
+        )
+
+
+def test_captured_baseline_is_consumed_exactly_and_pins_follow_up_analyzer():
+    captured = make_baseline()
+    context, provenance = _context()
+    boundary = replace(
+        context.actual_session_boundary,
+        subject_ref=captured.binding.subject_ref,
+        session_end=NOW + timedelta(hours=2),
+    )
+    record = _record(
+        source_id="garmin-recovery:2026-01-01-follow-up",
+        observed_at="2026-01-01T12:00:00Z",
+        assessed_at="2026-01-01T12:05:00Z",
+        category="LOW",
+    )
+    result = provide_runtime_stability_from_prescription_baseline(
+        baseline=captured,
+        actual_session_boundary=boundary,
+        records=[record],
+        captured_at=NOW + timedelta(hours=6),
+        evaluated_at=NOW + timedelta(hours=8),
+        provenance_ref=provenance,
+        evaluation_id="runtime-recovery-baseline-1",
+    )
+    evaluation = result.evaluation
+    assert evaluation.baseline_ref is not None
+    assert evaluation.baseline_ref.assessment_id == captured.assessment.assessment_id
+    assert evaluation.compatibility is not None
+    assert evaluation.compatibility.status is CompatibilityStatus.COMPATIBLE
+    assert evaluation.selected_follow_up_ref is not None
+    assert evaluation.selected_follow_up_ref.analyzer_ref == RECOVERY_ANALYZER_REF
+
+
+def test_captured_baseline_bridge_rejects_foreign_session_owner():
+    captured = make_baseline()
+    context, provenance = _context()
+    with pytest.raises(RuntimeRecoveryAdapterError, match="ownership"):
+        build_runtime_stability_input_from_prescription_baseline(
+            baseline=captured,
+            actual_session_boundary=context.actual_session_boundary,
+            records=[],
+            captured_at=NOW + timedelta(hours=6),
+            evaluated_at=NOW + timedelta(hours=8),
+            provenance_ref=provenance,
+        )
+
+
+def test_captured_baseline_bridge_rejects_untyped_baseline():
+    context, provenance = _context()
+    with pytest.raises(RuntimeRecoveryAdapterError, match="PrescriptionRecoveryBaseline"):
+        build_runtime_stability_input_from_prescription_baseline(
+            baseline=object(),
+            actual_session_boundary=context.actual_session_boundary,
+            records=[],
+            captured_at=NOW + timedelta(hours=6),
+            evaluated_at=NOW + timedelta(hours=8),
+            provenance_ref=provenance,
         )

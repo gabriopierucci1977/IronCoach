@@ -1091,3 +1091,17 @@ legacy e non attiva la shadow chain.
 
 Il contratto è in
 `docs/MAINTAIN_PLAN_RECOVERY_BASELINE_CONTRACT.md`.
+
+## Bridge baseline → stability — 11 ottobre 2026
+
+L'adapter recovery ora espone un bridge esplicito per la baseline già catturata:
+`build_runtime_stability_input_from_prescription_baseline` conserva l'assessment
+immutabile della `PrescriptionRecoveryBaseline` e usa il suo `AnalyzerRef` per
+adattare i record follow-up. `provide_runtime_stability_from_prescription_baseline`
+passa quindi l'input typed al provider pure.
+
+Il bridge rifiuta una baseline non tipizzata o non valida e un soggetto della
+sessione diverso da quello della baseline. Non esegue lookup, rianalisi,
+lettura SQLite o wiring del runtime legacy. La proiezione reported-problems
+resta esplicita e assente nel chiamante corrente; la valutazione conserva
+`INSUFFICIENT_DATA` finché quella dimensione non viene fornita.
