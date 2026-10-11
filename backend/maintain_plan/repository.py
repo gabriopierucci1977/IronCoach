@@ -13,7 +13,10 @@ from .models import (ActualSession, Confirmation, ConfirmationAnswerType, Execut
                      PrescriptionSnapshot, SourceConflictProjection,
                      SourceConflictImpactEvaluation, SourceConflictResolutionEvent,
                      SourceConflictResolutionLog)
-from .stability_models import GeneralStabilityEvaluation, RecoveryAssessmentCandidateSet
+from .stability_models import (
+    GeneralStabilityEvaluation, RecoveryAssessmentCandidateSet,
+    ReportedProblemsProjectionSnapshot,
+)
 from .recovery_baseline_models import (
     PrescriptionRecoveryBaseline, validate_recovery_baseline,
 )
@@ -31,6 +34,7 @@ from .validators import (validate_actual_session, validate_execution_evaluation,
                          validate_source_conflict_impact)
 from .stability_validators import (
     validate_general_stability_evaluation, validate_recovery_candidate_set,
+    validate_projection_structure,
 )
 
 if TYPE_CHECKING:
@@ -404,6 +408,132 @@ class MaintainPlanRepository:
             value.evaluated_cutoff_at.isoformat(),
         ):
             raise ValueError("stored recovery candidate set metadata does not match payload")
+
+    @staticmethod
+    def _reported_projection_row_metadata(value: ReportedProblemsProjectionSnapshot) -> tuple[Any, ...]:
+        cursor = value.event_cursor
+        window = value.event_window
+        return (
+            value.projection_id, value.subject_ref, value.actual_session_ref.artifact_id,
+            value.projection_version, value.projection_schema_version,
+            None if value.projection_status is None else value.projection_status.value,
+            None if cursor is None else cursor.event_id,
+            None if cursor is None else cursor.event_sequence,
+            None if window is None else window.start_at.isoformat(),
+            None if window is None else window.start_boundary.value,
+            None if window is None else window.end_at.isoformat(),
+            None if window is None else window.end_boundary.value,
+            None if value.checked_through_at is None else value.checked_through_at.isoformat(),
+            None if value.channel_check_status is None else value.channel_check_status.value,
+            None if value.result is None else value.result.value,
+            None if value.reliable_canonical_safety_signal is None
+            else int(value.reliable_canonical_safety_signal),
+        )
+
+    def acquire_reported_problems_projection(
+        self, value: ReportedProblemsProjectionSnapshot,
+    ) -> ReportedProblemsProjectionSnapshot:
+        """Atomically acquire one immutable reported-problems projection snapshot."""
+        self._require_valid(validate_projection_structure(value))
+        session_ref = value.actual_session_ref
+        if session_ref.artifact_type != "actual-session":
+            raise ValueError("reported-problems projection must reference an actual session")
+        session = self.get_actual_session(session_ref.artifact_id)
+        if session is None:
+            raise ValueError("reported-problems projection references a missing actual session")
+        if session.subject_ref != value.subject_ref:
+            raise ValueError("reported-problems projection session ownership is incoherent")
+        stored_row = None
+        stored = None
+        with self._connect() as connection:
+            connection.row_factory = sqlite3.Row
+            connection.execute("BEGIN IMMEDIATE")
+            stored_row = connection.execute(
+                "SELECT * FROM maintain_plan_reported_problems_projections "
+                "WHERE projection_id = ?", (value.projection_id,),
+            ).fetchone()
+            if stored_row is None:
+                metadata = self._reported_projection_row_metadata(value)
+                connection.execute(
+                    "INSERT INTO maintain_plan_reported_problems_projections "
+                    "(projection_id, subject_ref, actual_session_ref, projection_version, "
+                    "projection_schema_version, projection_status, event_cursor_event_id, "
+                    "event_cursor_sequence, event_window_start_at, event_window_start_boundary, "
+                    "event_window_end_at, event_window_end_boundary, checked_through_at, "
+                    "channel_check_status, result, reliable_canonical_safety_signal, "
+                    "payload_schema_version, payload_json) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    metadata + (PAYLOAD_SCHEMA_VERSION, serialize_contract(value)),
+                )
+                return value
+            stored = self._decode_reported_problems_projection_row(stored_row)
+        self._validate_reported_problems_projection_row(stored_row, stored)
+        if stored == value:
+            return stored
+        raise ValueError(
+            "reported-problems projection already exists with different content"
+        )
+
+    def get_reported_problems_projection(
+        self, projection_id: str,
+    ) -> ReportedProblemsProjectionSnapshot | None:
+        stored = self._get(
+            "maintain_plan_reported_problems_projections", "projection_id",
+            projection_id, ReportedProblemsProjectionSnapshot,
+        )
+        if stored is None:
+            return None
+        row, value = stored
+        self._validate_reported_problems_projection_row(row, value)
+        return value
+
+    def list_reported_problems_projections(
+        self, subject_ref: str,
+    ) -> tuple[ReportedProblemsProjectionSnapshot, ...]:
+        with self._connect() as connection:
+            connection.row_factory = sqlite3.Row
+            rows = connection.execute(
+                "SELECT * FROM maintain_plan_reported_problems_projections "
+                "WHERE subject_ref = ? ORDER BY projection_id", (subject_ref,),
+            ).fetchall()
+        values = []
+        for row in rows:
+            value = self._decode_reported_problems_projection_row(row)
+            self._validate_reported_problems_projection_row(row, value)
+            values.append(value)
+        return tuple(values)
+
+    def _decode_reported_problems_projection_row(
+        self, row: sqlite3.Row,
+    ) -> ReportedProblemsProjectionSnapshot:
+        if row["payload_schema_version"] != PAYLOAD_SCHEMA_VERSION:
+            raise ValueError("unsupported stored MAINTAIN_PLAN payload schema version")
+        return deserialize_contract(row["payload_json"], ReportedProblemsProjectionSnapshot)
+
+    def _validate_reported_problems_projection_row(
+        self, row: sqlite3.Row, value: ReportedProblemsProjectionSnapshot,
+    ) -> None:
+        self._require_valid(validate_projection_structure(value))
+        session_ref = value.actual_session_ref
+        if session_ref.artifact_type != "actual-session":
+            raise ValueError("stored reported-problems projection has invalid session ref")
+        session = self.get_actual_session(session_ref.artifact_id)
+        if session is None or session.subject_ref != value.subject_ref:
+            raise ValueError("stored reported-problems projection has unresolved ownership")
+        expected = self._reported_projection_row_metadata(value)
+        actual = tuple(row[name] for name in (
+            "projection_id", "subject_ref", "actual_session_ref",
+            "projection_version", "projection_schema_version", "projection_status",
+            "event_cursor_event_id", "event_cursor_sequence",
+            "event_window_start_at", "event_window_start_boundary",
+            "event_window_end_at", "event_window_end_boundary",
+            "checked_through_at", "channel_check_status", "result",
+            "reliable_canonical_safety_signal",
+        ))
+        if actual != expected:
+            raise ValueError(
+                "stored reported-problems projection metadata does not match payload"
+            )
 
     def create_actual_session(self, value: ActualSession) -> None:
         self._require_valid(validate_actual_session(value))

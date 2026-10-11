@@ -12,7 +12,7 @@ from typing import Callable, Iterable
 from .archive_lock import archive_lock
 
 
-SCHEMA_VERSION = 13
+SCHEMA_VERSION = 14
 
 
 @dataclass(frozen=True)
@@ -595,6 +595,48 @@ def _migration_13(connection: sqlite3.Connection) -> None:
 
 MIGRATIONS = MIGRATIONS + (Migration(
     13, hashlib.sha256(_MIGRATION_13_SQL.encode("utf-8")).hexdigest(), _migration_13,
+),)
+
+
+_MIGRATION_14_SQL = """
+CREATE TABLE maintain_plan_reported_problems_projections (
+    projection_id TEXT PRIMARY KEY,
+    subject_ref TEXT NOT NULL,
+    actual_session_ref TEXT NOT NULL
+        REFERENCES maintain_plan_actual_sessions(session_id),
+    projection_version TEXT,
+    projection_schema_version TEXT,
+    projection_status TEXT,
+    event_cursor_event_id TEXT,
+    event_cursor_sequence INTEGER,
+    event_window_start_at TEXT,
+    event_window_start_boundary TEXT,
+    event_window_end_at TEXT,
+    event_window_end_boundary TEXT,
+    checked_through_at TEXT,
+    channel_check_status TEXT,
+    result TEXT,
+    reliable_canonical_safety_signal INTEGER,
+    payload_schema_version TEXT NOT NULL,
+    payload_json TEXT NOT NULL
+);
+CREATE INDEX idx_mp_reported_problems_subject
+    ON maintain_plan_reported_problems_projections(subject_ref);
+CREATE INDEX idx_mp_reported_problems_session
+    ON maintain_plan_reported_problems_projections(actual_session_ref);
+CREATE INDEX idx_mp_reported_problems_version
+    ON maintain_plan_reported_problems_projections(projection_version);
+""".strip()
+
+
+def _migration_14(connection: sqlite3.Connection) -> None:
+    for statement in _MIGRATION_14_SQL.split(";"):
+        if statement.strip():
+            connection.execute(statement)
+
+
+MIGRATIONS = MIGRATIONS + (Migration(
+    14, hashlib.sha256(_MIGRATION_14_SQL.encode("utf-8")).hexdigest(), _migration_14,
 ),)
 
 

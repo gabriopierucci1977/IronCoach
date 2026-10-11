@@ -1121,3 +1121,17 @@ avere lo stesso `subject_ref`.
 Il contratto è in
 `docs/MAINTAIN_PLAN_RECOVERY_CANDIDATE_SET_CONTRACT.md`. La cattura resta
 default-off e non viene collegata a `backend/main.py`.
+
+
+## Persistenza reported-problems projection — 11 ottobre 2026
+
+È stata aggiunta la cattura opt-in di una `ReportedProblemsProjectionSnapshot`
+già costruita dal chiamante. La cattura non legge eventi e non promuove testo
+libero a safety signal. La migration 14 aggiunge la tabella
+`maintain_plan_reported_problems_projections`; la sessione deve essere già
+persistita e appartenere allo stesso soggetto.
+
+Il retry con stesso `projection_id` e contenuto identico è idempotente; una
+divergenza semantica è rifiutata senza sovrascrittura. Il modulo resta
+default-off e non è collegato al runtime legacy. Il contratto è in
+`docs/MAINTAIN_PLAN_REPORTED_PROBLEMS_PROJECTION_CONTRACT.md`.
