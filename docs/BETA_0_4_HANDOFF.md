@@ -1135,3 +1135,24 @@ Il retry con stesso `projection_id` e contenuto identico è idempotente; una
 divergenza semantica è rifiutata senza sovrascrittura. Il modulo resta
 default-off e non è collegato al runtime legacy. Il contratto è in
 `docs/MAINTAIN_PLAN_REPORTED_PROBLEMS_PROJECTION_CONTRACT.md`.
+
+## Wiring runtime reported-problems → stability — 13 ottobre 2026
+
+I due ingressi `provide_runtime_stability_from_recovery_records` e
+`provide_runtime_stability_from_prescription_baseline` ora possono consumare
+una proiezione persistita. Il chiamante deve passare
+`enable_reported_problems_projection=True`, un `reported_problems_projection_id`
+esplicito e `projection_database_path` riferito a un database esistente.
+
+Il nuovo bridge valida il contesto prima del lookup, carica solo quell'ID e
+controlla ownership e riferimento completo della sessione. Il repository
+verifica anche la coerenza di metadata e payload. Un errore blocca la chiamata;
+non viene scelta una proiezione alternativa. Il provider puro valuta la stessa
+proiezione e conserva `INSUFFICIENT_DATA` per finestre o controlli incompleti.
+
+Sono aggiunti test per il default disattivato senza accesso SQLite, lettura dopo
+riapertura del repository, entrambi gli ingressi runtime, ID/database mancanti,
+ownership e sessione errate, metadata alterati e finestra non consumabile.
+Questo checkpoint collega gli ingressi espliciti; l'attivazione nel runtime
+legacy e la pubblicazione del final outcome richiedono ancora un'integrazione
+successiva con le fonti canoniche.

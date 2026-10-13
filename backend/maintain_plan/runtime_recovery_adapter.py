@@ -1,8 +1,8 @@
-"""Pure adapter from explicit runtime recovery records to stability contracts.
+"""Adapter from explicit runtime recovery records to stability contracts.
 
-This module deliberately does not read the Garmin archive, perform I/O, or
-derive a recovery category from a numeric readiness/body-battery value.  The
-caller must provide the runtime timestamps and the subject-scoped context.
+Builders are pure. Provider entry points may attach a persisted reported-problems
+projection only with explicit opt-in. The caller provides scoped records and
+timestamps; numeric readiness/body-battery values never imply a recovery category.
 """
 
 from __future__ import annotations
@@ -17,6 +17,9 @@ from .recovery_baseline_models import (
 from .runtime_stability_provider import (
     RuntimeStabilityProviderResult,
     provide_runtime_stability,
+)
+from .runtime_reported_problems_bridge import (
+    attach_persisted_reported_problems_projection,
 )
 from .stability_models import (
     ActualSessionBoundary,
@@ -315,8 +318,11 @@ def provide_runtime_stability_from_recovery_records(
     provenance_ref: object,
     evaluation_id: object,
     baseline_record: object = None,
+    enable_reported_problems_projection: bool = False,
+    reported_problems_projection_id: str | None = None,
+    projection_database_path: object = None,
 ) -> RuntimeStabilityProviderResult:
-    """Adapt explicit records and run the existing pure stability provider."""
+    """Adapt explicit records; optionally attach one persisted projection."""
     value = build_runtime_stability_input(
         prescription_binding=prescription_binding,
         actual_session_boundary=actual_session_boundary,
@@ -327,6 +333,12 @@ def provide_runtime_stability_from_recovery_records(
         baseline_record=baseline_record,
     )
     try:
+        value = attach_persisted_reported_problems_projection(
+            value,
+            enabled=enable_reported_problems_projection,
+            projection_id=reported_problems_projection_id,
+            database_path=projection_database_path,
+        )
         return provide_runtime_stability(value, evaluation_id=evaluation_id)
     except ValueError as exc:
         if isinstance(exc, RuntimeRecoveryAdapterError):
@@ -343,8 +355,11 @@ def provide_runtime_stability_from_prescription_baseline(
     evaluated_at: object,
     provenance_ref: object,
     evaluation_id: object,
+    enable_reported_problems_projection: bool = False,
+    reported_problems_projection_id: str | None = None,
+    projection_database_path: object = None,
 ) -> RuntimeStabilityProviderResult:
-    """Run the provider from a captured baseline without re-analysis or I/O."""
+    """Use the captured baseline and optionally one persisted projection."""
     value = build_runtime_stability_input_from_prescription_baseline(
         baseline=baseline,
         actual_session_boundary=actual_session_boundary,
@@ -354,6 +369,12 @@ def provide_runtime_stability_from_prescription_baseline(
         provenance_ref=provenance_ref,
     )
     try:
+        value = attach_persisted_reported_problems_projection(
+            value,
+            enabled=enable_reported_problems_projection,
+            projection_id=reported_problems_projection_id,
+            database_path=projection_database_path,
+        )
         return provide_runtime_stability(value, evaluation_id=evaluation_id)
     except ValueError as exc:
         if isinstance(exc, RuntimeRecoveryAdapterError):
