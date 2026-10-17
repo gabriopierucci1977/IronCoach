@@ -49,6 +49,9 @@ from backend.workout_adapter import WorkoutAdapter
 from backend.maintain_plan.runtime_prescription_capture import (
     RuntimePrescriptionCapture,
 )
+from backend.maintain_plan.runtime_training_overrides import (
+    apply_runtime_training_override,
+)
 from backend.maintain_plan.runtime_actual_session_capture import (
     RuntimeActualSessionCapture,
 )
@@ -598,6 +601,18 @@ def run_pipeline(
         "costruzione contesto atleta",
         builder.build,
     )
+
+    overridden_training = _execute_phase(
+        "applicazione override espliciti Training Log",
+        lambda: apply_runtime_training_override(
+            context.get("training", {})
+        ),
+    )
+    if overridden_training != context.get("training", {}):
+        context = {
+            **context,
+            "training": overridden_training,
+        }
 
     if (
         garmin_sync_warnings

@@ -26,6 +26,7 @@ class RuntimeActivityValidationError(ValueError):
 
 _DISCIPLINES = {
     "running": Discipline.RUN, "track_running": Discipline.RUN,
+    "road": Discipline.BIKE,
     "street_running": Discipline.RUN, "trail_running": Discipline.RUN,
     "treadmill_running": Discipline.RUN, "cycling": Discipline.BIKE,
     "road_biking": Discipline.BIKE, "indoor_cycling": Discipline.BIKE,

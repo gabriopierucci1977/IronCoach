@@ -4,3 +4,5 @@ __pycache__/
 .venv/
 data/
 .vscode/
+# Local MAINTAIN_PLAN SQLite safety backups
+/backups/*.db
