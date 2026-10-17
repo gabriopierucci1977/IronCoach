@@ -105,7 +105,7 @@ def _duplicate_key(payload: object) -> tuple[object, ...] | None:
         if start.tzinfo is not None and start.utcoffset() is not None:
             start = start.astimezone(timezone.utc)
 
-        start = start.replace(second=0, microsecond=0)
+        start = start.replace(microsecond=0)
 
         return (
             start.isoformat(),
