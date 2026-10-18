@@ -35,19 +35,39 @@ class RuntimeActualSessionCaptureResult:
 
 def _semantic(value: Any) -> Any:
     data = json.loads(serialize_contract(value))
+    volatile_names = {"normalized_at", "captured_at"}
 
     def scrub(item):
         if isinstance(item, dict):
-            return {
+            result = {
                 key: scrub(child)
                 for key, child in item.items()
-                if key not in {"normalized_at", "captured_at"}
+                if key not in volatile_names
             }
+
+            encoded_items = result.get("items")
+            if isinstance(encoded_items, list):
+                normalized_items = []
+                for entry in encoded_items:
+                    if (
+                        isinstance(entry, list)
+                        and len(entry) == 2
+                        and entry[0] in volatile_names
+                    ):
+                        normalized_items.append([entry[0], "<volatile>"])
+                    else:
+                        normalized_items.append(entry)
+                result["items"] = normalized_items
+
+            return result
+
         if isinstance(item, list):
             return [scrub(child) for child in item]
+
         return item
 
     return scrub(data)
+
 
 
 def _contains_manual_fit(value: object) -> bool:
@@ -102,6 +122,7 @@ def _duplicate_key(payload: object) -> tuple[object, ...] | None:
             if start_value.endswith("Z")
             else start_value
         )
+
         if start.tzinfo is not None and start.utcoffset() is not None:
             start = start.astimezone(timezone.utc)
 
@@ -119,6 +140,7 @@ def _duplicate_key(payload: object) -> tuple[object, ...] | None:
 
 def _deduplicate_candidate_records(records):
     grouped = {}
+
     for record in records:
         key = _duplicate_key(record[1])
         if key is not None:
@@ -139,6 +161,7 @@ def _deduplicate_candidate_records(records):
             selected_ids.update(id(record) for record in group)
 
     selected = []
+
     for record in records:
         key = _duplicate_key(record[1])
 
