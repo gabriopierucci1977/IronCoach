@@ -16,6 +16,7 @@ from backend.importers.garmin_fit_importer import GarminFitImporter
 from backend.importers.garmin_fit_runtime_bridge import (
     source_activity_to_runtime_payload,
 )
+from backend.maintain_plan.coach_web import _resolve_subject_alias
 from backend.maintain_plan.runtime_actual_session_capture import (
     RuntimeActualSessionCapture,
 )
@@ -56,9 +57,11 @@ def main(argv=None) -> int:
         print("MANUAL_FIT_DRY_RUN_COMPLETATO")
         return 0
 
+    athlete_source_id = _resolve_subject_alias(args.athlete_source_id)
+
     result = RuntimeActualSessionCapture().capture(
         runtime_config=CaptureConfig(args.database),
-        athlete={"source_id": args.athlete_source_id},
+        athlete={"source_id": athlete_source_id},
         garmin_training_history=[payload],
         normalized_at=datetime.now(timezone.utc),
     )

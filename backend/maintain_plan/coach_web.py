@@ -44,15 +44,23 @@ def _resolve_subject_alias(subject_ref: str, environment=None) -> str:
     settings = dict(dotenv_values())
     settings.update(os.environ if environment is None else environment)
 
-    alias = settings.get("IRONCOACH_SUBJECT_ALIAS")
     canonical = settings.get("IRONCOACH_SUBJECT_REF")
+    raw_aliases = (
+        settings.get("IRONCOACH_SUBJECT_ALIAS", ""),
+        settings.get("IRONCOACH_SUBJECT_ALIASES", ""),
+    )
+    aliases = {
+        item.strip().casefold()
+        for raw in raw_aliases
+        if isinstance(raw, str)
+        for item in raw.split(",")
+        if item.strip()
+    }
 
     if (
-        isinstance(alias, str)
-        and isinstance(canonical, str)
-        and alias
+        isinstance(canonical, str)
         and canonical
-        and subject_ref.casefold() == alias.casefold()
+        and subject_ref.casefold() in aliases
     ):
         return canonical
 

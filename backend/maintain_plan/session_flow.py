@@ -27,7 +27,11 @@ def list_sessions(repository, subject_ref: str, *, page: int = 1, year: int | No
                   month: int | None = None, sport: str | None = None) -> SessionPage:
     """Filter and paginate without mutating the archive."""
     if page < 1: raise ValueError("page must be positive")
-    items = list(repository.list_actual_sessions(subject_ref))
+    items = sorted(
+        repository.list_actual_sessions(subject_ref),
+        key=lambda session: session.start,
+        reverse=True,
+    )
     def discipline(s):
         return {getattr(c.discipline, "value", c.discipline) for c in s.components}
     items = [s for s in items if (year is None or s.start.year == year)
