@@ -245,8 +245,12 @@ def render_page(subject_ref: str = "", *, review=None, message: str = "",
                             f'Appartiene a {escape(prescription.prescription_snapshot_id)}</button>')
             body.append('</form></section>')
         else:
-            body.append('<p class="completed"><strong>Confronto con il piano:</strong> '
-                        'non è disponibile un allenamento programmato da confrontare.</p>')
+            body.append(
+                '<p class="completed"><strong>Analisi autonoma:</strong> '
+                'non è associato un allenamento programmato; la seduta verrà '
+                'analizzata usando i dati disponibili e lo storico recente. '
+                '<span>Confronto con il piano: non applicabile.</span></p>'
+            )
         export_prompt = build_export_prompt(selected_session, sessions)
         body.append(render_manual_analysis(
             subject_ref, facts.session_id, action_token, export_prompt, manual_analysis))

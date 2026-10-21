@@ -64,12 +64,42 @@ def session_detail(session) -> dict[str, Any]:
 
 def build_export_prompt(session, recent=(), prescription=None, feedback=None) -> str:
     def compat(value):
-        if isinstance(value, Mapping): return {str(k): compat(v) for k, v in value.items()}
-        if isinstance(value, (list, tuple)): return [compat(v) for v in value]
+        if isinstance(value, Mapping):
+            return {str(k): compat(v) for k, v in value.items()}
+        if isinstance(value, (list, tuple)):
+            return [compat(v) for v in value]
         return value
-    payload = {"seduta": session_detail(session), "storico_recente": [session_detail(s) for s in recent],
-               "prescrizione": prescription, "feedback": feedback or session.athlete_feedback}
-    return "Analizza questa seduta e il mio storico recente. Rispondi in italiano con osservazioni pratiche.\n\n" + json.dumps(compat(payload), ensure_ascii=False, indent=2)
+
+    payload = {
+        "seduta": session_detail(session),
+        "storico_recente": [session_detail(s) for s in recent],
+        "prescrizione": prescription,
+        "feedback": feedback or session.athlete_feedback,
+    }
+
+    if prescription is None:
+        instruction = (
+            "Analizza questa seduta e il mio storico recente. "
+            "Non esiste un allenamento programmato associato: "
+            "non fare confronti con un piano. "
+            "Indica osservazioni pratiche, possibili miglioramenti e "
+            "consigli utili per i prossimi allenamenti. "
+            "Distingui dati osservati, interpretazioni e informazioni mancanti."
+        )
+    else:
+        instruction = (
+            "Analizza questa seduta e confrontala con l’allenamento "
+            "programmato associato. "
+            "Distingui dati osservati, interpretazioni e informazioni mancanti."
+        )
+
+    return instruction + "\n\n" + json.dumps(
+        compat(payload),
+        ensure_ascii=False,
+        indent=2,
+    )
+
+
 
 def export_to_chatgpt(prompt: str, *, clipboard=None, opener=None) -> str:
     if opener is None:

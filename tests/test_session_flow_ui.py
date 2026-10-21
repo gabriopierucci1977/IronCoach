@@ -63,3 +63,22 @@ def test_text_plan_reports_missing_date():
         raise AssertionError(
             "La descrizione senza data deve chiedere un chiarimento"
         )
+
+
+def test_export_prompt_without_planned_workout_is_standalone():
+    session = _session(1)
+    prompt = build_export_prompt(session, [session])
+
+    assert "non fare confronti con un piano" in prompt
+    assert "possibili miglioramenti" in prompt
+    assert '"prescrizione": null' in prompt
+
+
+def test_render_marks_unplanned_activity_as_standalone_analysis():
+    html = render_page(
+        "a",
+        sessions=(_session(1),),
+        selected_session=_session(1),
+    )
+
+    assert "Analisi autonoma" in html
