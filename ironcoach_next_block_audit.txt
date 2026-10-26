@@ -1,0 +1,241 @@
+=== STATO BRANCH ===
+## feature/beta-0.4-decision-memory...origin/feature/beta-0.4-decision-memory [ahead 4]
+?? ironcoach_next_block_audit.txt
+
+=== ULTIMI COMMIT ===
+0893230 feat: add idempotent manual FIT runtime import
+c13641a fix: preserve activity timestamp precision during deduplication
+6cb298b test: cover explicit Airtable runtime overrides
+bcf7366 feat: harden Garmin runtime capture and plan comparison
+a8d0217 feat: wire persisted reported-problems into runtime stability
+126d555 Add files via upload
+c18e58f chore: remove temporary IronCoach helper scripts
+a50821e feat: persist reported-problems projections
+
+=== HEAD ===
+08932309fea21aecc8dc6aa1da3edf09991dca3a
+
+=== DIFF STAT ===
+
+=== FUNZIONI ORIGINE/AZIONE ===
+--- coach_web.py righe 33-65 ---
+33:     preview_text_plan,
+34:     session_detail,
+35:     text_to_plan,
+36:     validate_imported_plan,
+37: )
+38: 
+39: 
+40: def _resolve_subject_alias(subject_ref: str, environment=None) -> str:
+41:     if not isinstance(subject_ref, str) or not subject_ref:
+42:         return subject_ref
+43: 
+44:     settings = dict(dotenv_values())
+45:     settings.update(os.environ if environment is None else environment)
+46: 
+47:     alias = settings.get("IRONCOACH_SUBJECT_ALIAS")
+48:     canonical = settings.get("IRONCOACH_SUBJECT_REF")
+49: 
+50:     if (
+51:         isinstance(alias, str)
+52:         and isinstance(canonical, str)
+53:         and alias
+54:         and canonical
+55:         and subject_ref.casefold() == alias.casefold()
+56:     ):
+57:         return canonical
+58: 
+59:     return subject_ref
+60: 
+61: 
+62: def _artifact_details(review, prescription_id: str, session_id: str):
+63:     return next((item for item in review.candidate_details
+64:                  if item["prescription_id"] == prescription_id
+65:                  and item["session_id"] == session_id), {})
+--- coach_web.py righe 372-443 ---
+372:                 f'<input type="hidden" name="subject" value="{escape(subject_ref, quote=True)}">'
+373:                 f'<input type="hidden" name="action_token" value="{escape(action_token, quote=True)}">'
+374:                 '<input type="hidden" name="operation" value="save_imported_plan">'
+375:                 f'<input type="hidden" name="plan_json" value="{payload}">'
+376:                 '<button>Conferma e salva il piano</button></form></section>'
+377:             )
+378:     style = "body{font:18px system-ui;max-width:850px;margin:40px auto;padding:0 20px}" \
+379:             "input,button{font:inherit;padding:8px;margin:6px}.candidate{border:1px solid #bbb;padding:16px;margin:12px 0}" \
+380:             ".message,.completed{background:#eef8ee;padding:12px}.warning{background:#fff3cd;padding:12px}" \
+381:             ".ai{background:#eef4ff;border-left:5px solid #315efb;padding:16px}a{margin-left:12px}"
+382:     return "<!doctype html><html lang=it><meta charset=utf-8><title>IronCoach Coach</title><a hidden id='chatgpt-export-url' href='https://chatgpt.com/?q='></a>" \
+383:            f"<style>{style}</style><body>{''.join(body)}</body></html>"
+384: 
+385: 
+386: def _valid_origin(origin: str | None, expected_origin: str, *,
+387:                   host: str | None = None,
+388:                   forwarded_host: str | None = None,
+389:                   forwarded_proto: str | None = None) -> bool:
+390:     """Accept the public origin, or Codespaces' precisely identified rewrite."""
+391:     allowed_origins = {expected_origin}
+392:     if expected_origin.startswith("https://"):
+393:         allowed_origins.add(f"{expected_origin}:443")
+394:     if origin in allowed_origins:
+395:         return True
+396: 
+397:     # Codespaces' web proxy can rewrite both the authority and Origin to its
+398:     # loopback upstream.  Only recognise that form when the proxy also records
+399:     # the environment-derived public authority and HTTPS scheme.  These exact
+400:     # checks deliberately do not make arbitrary localhost origins trustworthy.
+401:     public_authority = expected_origin.removeprefix("https://")
+402:     proxy_context = (
+403:         expected_origin.startswith("https://")
+404:         and host is not None
+405:         and host.startswith(("localhost:", "127.0.0.1:"))
+406:         and forwarded_host in {public_authority, f"{public_authority}:443"}
+407:         and forwarded_proto == "https"
+408:     )
+409:     if proxy_context and origin in {None, f"http://{host}"}:
+410:         return True
+411: 
+412:     return (
+413:         expected_origin.startswith("https://")
+414:         and host is not None
+415:         and host.startswith(("localhost:", "127.0.0.1:"))
+416:         and origin in {
+417:             f"https://{host}",
+418:             f"https://{public_authority}",
+419:             f"https://{public_authority}:443",
+420:         }
+421:         and forwarded_host in {public_authority, f"{public_authority}:443"}
+422:         and forwarded_proto == "https"
+423:     )
+424: 
+425: 
+426: def _valid_action(origin: str | None, expected_origin: str, cookie: str,
+427:                   submitted_token: str, server_token: str, *,
+428:                   host: str | None = None,
+429:                   forwarded_host: str | None = None,
+430:                   forwarded_proto: str | None = None) -> bool:
+431:     cookies = dict(item.strip().split("=", 1) for item in cookie.split(";") if "=" in item)
+432:     cookie_token = cookies.get("ironcoach_action", "")
+433:     return (_valid_origin(origin, expected_origin, host=host,
+434:                           forwarded_host=forwarded_host,
+435:                           forwarded_proto=forwarded_proto) and
+436:             hmac.compare_digest(cookie_token, server_token) and
+437:             hmac.compare_digest(submitted_token, server_token))
+438: 
+439: 
+440: def _trusted_origins(port: int, environment=None) -> dict[str, str]:
+441:     """Return origins derived from the process environment, never the request."""
+442:     environment = os.environ if environment is None else environment
+443:     codespace = environment.get("CODESPACE_NAME")
+--- coach_web.py righe 448-479 ---
+448:         }
+449: 
+450:     forwarding_domain = environment.get(
+451:         "GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN", "")
+452:     hostname_part = re.compile(
+453:         r"^[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?$")
+454:     if (not hostname_part.fullmatch(codespace)
+455:             or not hostname_part.fullmatch(forwarding_domain)):
+456:         raise RuntimeError("Ambiente Codespaces incompleto o non valido.")
+457:     host = f"{codespace}-{port}.{forwarding_domain}".lower()
+458:     origin = f"https://{host}"
+459:     # The private Codespaces proxy terminates HTTPS and currently sends the
+460:     # loopback authority to the application.  Associate that authority with
+461:     # the public browser origin derived above: request headers (including
+462:     # X-Forwarded-Host) must never be able to choose the accepted origin.
+463:     # Keep the environment-derived authorities for proxies which preserve the
+464:     # original Host, including its equivalent explicit HTTPS default port.
+465:     return {
+466:         f"127.0.0.1:{port}": origin,
+467:         f"localhost:{port}": origin,
+468:         host: origin,
+469:         f"{host}:443": origin,
+470:     }
+471: 
+472: 
+473: def make_handler(database_path: str, *, action_token: str | None = None,
+474:                  environment=None, configured_subject: str | None = None):
+475:     token = action_token or secrets.token_urlsafe(32)
+476:     environment = dict(os.environ if environment is None else environment)
+477:     class CoachHandler(BaseHTTPRequestHandler):
+478:         def _trusted_request_origin(self) -> str | None:
+479:             port = self.server.server_address[1]
+--- coach_web.py righe 559-604 ---
+559:                 self._send(render_page(
+560:                     subject, review=review,
+561:                     message=(identity_message or f"{len(sessions)} attività disponibile/i."), action_token=token,
+562:                     sessions=sessions, selected_session=selected, page=listing.page,
+563:                     pages=listing.pages, total=listing.total, year=integer("year"),
+564:                     month=integer("month"), sport=query.get("sport", [None])[0],
+565:                     ai_result=None,
+566:                     prescriptions=prescriptions,
+567:                     relation=stored_relation,
+568:                     manual_analysis=(load_manual_analysis(repository, subject, session_id)
+569:                                      if selected is not None else None)))
+570:             except Exception as error:
+571:                 self._send(render_page(subject, message=f"Dati non utilizzabili: {error}"), 400)
+572: 
+573:         def do_POST(self):
+574:             if self._reject_untrusted_host():
+575:                 return
+576:             length = int(self.headers.get("Content-Length", "0"))
+577:             values = parse_qs(self.rfile.read(length).decode("utf-8"))
+578:             subject = _resolve_subject_alias(values.get("subject", [""])[0], environment)
+579:             try:
+580:                 expected_origin = self._trusted_request_origin()
+581:                 if not _valid_action(
+582:                         self.headers.get("Origin"), expected_origin,
+583:                         self.headers.get("Cookie", ""),
+584:                         values.get("action_token", [""])[0], token,
+585:                         host=self.headers.get("Host"),
+586:                         forwarded_host=self.headers.get("X-Forwarded-Host"),
+587:                         forwarded_proto=self.headers.get("X-Forwarded-Proto")):
+588:                     self._send(render_page(subject,
+589:                         message="Azione respinta: origine o autorizzazione non valida.",
+590:                         action_token=token), 403)
+591:                     return
+592:                 operation = values.get("operation", [""])[0]
+593:                 if operation == "save_manual_analysis":
+594:                     session_id = values.get("session", [""])[0]
+595:                     repository = MaintainPlanRepository(database_path)
+596:                     save_manual_analysis(
+597:                         repository, subject, session_id,
+598:                         values.get("analysis_text", [""])[0])
+599:                     self.send_response(303)
+600:                     self.send_header("Location", "/?" + urlencode(
+601:                         {"subject": subject, "session": session_id}) + "#manual-analysis")
+602:                     self.end_headers()
+603:                     return
+604:                 if operation in {"preview_text_plan", "preview_plan"}:
+--- coach_web.py righe 699-730 ---
+699:             return
+700:     return CoachHandler
+701: 
+702: 
+703: 
+704: def configured_imported_plan_path(
+705:     subject_ref: str,
+706:     project_root: str | Path | None = None,
+707: ) -> Path:
+708:     root = Path(project_root) if project_root is not None else Path(__file__).parents[2]
+709:     settings = dict(dotenv_values(root / ".env"))
+710:     settings.update(os.environ)
+711: 
+712:     directory = Path(
+713:         settings.get("IRONCOACH_IMPORTED_PLAN_DIRECTORY")
+714:         or root / "data" / "imported_plans"
+715:     )
+716: 
+717:     if not directory.is_absolute():
+718:         directory = root / directory
+719: 
+720:     filename = hashlib.sha256(
+721:         subject_ref.encode("utf-8")
+722:     ).hexdigest() + ".json"
+723: 
+724:     return directory / filename
+725: 
+726: def configured_database_path(project_root: str | Path | None = None) -> str:
+727:     root = Path(project_root) if project_root is not None else Path(__file__).parents[2]
+728:     added = []
+729:     for name, value in dotenv_values(root / ".env").items():
+730:         if value is not None and name not in os.environ:
+=== DIFF COACH_WEB E SESSION_FLOW ===

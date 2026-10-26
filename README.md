@@ -1,4 +1,4 @@
-IronCoach
+,IronCoach
 
 Sistema di coaching intelligente per analisi atleta, valutazione dello stato fisico e adattamento del piano di allenamento.
 
